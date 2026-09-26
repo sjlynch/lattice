@@ -61,7 +61,7 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
   return (
     <div
       className={`workflows-item ${isSelected ? 'active' : ''}`}
-      onClick={() => onSelect(workflow)}
+      onClick={() => { if (!isSelected) onSelect(workflow); }}
     >
       <div className="workflows-item-name">{workflow.name}</div>
       <div className="workflows-item-meta">

@@ -15,6 +15,7 @@ const B = 'C:/proj-b';
 // A never-saved draft with content (the only kind that persists).
 function draft(name: string): EditorState {
   return {
+    identity: Symbol(),
     workflowId: null,
     name,
     steps: [
@@ -32,6 +33,7 @@ function draft(name: string): EditorState {
 }
 
 const EMPTY: EditorState = {
+  identity: Symbol(),
   workflowId: null,
   name: '',
   steps: [],
@@ -113,6 +115,12 @@ test('genuine edits under a stable folder persist normally', () => {
       { folder: A, kind: 'persist' },
     ],
   );
+});
+
+test('leaving the project entirely still flushes the outgoing draft', () => {
+  const outgoing = draft('outgoing');
+  const result = reconcileDraftPersist('', outgoing, A, outgoing);
+  assert.deepEqual(result.decision, { kind: 'flush', folder: A });
 });
 
 test('an empty / saved editor is never persisted', () => {

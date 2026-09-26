@@ -8,7 +8,9 @@ there.
   state, harness overrides, prompt-customization state/actions, and intent-level
   actions for the panels. The derived run views and the queue/actions object
   assembly are split out (`useWorkflowRunViews` + the local `buildQueueView` /
-  `buildActions` helpers) so the body reads as plain wiring.
+  `buildActions` helpers) so the body reads as plain wiring. Reselect is a no-op;
+  blank/select/template replacement all use the Save/Discard/Cancel gate and
+  recheck the editor lifetime before continuing after confirmation or Save.
 - `useWorkflowHarnessOverrides.ts` — harness availability (`useHarnessAvailability`)
   + the curated Pi menu (`usePiModelMenu`, threaded to each step's harness select,
   so both refetch when Settings → Pi saves) plus the per-workflow run-override map.
@@ -27,18 +29,27 @@ there.
   (`newBlank`, `newFromTemplate`, and the add actions) reports their ids through
   the `onStepsAdded` arg — the manager points it at
   `useCollapsedSteps.collapseSteps`, which is what makes a new step land
-  collapsed. `save()` is single-flight: a call while a save is pending gets
-  that same promise (and `saving` disables Save), so a double-clicked Create on
+  collapsed. Every editor has an in-memory symbol identity: edits keep it,
+  replacements/restores renew it. Async mutations also capture a project
+  generation (including A -> B -> A); stale saves return null and cannot alter
+  the new editor, draft storage, error toast, or saving flag. `setEditor` writes
+  through to a ref so replacements and saved ids are visible before re-render.
+  `save()` is single-flight within that lifetime (and `saving` disables Save),
+  so a double-clicked Create on
   a never-saved draft — or a Run / Queue, which save first — can't POST two
   identical workflows. A caller that joined a pending save saves again once it
   settles if the editor is still dirty (an edit landed mid-save), so ▶ Run acts
-  on what the editor shows, not the pre-edit steps. The reconcile effect only
+  on what the editor shows, not the pre-edit steps. Joiners retain their original
+  lifetime and project; a new editor's Save never joins an old save. Templates
+  seed a fresh draft immediately and auto-save through the same path, preserving
+  edits on success and leaving an editable draft on failure. The reconcile effect only
   resets the editor for a workflow that was in the list and left it — a
   just-created one may reach the list after the POST response.
 - `useEditorDraftLifecycle.ts` — the editor's draft side effects: keep a loaded
   workflow reconciled against the live list, restore/persist the per-project
   never-saved draft, and guard one project's draft from leaking onto another's
-  storage key on a project switch. Returns nothing.
+  storage key on a project switch. Restores before paint, renewing the editor
+  identity; live-list refreshes preserve that identity. Returns nothing.
 - `useEditorMutationActions.ts` — the editor's step/variable mutation actions,
   every one a pure `setEditor` updater (no API/draft concerns). The step-adding
   ones mint the new step's id *before* calling `setEditor` (an updater can run

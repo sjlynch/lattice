@@ -107,7 +107,7 @@ export function useEditorMutationActions(
     setEditor((cur) => {
       const base: EditorState =
         cur.workflowId === null && cur.steps.length === 0 && cur.name === ''
-          ? { workflowId: null, name: p.title, steps: [], variables: cur.variables, dirty: true }
+          ? { ...cur, name: p.title, dirty: true }
           : cur;
       return {
         ...base,

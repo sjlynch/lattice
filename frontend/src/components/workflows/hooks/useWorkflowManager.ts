@@ -5,6 +5,7 @@ import {
   type WorkflowQueueEntry,
 } from '../../../api';
 import { useTerminals } from '../../../TerminalsContext';
+import type { WorkflowTemplate } from '../../../workflowTemplates';
 import { useStructuralScan } from '../../../hooks/useStructuralScan';
 import { useConfirm } from '../../shared/ConfirmDialog';
 import { fromWorkflow } from '../editorState';
@@ -69,6 +70,7 @@ function buildActions(parts: {
   manualRun: ReturnType<typeof useWorkflowManualRun>;
   selectWorkflow: (wf: Workflow) => Promise<void>;
   newBlank: () => Promise<void>;
+  newFromTemplate: (template: WorkflowTemplate) => Promise<void>;
   updateEditorName: (name: string) => void;
   dismissRecent: (id: string) => void;
 }) {
@@ -81,13 +83,14 @@ function buildActions(parts: {
     manualRun,
     selectWorkflow,
     newBlank,
+    newFromTemplate,
     updateEditorName,
     dismissRecent,
   } = parts;
   return {
     setPickingTemplate: editorState.setPickingTemplate,
     newBlank,
-    newFromTemplate: editorState.newFromTemplate,
+    newFromTemplate,
     save: editorState.save,
     discardEdits: editorState.discardEdits,
     deleteCurrent: editorState.deleteCurrent,
@@ -248,29 +251,45 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   // one) discards whatever is in it, so with unsaved edits ask Save / Discard /
   // Cancel first — the same guard the panel-close path applies.
   const { confirmUnsaved } = useConfirm();
-  const { save, discardEdits, newBlank: newBlankEditor } = editorState;
+  const {
+    save, discardEdits, getEditor, isCurrentEditor,
+    newBlank: newBlankEditor, newFromTemplate: newTemplateEditor,
+  } = editorState;
   const guardUnsaved = useCallback(
-    () =>
-      guardUnsavedSwitch({
-        dirty: editor.dirty,
+    async (replace: () => void | Promise<void>) => {
+      const isCurrent = () => isCurrentEditor(editor.identity);
+      let discard = false;
+      const allowed = await guardUnsavedSwitch({
+        dirty: getEditor().dirty,
+        isCurrent,
         confirmUnsaved: () =>
           confirmUnsaved({ message: 'You have unsaved changes to this workflow.' }),
         save,
-        discardEdits,
-      }),
-    [editor.dirty, confirmUnsaved, save, discardEdits],
+        // Discard and replacement happen together after the final scope check.
+        discardEdits: () => { discard = true; },
+      });
+      if (!allowed || !isCurrent()) return;
+      // A save may succeed while leaving edits typed during the request dirty.
+      if (!discard && getEditor().dirty) return;
+      if (discard) discardEdits();
+      await replace();
+    },
+    [editor.identity, confirmUnsaved, save, discardEdits, getEditor, isCurrentEditor],
   );
 
   const selectWorkflow = useCallback(async (wf: Workflow) => {
     // Re-selecting the workflow already being edited is a no-op for its edits.
-    if (editor.dirty && editor.workflowId !== wf.id && !(await guardUnsaved())) return;
-    setEditor(fromWorkflow(wf));
-  }, [editor.dirty, editor.workflowId, guardUnsaved, setEditor]);
+    if (getEditor().workflowId === wf.id) return;
+    await guardUnsaved(() => setEditor(fromWorkflow(wf)));
+  }, [getEditor, guardUnsaved, setEditor]);
 
   const newBlank = useCallback(async () => {
-    if (editor.dirty && !(await guardUnsaved())) return;
-    newBlankEditor();
-  }, [editor.dirty, guardUnsaved, newBlankEditor]);
+    await guardUnsaved(newBlankEditor);
+  }, [guardUnsaved, newBlankEditor]);
+
+  const newFromTemplate = useCallback(async (template: WorkflowTemplate) => {
+    await guardUnsaved(() => newTemplateEditor(template));
+  }, [guardUnsaved, newTemplateEditor]);
 
   const updateEditorName = useCallback((name: string) => {
     setEditor((cur) => ({
@@ -324,6 +343,7 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
       manualRun,
       selectWorkflow,
       newBlank,
+      newFromTemplate,
       updateEditorName,
       dismissRecent,
     }),
