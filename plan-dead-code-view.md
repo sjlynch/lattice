@@ -1,3 +1,7 @@
+> **Historical design note (June 2026).** Superseded by the code and
+> `backend/src/health/crossFile/CLAUDE.md`; details below may be stale.
+> Do not treat this as current behaviour.
+
 # Plan: Dead Code view (`D`) + detection-precision upgrade
 
 Decisions: **tri-state coloring** (green / red / grey), **V2-accurate** scope.
