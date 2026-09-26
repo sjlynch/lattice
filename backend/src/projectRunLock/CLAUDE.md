@@ -10,62 +10,63 @@ snapshot / fast-forward. `../projectRunLock.ts` is the public facade.
 
 ## What it guards
 
-One lockfile per project: `~/.lattice/per-project/<sha1(canonicalPath)[:12]>/run.lock`
-(confirm via `paths.ts` → `homeProjectDir`). Body is `{pid, hostname,
-startedAt, label, ownerId}` (`ownerId` is a UUID minted per acquisition — the
-generation identity; locks written before 2026-09 lack it). Held for the
-duration of a merge run (`label: merge-run`) and a manual `/merge` (`label:
-manual-merge`); `label` exists only so a human inspecting the file knows what's
-holding it. Created with the
-`wx` flag (atomic fail-if-exists) — that's the actual mutual-exclusion
-primitive; everything else is staleness handling.
+One lockfile per project: `~/.lattice/per-project/<hash>/run.lock`, resolved by
+`paths.ts` through `homeProjectDir(projectPath)` and the shared `projectHash`
+contract in `../projectPath.ts`. Path aliases must share the preserved storage
+hash so they contend for the same lock; do not recompute a hash from a path
+spelling. See [project identity and legacy storage](../PROJECT_IDENTITY.md).
 
-**2026-09 stability correction:** publication now writes a unique sibling with
-`wx`, then uses `fs.link(pending, run.lock)` to atomically publish the complete
-body without overwriting an existing lock. A direct asynchronous `wx` write to
-`run.lock` exposes an empty file before its body is written; a competing acquire
-could classify that as corrupt and steal it, admitting both callers. Keep the
-exclusive publication step. Unsupported hard-link filesystems fail acquisition
-rather than falling back to the unsafe partial-body publication.
+Body is `{pid, hostname, startedAt, label, ownerId}`. The UUID `ownerId` is
+minted per acquisition and identifies its generation; legacy locks lack it.
+The lock covers the duration of merge runs (`merge-run`), manual merges
+(`manual-merge`) and the mutation/exclusive holds below. Labels identify the
+operation for diagnostics, recovery and restart deferral.
 
 ## Lifecycle
 
-**2026-09 ownership correction:** every newly issued body includes a UUID
-`ownerId`. Release and stale recovery share `retireLockFile`, which must win an
-exclusive permanent tombstone at `run.lock.retired/<sha256(exact raw body)>`
-before unlinking. Only one observer can ever remove that generation, so a
-suspended stale observer cannot remove its successor. A body comparison alone
-does not provide this guarantee. Read errors other than ENOENT refuse recovery.
-Tombstones also distinguish legacy generations by their entire original bytes.
-
-Keep the tombstones: deleting them while any process can retain an observation
-reintroduces the race. They contain tiny retirement audit records. The one
-sanctioned deletion is `tombstones.ts` `pruneRetiredTombstones`: on the first
-acquisition per project per process, and only while NO `run.lock` exists, it
-removes tombstones older than 7 days (by the `at` in the body, mtime as the
-fallback). A generation's raw body can't be re-issued (UUID `ownerId` +
-timestamp), so a week-old observation of it can never again match a live lock —
-the CAS guarantee is unaffected; without the pruning every retirement left a
-permanent file. A crash after
-claiming retirement but before unlink leaves the old lock blocked deliberately;
-the diagnostic requires stopping all backends before inspecting/removing only
-`run.lock`, preserving the tombstones. This is a fail-closed availability limit,
-not automatic crash recovery. Running an older backend that ignores tombstones
-concurrently with this protocol is unsupported; upgrade all backends together.
-
 `acquire → (steal if stale) → release`, almost always via the
 `withProjectRunLock(projectPath, label, fn)` wrapper (acquire, run `fn`,
-release in `finally`). `acquireProjectRunLock` first **waits while a restart
-drain is active** (`../restartDrain/gate.ts` — the dev runner is about to kill
-this process; the drain always ends by TTL if no restart follows), then tries
-the atomic `wx` write;
-on `EEXIST` it calls `clearStaleLockOrThrow` once and retries — exactly two
-attempts, then it surfaces the error rather than spinning. `release` deletes
-the file **only if it still holds our exact body** (`sameLockBody`), so a
-late release can't remove a lock that was stolen and recreated by someone
-else. `inspectProjectRunLock` reads `{holder, alive}` *without* acquiring or
-stealing — used by recovery's merge-run resume to spot an interrupted run
-and by `scripts/dev.mjs` to decide whether to defer a restart.
+release in `finally`).
+
+- **Acquire:** `acquireProjectRunLock` waits while a restart drain is active
+  (`../restartDrain/gate.ts`; the drain expires by TTL if no restart follows).
+  `writeNewLockBody` writes the complete body to a unique sibling with `wx`,
+  then atomically publishes `run.lock` with exclusive `fs.link(pending, file)`;
+  sibling cleanup is best-effort in `finally`. The hard link is the
+  mutual-exclusion primitive. A direct asynchronous `wx` write to `run.lock`
+  exposes an empty body that a contender could misclassify as corrupt and
+  steal. Unsupported hard-link filesystems fail acquisition; never fall back
+  to partial-body publication. On `EEXIST`, `clearStaleLockOrThrow` attempts
+  stale retirement or refuses; acquisition makes at most two publication
+  attempts, then surfaces an error rather than spinning.
+- **Retire:** release first checks `sameLockBody` (including `ownerId`); stale
+  recovery first applies the liveness rules below. Both use `retireLockFile`,
+  which must claim `run.lock.retired/<sha256(exact raw body)>` with `wx`, then
+  re-read and match the exact raw body before unlinking `run.lock`. The claim
+  allows only one observer to remove that generation, protecting a successor
+  from a suspended stale observer; a body comparison alone is insufficient.
+  Hashing the original bytes also distinguishes legacy generations.
+  `readLockObservation` treats only `ENOENT` as absence; other read errors
+  propagate and refuse release/recovery.
+
+Keep retirement tombstones (tiny audit records): deleting them while a process
+can retain an observation reintroduces the race. The bounded exception is
+`pruneRetiredTombstones`, called through `pruneRetiredTombstonesOnce` on the first
+acquisition per project per process. It proceeds only when `run.lock` is absent
+and removes tombstones older than 7 days (`at` in the body, mtime fallback);
+ones whose age cannot be judged are kept. This relies on generation bodies
+never being re-issued (UUID `ownerId` + timestamp); do not broaden the pruning.
+
+A crash after claiming retirement but before unlink deliberately leaves the
+old lock blocked. The recovery diagnostic requires stopping all backends
+before inspecting/removing only `run.lock`, preserving `run.lock.retired`.
+This is a fail-closed availability limit, not automatic crash recovery.
+Concurrent older backends that ignore tombstones are unsupported; upgrade all
+backends together.
+
+`inspectProjectRunLock` reads `{holder, alive}` without acquiring or stealing —
+used by recovery's merge-run resume to spot an interrupted run and by the dev
+runner to decide whether to defer a restart.
 
 ## Liveness / staleness model
 
@@ -98,12 +99,12 @@ and silently aborts every later run on that project.
 |------|------|
 | `paths.ts` | Lockfile path (`run.lock` under `homeProjectDir`). |
 | `types.ts` | `LockBody`, `ProjectRunLockHandle`, `ProjectRunLockInspection`. |
-| `lockfile.ts` | Read/parse/`wx`-write/delete + `sameLockBody` — all raw fs. |
+| `lockfile.ts` | Read/parse observations, complete-body hard-link publication, retirement claims + `sameLockBody`. |
 | `tombstones.ts` | `pruneRetiredTombstones` — the bounded, lock-absent-only 7-day prune of `run.lock.retired/`, run once per project per process from `acquire.ts`. |
 | `liveness.ts` | `currentLockBody`, PID-alive probe, PID-reuse disambiguation. |
 | `steal.ts` | `clearStaleLockOrThrow` — decide steal vs. throw. |
-| `acquire.ts` | `acquireProjectRunLock` — `wx` write + one steal-retry. |
-| `release.ts` | `releaseLockFile` — delete only if still ours. |
+| `acquire.ts` | `acquireProjectRunLock` — restart-drain gate, pruning, publication + one stale-recovery retry. |
+| `release.ts` | `releaseLockFile` — ownership check, then shared retirement protocol. |
 | `withLock.ts` | `withProjectRunLock` — acquire/run/release wrapper. |
 | `inspect.ts` | `inspectProjectRunLock` — read `{holder, alive}`, no acquire. |
 | `errors.ts` | `ProjectRunLockedError` (carries the contended `holder`). |
@@ -111,16 +112,21 @@ and silently aborts every later run on that project.
 
 ## Invariants to preserve
 
-- **Acquire stays atomic** — the `wx` write is the lock; never replace it
-  with read-then-write.
-- **Release is ownership-gated** — keep the `sameLockBody` check so a stolen
-  lock survives the original holder's late release.
+- **Publish only a complete body** — exclusive `fs.link` is the lock; the
+  publication's `wx` write targets the pending sibling. Never use read-then-write
+  or an overwriting rename to publish `run.lock`.
+- **Retirement requires the exclusive claim** — release keeps
+  `sameLockBody`; release and stale recovery share `retireLockFile`. Keep the
+  exact-raw-body recheck and tombstones, subject only to the bounded prune above.
 - **Stealing requires proof of death** — only steal on unparseable, dead-PID,
   pre-our-process, or recycled-PID holders; uncertainty must fail safe
   (treat as alive / refuse).
 - **Never auto-steal a remote-host or same-process lock.**
 
 Behaviour is covered by `../__tests__/projectRunLock.test.ts`.
+Command reference from `backend/`: `npm run build`, `npm test`,
+`npx tsc --noEmit`. For a HOME-isolated single-file test invocation, see the
+[test guide](../__tests__/CLAUDE.md).
 
 ## Resolver and snapshot mutations
 

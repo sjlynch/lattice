@@ -1,10 +1,11 @@
 # backend/src/pushRuns
 
-One-off Claude sessions for the QA-lane **Push** button (and the workflow Push
-control step): spawn a Claude in throwaway scratch that `cd`s into the project
-and commits/pushes per the `PUSH_INSTRUCTIONS.md` brief, then calls back on
-Stop. `../pushRuns.ts` is the public shim; served by `routes/pushRuns.ts`
-(`/api/push-runs`).
+One-off Claude sessions for the QA-lane **Push** button (commit pending changes,
+then push) and workflow **Push** (push existing commits only; leave uncommitted
+user work untouched). Both spawn a Claude in throwaway scratch that `cd`s into
+the project, follows its selected `PUSH_INSTRUCTIONS.md` brief, and calls back
+on Stop. `../pushRuns.ts` is the public shim; served by `routes/pushRuns.ts`
+(`/api/push-runs`). Keep the two briefs distinct despite the shared lifecycle.
 
 ## Shared contract (`../homeScratch/`)
 
@@ -20,15 +21,12 @@ here.**
 
 `qaRuns/` is a near-clone of this directory — same skeleton, same
 persisted-registry / home-scoped-scratch / path-guard / Stop-hook / boot-sweep
-contract (now backed by the shared `../homeScratch/` builder).
-**Edit one and the other almost always changes in lockstep.** The
-only structural divergence is qaRuns' extra `verdict.ts` (qa → done
-auto-promotion), which pushRuns has no equivalent for. Keep the differences
-cosmetic: the `[pushRuns]`/`[qaRuns]` log prefixes and the `push`/`qa` id-prefix
-+ scratch dirname (the four `createHomeScratchPaths` fields). A future third
-run-type should reuse `../homeScratch/` the same way — **including** the path
-guard, which is part of the repo's `.git`-deletion defence layer (see the root
-`CLAUDE.md`).
+contract (now backed by the shared `../homeScratch/` builder). Keep shared
+lifecycle fixes aligned; push brief selection here and qaRuns' `verdict.ts`
+(qa → done auto-promotion) stay feature-specific. Log prefixes, id prefixes
+and scratch dirnames belong in the `createHomeScratchPaths` config. New run
+types should reuse `../homeScratch/` — **including** its path guard, part of
+the repo's `.git`-deletion defence layer (see the root `CLAUDE.md`).
 
 ## Files (the shared skeleton)
 
@@ -50,12 +48,21 @@ guard, which is part of the repo's `.git`-deletion defence layer (see the root
   `interactive` queue band, presence-node registration, and cleanup wiring);
   `setupPushSession` is the materialize-only `setupHomeScratchSession`. Only the
   push-specific brief, hook install, and registry record (`recordPushRun`) stay
-  here — passed to the factory's `start` per call. `qaRuns/session.ts` is the
-  exact mirror (its `spec` adds `isQaRun: true`).
+  here — passed to the factory's `start` per call. `qaRuns/session.ts` mirrors
+  the lifecycle (its `spec` adds `isQaRun: true`).
+  `PushBrief = 'qa-lane' | 'workflow'`: `renderPush` defaults to `qa-lane` and
+  resolves the editable `push` template; `workflow` selects `workflow-push`.
+  `startPushSession` forwards `opts.brief`; the QA-lane route omits it, and
+  `setupPushSession` also uses the default. The caller in
+  [`workflowRuns/controlSteps/push.ts`](../workflowRuns/controlSteps/push.ts)
+  explicitly passes `brief: 'workflow'` to push existing commits without
+  staging or committing user work. Keep that explicit: the separate `workflow`
+  ownership metadata does not select the brief.
 - `stopHook.ts` — installs the Claude Stop hook (→ `/api/push-runs/:id/done`) +
   activity hook; defines the stable `pushAgentId`.
-- `instructions.ts` — renders `PUSH_INSTRUCTIONS.md` from the editable `push`
-  instruction template.
+- `instructions.ts` — `renderPushInstructions` interpolates the template
+  selected by `session.ts` into `PUSH_INSTRUCTIONS.md`; both `push` and
+  `workflow-push` use this renderer. Its standalone default is `push`.
 - `registry.ts` — the in-memory run map (+ lifecycle event fan-out) whose
   **running** runs are mirrored to `~/.lattice/per-project/<hash>/push-runs.json`
   (`pushRunStore`, `../homeScratch/persistence.ts`). The push agent's pty
@@ -76,7 +83,14 @@ guard, which is part of the repo's `.git`-deletion defence layer (see the root
 
 ## Scratch
 
-`~/.lattice/per-project/<sha1(path)[:12]>/push/<id>/` — home-scoped,
-**outside** the repo on purpose so the recursive cleanup can never reach the
-project tree. At boot, a dir whose pty did not survive is swept
+`~/.lattice/per-project/<hash>/push/<id>/` — rooted through the shared
+`projectHash` / `homeProjectDir` storage key, which can retain a legacy binding;
+see [project identity](../PROJECT_IDENTITY.md). Scratch stays **outside** the
+repo so recursive cleanup can never reach the project tree. At boot, a dir
+whose pty did not survive is swept
 (`recovery/pushSessionSweep.ts`); a live one belongs to a re-adopted run.
+
+## Command reference
+
+From `backend/`: `npm run build`, `npm test`, `npx tsc --noEmit`. For a
+HOME-isolated single-file test invocation, see [test guidance](../__tests__/CLAUDE.md).
