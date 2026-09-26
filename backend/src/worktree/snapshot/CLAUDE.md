@@ -1,5 +1,16 @@
 # backend/src/worktree/snapshot
 
+Restore module map:
+
+- `restore.ts` — stable public exports, mutation ownership, ordered whole-snapshot
+  restore, guarded directory cleanup, and `describePartialRestore`.
+- `restoreTypes.ts` — shared options/result types, conflict suffix, and the single
+  `StaleSnapshotConflict` / `SnapshotPathKept` constructors used for classification.
+- `restorePath.ts` — guarded per-path copy/deletion, three-way reconciliation,
+  destination version checks, and exclusive/reusable conflict copies.
+- `restoreRetirement.ts` — narrow partial-restore manifests to retryable entries;
+  retire settled paths and archive when none remain, retaining payloads.
+
 Safety-critical copy-based working-tree snapshots. Keep the capture order in
 `capture.ts` intact:
 
