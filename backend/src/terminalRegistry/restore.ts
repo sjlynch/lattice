@@ -45,9 +45,10 @@ import type { RestoreDropped, RestoreSummary, TerminalRecord } from './types.js'
 import { isNewerThanLiveView, readLiveSessions, reconcileExitedTerminals, type LiveSessionsView } from './watch.js';
 import { discoverCodexSessionFor } from './codexDiscovery.js';
 import { agentSessionFromCommand } from './sessionIdentity.js';
+import { parseAgentCommand } from './commandParse.js';
 import { enqueueRelaunch, scheduleDiscoveryIfUnknown } from './restoreRelaunch.js';
 
-type LiveSession = { id: string; cwd: string; initialCommand?: string };
+type LiveSession = { id: string; cwd: string; initialCommand?: string; createdAt?: number };
 
 export type RestoreDeps = {
   readLiveSessions: () => Promise<LiveSessionsView | null>;
@@ -75,9 +76,14 @@ const productionDeps: RestoreDeps = {
     const raw = await proxyListSessionsOrNull();
     const out: LiveSession[] = [];
     for (const s of raw ?? []) {
-      const r = s as { id?: unknown; cwd?: unknown; initialCommand?: unknown };
+      const r = s as { id?: unknown; cwd?: unknown; initialCommand?: unknown; createdAt?: unknown };
       if (typeof r.id === 'string' && typeof r.cwd === 'string') {
-        out.push({ id: r.id, cwd: r.cwd, initialCommand: typeof r.initialCommand === 'string' ? r.initialCommand : undefined });
+        out.push({
+          id: r.id, cwd: r.cwd,
+          initialCommand: typeof r.initialCommand === 'string' ? r.initialCommand : undefined,
+          createdAt: typeof r.createdAt === 'number' && Number.isFinite(r.createdAt) && r.createdAt >= 0
+            ? r.createdAt : undefined,
+        });
       }
     }
     return out;
@@ -195,8 +201,8 @@ async function performRestore(
   // loaded so a pty that died while the executor lived is never relaunched.
   await terminalRegistry.list(projectPath);
   await reconcileExitedTerminals(live);
-  const records = (await terminalRegistry.list(projectPath, { includeEnded: true }))
-    .filter((r) => !r.ended || (options.retryFailed === true && isRetryableEnd(r)));
+  const allRecords = await terminalRegistry.list(projectPath, { includeEnded: true });
+  const records = allRecords.filter((r) => !r.ended || (options.retryFailed === true && isRetryableEnd(r)));
   const liveSessions = await deps.listLiveSessions();
   // A record (re)pointed at a pty after the live view was taken — a tab
   // spawned while this pass was reading — is live as far as this pass can
@@ -204,7 +210,11 @@ async function performRestore(
   const isLive = (r: TerminalRecord): boolean =>
     !!r.serverId && (live.serverIds.has(r.serverId) || isNewerThanLiveView(r, live));
   const claimed = new Set<string>();
-  for (const r of records) if (isLive(r)) claimed.add(r.serverId!);
+  // Even records excluded from this pass (e.g. failures without retryFailed)
+  // still own their live ptys. Never adopt one onto a different tab.
+  for (const record of allRecords) {
+    if (isLive(record)) claimed.add(record.serverId!);
+  }
 
   let adopted = 0;
   let queued = 0;
@@ -215,14 +225,22 @@ async function performRestore(
   for (const record of records) {
     // 1. pty still live → adopt.
     if (isLive(record)) {
+      const updated = record.ended || record.relaunching
+        ? await terminalRegistry.update(record.id, {
+          ended: undefined, relaunching: undefined,
+          serverInstanceId: live.serverIds.has(record.serverId!)
+            ? live.instanceId ?? record.serverInstanceId : record.serverInstanceId,
+        }, record.projectPath)
+        : record;
+      if (!updated) continue;
       adopted += 1;
-      terminalRegistry.emitRestored(record, 'adopted');
-      scheduleDiscoveryIfUnknown(record);
+      terminalRegistry.emitRestored(updated, 'adopted');
+      scheduleDiscoveryIfUnknown(updated);
       continue;
     }
     // 2. an unclaimed live AGENT pty in the same cwd running the same harness
     //    → adopt.
-    if (await tryAdoptOrphan(record, liveSessions, claimed, live)) {
+    if (await tryAdoptOrphan(record, liveSessions, claimed, live, deps.now)) {
       adopted += 1;
       continue;
     }
@@ -267,6 +285,7 @@ async function tryAdoptOrphan(
   liveSessions: LiveSession[],
   claimed: Set<string>,
   live: LiveSessionsView,
+  now: () => number,
 ): Promise<boolean> {
   const harness = agentHarnessForCommand(record.launch.initialCommand);
   if (!harness) return false;
@@ -279,12 +298,30 @@ async function tryAdoptOrphan(
   // whatever conversation ITS command names. Keeping the old id would
   // resume the wrong conversation on the next restart.
   const orphanSession = agentSessionFromCommand(orphan.initialCommand);
+  let codexDiscovery: TerminalRecord['codexDiscovery'];
+  if (harness === 'codex' && !orphanSession) {
+    const parsed = parseAgentCommand(orphan.initialCommand!, 'codex');
+    const subcommand = parsed?.positionals[0] ?? parsed?.prompt;
+    const resumed = subcommand?.value === 'resume';
+    const startedAt = orphan.createdAt ?? now();
+    codexDiscovery = {
+      createdSince: resumed ? 0 : startedAt,
+      writtenSince: startedAt,
+      mode: resumed ? 'resumed' : 'fresh',
+    };
+  }
   const updated = await terminalRegistry.update(record.id, {
     serverId: orphan.id,
     serverInstanceId: live.instanceId ?? undefined,
-    ...(orphanSession ? { agentSession: orphanSession } : {}),
+    agentSession: orphanSession,
+    codexDiscovery,
+    ended: undefined,
+    relaunching: undefined,
+    lastBusy: undefined,
   }, record.projectPath);
-  terminalRegistry.emitRestored(updated ?? record, 'adopted');
-  scheduleDiscoveryIfUnknown(updated ?? record);
+  if (updated) {
+    terminalRegistry.emitRestored(updated, 'adopted');
+    scheduleDiscoveryIfUnknown(updated);
+  }
   return true;
 }

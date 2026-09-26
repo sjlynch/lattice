@@ -95,6 +95,17 @@ export function deserializeTerminalRecord(raw: unknown): TerminalRecord | null {
   if (str(r.serverInstanceId)) record.serverInstanceId = r.serverInstanceId as string;
   if (num(r.restoreCount) !== undefined) record.restoreCount = r.restoreCount as number;
   if (num(r.restoredAt) !== undefined) record.restoredAt = r.restoredAt as number;
+  const discovery = r.codexDiscovery as Record<string, unknown> | undefined;
+  if (discovery && typeof discovery === 'object'
+    && num(discovery.createdSince) !== undefined && (discovery.createdSince as number) >= 0
+    && num(discovery.writtenSince) !== undefined && (discovery.writtenSince as number) >= 0
+    && (discovery.mode === 'fresh' || discovery.mode === 'resumed')) {
+    record.codexDiscovery = {
+      createdSince: discovery.createdSince as number,
+      writtenSince: discovery.writtenSince as number,
+      mode: discovery.mode,
+    };
+  }
   // A relaunch that was in flight when the process died is not in flight now.
   // (Deliberately not persisted-through: the flag only means anything for the
   // backend process that queued it.)

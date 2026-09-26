@@ -11,6 +11,7 @@ import path from 'node:path';
 import { codexSessionsDir, normalizeCwd } from './harnessPaths.js';
 import { listCodexDayDirs } from './interruption.js';
 import { terminalRegistry } from './store.js';
+import type { TerminalRecord } from './types.js';
 
 export type CodexRolloutMeta = { id: string; cwd: string; timestamp: number; file: string; mtimeMs?: number };
 
@@ -191,13 +192,23 @@ export async function discoverCodexSessionFor(recordId: string, projectPath: str
   const record = await terminalRegistry.get(recordId, projectPath);
   if (!record || record.ended) return true; // nothing left to do
   if (record.agentSession?.harness === 'codex') return true;
-  // The thread this tab runs was created no earlier than the tab itself —
-  // even after a `codex resume --last` relaunch, which reopens an older file
-  // (but writes to it now, hence the mtime bound at the relaunch time).
-  const resumed = record.restoredAt !== undefined;
-  const candidates = await scanRecentCodexRollouts(record.createdAt, undefined, record.restoredAt ?? record.createdAt);
+  // Ordinary relaunches keep the tab's creation floor. Orphan adoption
+  // replaces that provenance: a fresh process has a new start window, while
+  // a resumed process may append to a thread older than this tab.
+  const discovery: NonNullable<TerminalRecord['codexDiscovery']> = record.codexDiscovery ?? {
+    createdSince: record.createdAt,
+    writtenSince: record.restoredAt ?? record.createdAt,
+    mode: record.restoredAt !== undefined ? 'resumed' : 'fresh',
+  };
+  const candidates = await scanRecentCodexRollouts(discovery.createdSince, undefined, discovery.writtenSince);
+  // The scan awaits disk I/O. An adoption / relaunch meanwhile invalidates
+  // its evidence; don't put the dead pty's identity back onto its replacement.
+  const current = await terminalRegistry.get(recordId, projectPath);
+  if (!current || current.ended || current.agentSession?.harness === 'codex') return true;
+  if (current.serverId !== record.serverId || current.serverInstanceId !== record.serverInstanceId
+    || current.codexDiscovery !== record.codexDiscovery || current.restoredAt !== record.restoredAt) return false;
   const pick = pickCodexSession(
-    candidates, record.cwd, claimedCodexIds(), resumed ? 'resumed' : 'fresh', record.createdAt,
+    candidates, record.cwd, claimedCodexIds(), discovery.mode, discovery.createdSince,
   );
   if (!pick) return false;
   await terminalRegistry.update(record.id, {

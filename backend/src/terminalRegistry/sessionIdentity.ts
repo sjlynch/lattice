@@ -105,11 +105,13 @@ export function agentSessionFromCommand(command: string | undefined): AgentSessi
     return id ? { harness, id, source: 'command' } : undefined;
   }
   if (harness === 'codex') {
+    // With --last a trailing positional is a prompt, not a thread id.
+    if (commandHasFlag(command, ['--last'])) return undefined;
     const parsed = parseAgentCommand(command, 'codex');
     if (!parsed) return undefined;
     const positionals = [...parsed.positionals, ...(parsed.prompt ? [parsed.prompt] : [])];
     const [sub, id] = positionals;
-    if (sub?.value !== 'resume' || !id || id.quoted) return undefined;
+    if (sub?.value !== 'resume' || !id) return undefined;
     return { harness, id: id.value, source: 'command' };
   }
   return undefined;
