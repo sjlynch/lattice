@@ -1,3 +1,7 @@
+> **Historical design note (June 2026).** Superseded by the code and
+> `frontend/src/components/forceGraph/CLAUDE.md`; details below may be stale.
+> Do not treat this as current behaviour.
+
 # Graph perf restoration plan
 
 Local working notes for the force-graph performance fixes. Updated as

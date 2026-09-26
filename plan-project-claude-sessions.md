@@ -1,3 +1,7 @@
+> **Historical design note (June 2026).** Superseded by the code and
+> `backend/src/projectClaude/CLAUDE.md`; details below (file layout, status) may be stale.
+> Do not treat this as current behaviour.
+
 # Plan: instrument ANY Claude session in an opened project (orange nodes for non-Lattice-launched sessions)
 
 **Status: implemented; awaiting live verification.** Backend `tsc` + 151 tests
