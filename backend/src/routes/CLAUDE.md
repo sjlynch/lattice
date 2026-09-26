@@ -79,7 +79,22 @@ qaRuns, workflows.
   also returns the additive `git: ProjectGitProbe` for the Git Setup chip;
   `hasGit` keeps its exact `fs.stat(<path>/.git)` semantics, since the Push
   button reads it and must not start appearing for subdirectories of repos.
-- `qaRuns.ts` — QA e2e run start/status/verdict/done/forget.
+- `qaRuns.ts` — QA e2e run start/status/verdict/done/forget. Route wiring over
+  `qaRuns/` (lifecycle stays in `../qaRuns.ts` + `../qaRuns/`):
+  - `responses.ts` — picks exactly the fields the frontend reads off
+    `POST /api/qa-runs` and the polled `GET /api/qa-runs/:id`
+    (`frontend/src/components/taskboard/hooks/useQaRuns.ts`). **Load-bearing
+    shapes; don't let them drift.**
+  - `startGuard.ts` — `resolveQaRunStart` (body validation, task belongs to
+    project, status `qa`) returns `{ok:false, status, error}` /
+    `{ok:true, project, task}` that the route maps straight onto HTTP;
+    `findActiveQaRunForTask` is the **duplicate-run guard** (409, plus the
+    route's in-flight `starting` set): two Playwright sessions for one task
+    each post a verdict, and either confident PASS promotes it.
+  - `verdictBody.ts` — **deliberately tolerant** verdict parse:
+    `{verdict:'pass'|'fail', confidence:'high'|'low'}` or the boolean
+    shorthand `passed`/`confident`, so a user-edited QA template's wording
+    drift still advances the task. Don't make it strict.
 - `workflows.ts` — workflow definition CRUD, workflow-run start/cancel/
   step-complete/active, and prompt-customization start/status/complete.
 

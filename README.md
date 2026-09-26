@@ -80,7 +80,7 @@ pointing it at the live `:5183`/`:5184` also needs `LATTICE_E2E_ALLOW_LIVE=1`.
 - `frontend/` — Vite + React + TS + xterm + 3d-force-graph (`:5183`)
 - `scripts/` — the `npm run dev` loop (`devLoop.mjs` → `preflight.mjs` → `orchestrate.mjs` + `orchestrate/`), dependency checks/watch (`depsCheck.mjs`, `depsWatch.mjs`), and the self-hosting soak (`soak/`); see `scripts/CLAUDE.md`
 - `e2e/` — Playwright specs
-- `docs/` and the root `plan-*.md` files — design notes
+- `docs/` and the root `plan*.md` files — historical design notes, not current docs (superseded by the code and the per-directory `CLAUDE.md` files)
 - `.lattice/` — per-project scratch (gitignored)
 
 ## Where to go deeper
