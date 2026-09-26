@@ -1,3 +1,8 @@
+> **Historical design note (June 2026).** Superseded by the code,
+> `frontend/src/components/forceGraph/CLAUDE.md` and `backend/src/CLAUDE.md` (`activityHook.ts` /
+> `agentSessions.ts`); details below may be stale — e.g. Codex and Pi agent nodes have since shipped.
+> Do not treat this as current behaviour.
+
 # Plan: Claude agent nodes + focus beams + worktree highlight
 
 Visualize in-progress Claude agents on the 3D graph: a free-floating

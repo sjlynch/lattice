@@ -23,7 +23,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 ### Project identity & state
 
 - `projectPath.ts` — single source of truth for per-project paths under `~/.lattice/` (`canonicalProjectPath`, `projectHash`, `homeProjectDir`, …) + the `isRealAbsoluteProjectPath` route guard.
-- `projectIdentity.ts` — realpath identity + durable legacy-hash bindings behind `projectPath.ts`, so path aliases share one store. See `PROJECT_IDENTITY.md`.
+- `projectIdentity.ts` — realpath identity + durable legacy-hash bindings behind `projectPath.ts`, so path aliases share one store. Submodules in `projectIdentity/` (see `projectIdentity/CLAUDE.md`); rationale in `PROJECT_IDENTITY.md`.
 - `projectStateManager.ts` / `projectState/` — generic per-project cached, debounced-persisted state store (tasks, workflows, merge runs, terminal registry). See `projectState/CLAUDE.md`.
 - `projectInit/` — "Set up Git": `git init` a non-repo folder into a usable project. See `projectInit/CLAUDE.md` (two invariants).
 - `ids.ts` — task / workflow / terminal-session id generators.
@@ -57,7 +57,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `concurrencyLimit.ts` — tiny FIFO bounded-concurrency gate (e.g. the health watcher's file reads).
 - `instructionTemplates.ts` / `instructionTemplates/` — editable agent-brief templates with `{{token}}`s + per-project overrides. See its `CLAUDE.md`.
 - `harnessSystemPrompts.ts` / `harnessSystemPrompts/` — per-harness system-prompt Append/Replace + the always-on Lattice preamble, injected at the spawn chokepoint. See its `CLAUDE.md`.
-- `latticeApiDocs.ts` / `latticeApiDocs/` — generates `<project>/.lattice/LATTICE_API.md` (short index the preamble names, size-budgeted by test) + `LATTICE_API_RECIPES.md` from `*.template.md`.
+- `latticeApiDocs.ts` / `latticeApiDocs/` — generates `<project>/.lattice/LATTICE_API.md` (short index the preamble names, size-budgeted by test) + `LATTICE_API_RECIPES.md` from `*.template.md`. `latticeApiDocs/docPath.ts` only names the doc path, so the terminal-server's fingerprinted import graph skips the generator/templates — **never import `latticeApiDocs.ts` from terminal-server code** (every API tweak would mark the executor stale).
 - `claudeStopHook.ts` — renders `.claude/settings.local.json` Stop + activity hooks for worktrees and non-worktree sessions (via the callback script).
 - `codexStopHook.ts` — `.codex/hooks.json` Stop + activity hooks (if-absent write); Codex's `Stop` fires once, so no quiescence gate.
 - `piExtension.ts` / `piExtension/` — Pi's `lattice-complete.ts` completion backstop (`session_shutdown` → callback). See `piExtension/CLAUDE.md`.
@@ -105,10 +105,12 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 
 - `gitBranch.ts` — navbar branch label + read-only `.git/HEAD` watcher (`/ws/git-branch`); `rearmGitBranchWatcher` is called by `projectInit` after `git init`.
 - `gitStatus.ts` — read-only git-dir + working-tree watchers → status signature (`/ws/git-status`); `computeStatusSignature` never rejects; `rearmGitStatusWatcher` likewise.
+- `gitWatcherRegistry.ts` — the per-project watcher registry behind both: one lazy watcher per canonical root shared by all subscribers, per-subscriber-isolated fan-out, the `rearm` path.
+- `gitDir.ts` — `resolveGitDir`: walks up like git and follows a worktree's / submodule's `.git` pointer file (`gitdir: <path>`), so watchers watch the real git dir.
 - `gitHistory.ts` / `gitHistory/` — the timeline scrubber's `git log`, ghost-node `deletedPaths`, status signature. See `gitHistory/CLAUDE.md`.
 - `watchTree.ts` — win32 recursive `fs.watch` (one handle) replacing chokidar's per-dir handles, which locked directories; `LATTICE_WATCH_MODE` overrides; symlinks not followed.
-- `search.ts` — file-contents search for `/api/search`; `regexSource` wildcards must match the frontend's `forceGraph/searchMatcher.ts`; returns absolute paths (= graph node ids).
-- `ripgrep.ts` — optional memoized `rg` fast path for `search.ts` (`LATTICE_DISABLE_RG`, `LATTICE_RG_PATH`).
+- `search.ts` — file-contents search for `/api/search`; `regexSource` wildcards must match the frontend's `forceGraph/searchMatcher.ts`; returns absolute paths (= graph node ids). Its JS fallback (`search/jsGrepWorker.ts`) greps in a worker thread with a wall-clock budget, so a ReDoS user regex can't freeze the event loop.
+- `ripgrep.ts` — optional memoized `rg` fast path for `search.ts` (`LATTICE_DISABLE_RG`, `LATTICE_RG_PATH`); cancel-poll interval shared with the JS fallback in `search/constants.ts`.
 - `scanner.ts` / `scanner/` — project → `{nodes, links}` graph pipeline; `scanner.ts` is a re-export facade. See `scanner/CLAUDE.md`.
 - `health/` — tree-sitter per-file metrics, health score, cross-file dead code, file watcher. See `health/CLAUDE.md`.
 - `fsbrowse.ts` / `fsbrowse/` — folder-picker backend (roots, validation, listing, create-dir).
@@ -127,7 +129,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 ### Crash & logging
 
 - `processGuards.ts` — swallows only the node-pty cleanup throw; anything else logs, writes a crash file and exits 1 (hard-exits if the console is stalled).
-- `crashLog.ts` — console ring, sync `~/.lattice/logs/crash-*.log`, Node diagnostic report, `live-*.log` mirror promoted to `*-nojs.log` next boot. Best-effort, never fatal.
+- `crashLog.ts` — console ring, sync `~/.lattice/logs/crash-*.log`, Node diagnostic report, `live-*.log` mirror promoted to `*-nojs.log` next boot. Best-effort, never fatal. `crashLog/`: `format.ts` (pure), `liveMirror.ts` (live mirror + `-nojs` promotion), `retention.ts` (newest N per kind; `-nojs` has its own bucket).
 - `consoleSink.ts` — async, bounded (256 KB) console writes, so a stalled console (a Windows text selection) drops lines instead of freezing the process.
 
 ### Misc
