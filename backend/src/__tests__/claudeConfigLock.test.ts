@@ -293,3 +293,58 @@ test('a symlink at the mutex path is preserved without touching its target', asy
     assert.equal(await fs.readFile(path.join(target, 'keep.txt'), 'utf8'), 'untouched');
   });
 });
+
+// ── Legacy directory owners ────────────────────────────────────────────────
+// Older writers lock by mkdir-ing the SAME path. A directory there carries no
+// PID/owner record, so neither elapsed time nor its contents can prove its
+// writer died: it may be an orphan or a slow live legacy holder. New writers
+// therefore treat it as authoritative — they never run fn() unlocked and never
+// remove it (no rmdir "steal"); they only acquire once its owner releases it.
+
+for (const [label, marker] of [['an empty', null], ['a marker-holding', 'held-by-another-caller']] as const) {
+  test(`${label} legacy lock directory is preserved and fn never runs`, async () => {
+    await withTempDir('lattice-config-lock-legacy-', async (dir) => {
+      const lock = path.join(dir, 'lock');
+      await fs.mkdir(lock);
+      const markerPath = path.join(lock, 'holder.marker');
+      if (marker !== null) await fs.writeFile(markerPath, marker);
+      let ran = false;
+      await assert.rejects(withClaudeConfigLock(async () => { ran = true; }, { lockDir: lock, ...FAST }),
+        /could not acquire .*legacy directory has no verifiable owner\. The lock was preserved\./);
+      assert.equal(ran, false);
+      assert.equal((await fs.lstat(lock)).isDirectory(), true);
+      assert.deepEqual(await fs.readdir(lock), marker === null ? [] : ['holder.marker']);
+      if (marker !== null) assert.equal(await fs.readFile(markerPath, 'utf8'), marker);
+      await assert.rejects(fs.lstat(`${lock}.retired`), { code: 'ENOENT' });
+    });
+  });
+}
+
+test('a contended lock that frees up is acquired without stealing', async () => {
+  await withTempDir('lattice-config-lock-contended-', async (dir) => {
+    const lock = path.join(dir, 'lock');
+    // A legacy directory holder that releases (its own rmdir) well inside the
+    // normal contention backoff.
+    await fs.mkdir(lock);
+    const release = (async () => {
+      await new Promise((r) => setTimeout(r, 2));
+      await fs.rmdir(lock);
+    })();
+
+    let ran = false;
+    const result = await withClaudeConfigLock(
+      async () => {
+        ran = true;
+        return 'ok';
+      },
+      // Generous backoff so the owner file is claimed on the ordinary retry
+      // pass once the holder has released — nothing is inspected or retired.
+      { lockDir: lock, retryDelays: [5, 5, 5, 5, 5, 5], stealRetryDelays: [1, 1] },
+    );
+    await release;
+    assert.equal(ran, true);
+    assert.equal(result, 'ok');
+    // Release unlinked our owner file, leaving the path free.
+    await assert.rejects(() => fs.stat(lock), { code: 'ENOENT' });
+  });
+});
