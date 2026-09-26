@@ -1,7 +1,7 @@
 # frontend/src
 
 Vite + React + TS. This file is the authoritative frontend navigation doc
-(the package `README.md` is mostly the stock Vite template). Hand-written CSS —
+(the package [README.md](../README.md) is a brief Lattice UI overview). Hand-written CSS —
 `index.css` is an ordered `@import` list, with feature-scoped stylesheets in
 `styles/` (see `components/CLAUDE.md` for the style map). No MUI, no
 styled-components.
@@ -17,7 +17,12 @@ styled-components.
 - `extensionStyles.ts` — single source of truth for sprite shape/color per file extension. Shared by graph + Legend.
 - `taskColors.ts` — single source of truth for per-task accent colors (taskboard card stripe, graph Claude node, `W` worktree rings): a golden-angle hue walk over the backend-assigned `colorIndex` slot (`taskColor`), with an id-hash fallback for slotless tasks. `CLAUDE_ORANGE` is the fixed color for non-task Claude sessions.
 - `appConfig.ts` — `APP_CONFIG` constants (storage-key prefixes, sidebar sizing, scan-retry backoff).
-- `projectPath.ts` — `canonicalProjectPath`: uppercases the Windows drive letter so per-project keys line up; mirrors backend `projectPath.ts`.
+- `projectPath.ts` — `canonicalProjectPath` only uppercases the Windows drive
+  letter; it leaves directory casing and separators unchanged and cannot resolve
+  symlinks. The backend resolves native realpaths and preserves legacy storage
+  bindings, so never hash a frontend path to locate backend state. Compare
+  backend-stamped paths with `activeFolder` through
+  `terminal/terminalScope.ts`'s `normalizeDirPath` (or `sameProjectPath`), not `===`.
 - `storage/latticeLocalStorage.ts` — safe localStorage get/set/remove + the `lattice.graph*.<project>` key builders.
 - `utils/terminalMap.ts` — `buildTerminalMap` (taskId → terminalId lookup for task-board focus buttons).
 - `workflowTemplates.ts` — built-in templates surfaced in the Workflows picker.
@@ -45,7 +50,10 @@ styled-components.
 - `sessionStorage`: `lattice.activeFolder`, `lattice.terminals` (both per-tab so multiple tabs each track their own project + terminal list independently).
 - Backend: `<project>/.lattice/userSettings.json` (sidebar width, harness).
 
-## Type-check & tests
+## Build, type-check & tests
 
-- Type-check: `npx tsc -b` from `frontend/`. The 3d-force-graph TS warning is pre-existing — vite still runs.
-- Tests: `npm test` from `frontend/` (node:test via `tsx` over `__tests__/*.test.ts` — pure-logic units for schedulers, geometry, persistence, project-switch scoping, etc.). See `__tests__/CLAUDE.md`.
+Commands below use `frontend/` as the working directory:
+
+- Build: `npm run build` — TypeScript build plus Vite bundle.
+- Type-check: `npx tsc -b`.
+- Tests: `npm test` — node:test via `tsx` over `src/__tests__/*.test.ts` (pure-logic units for schedulers, geometry, persistence, project-switch scoping, etc.). See `__tests__/CLAUDE.md`.

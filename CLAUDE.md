@@ -15,7 +15,17 @@ one that owns what you're touching before changing it.
 - `scripts/` — dev orchestration: root `npm run dev` runs `scripts/devLoop.mjs` (preflight → `scripts/orchestrate.mjs`, which supervises both; relaunched on a dev-console soft restart). See `scripts/CLAUDE.md`.
 - `<project>/.lattice/` — per-project scratch (gitignored): `workflow-steps/`, `workflows.json`, `userSettings.json`, `health-cache.json`. **No longer holds worktrees, push-run scratch or tasks** — all moved to home-scoped paths below.
 
-Home-scoped state (`<hash>` = `sha1(canonicalPath)[:12]`):
+Home-scoped state (`<hash>` = `projectHash(projectPath)` from
+`backend/src/projectPath.ts`):
+
+Physical identity uses `realpath` for existing directories; `projectHash`
+delegates to `projectIdentity.ts`/`projectStorageHash` to preserve and durably
+bind legacy storage keys. Projects without a binding or legacy store use
+`sha1(physicalPath)[:12]`; existing bindings are authoritative. Use the shared
+path/storage helpers: never recompute hashes, rename stores, or derive a second
+lock/worktree directory from a new path spelling. See
+[PROJECT_IDENTITY.md](backend/src/PROJECT_IDENTITY.md) and
+[projectIdentity/CLAUDE.md](backend/src/projectIdentity/CLAUDE.md).
 
 - `~/.lattice/projects.json` — global index of projects with Lattice tasks.
 - `~/.lattice/per-project/<hash>/tasks.json` — task DB. Moved out of `<project>/.lattice/` after the 2026-05-09 catastrophic-deletion incident; legacy in-project files auto-migrate on first read. `run.lock` beside it is the cross-process per-project merge lock (`backend/src/projectRunLock/`).
@@ -438,7 +448,8 @@ to avoid collisions with other local dev servers.
 
 ## Worktree paths
 
-For a repo at `<repoRoot>` (with `<hash>` = `sha1(canonicalPath)[:12]`):
+For a repo at `<repoRoot>` (with `<hash>` = `projectHash(repoRoot)`, using the
+preserved storage binding described above):
 
 - worktree dir: `~/.lattice/worktrees/<hash>/<slug>-<shortid>` — **outside**
   the project tree (see the `.git`-deletion defences above). `git worktree
