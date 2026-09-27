@@ -150,6 +150,15 @@ undoes that bump, and any other failure clears the run-queue state:
   still reclaims its checkout. The palette slot is picked inside that same
   flip: the stored `colorIndex` is kept only while no other active task or
   reservation holds it (`colorSlot.ts` `reserveColorSlot(…, preferred)`).
+  **At most one start per task at a time, whatever the entry point (do not
+  regress)**: a task stays `open` until the flip, so the workflow Start step's
+  direct start and a `/run` admitted during its minutes-long checkout both
+  passed `isFreshlyRunnable` — the second setup's reconcile killed the first
+  agent and stranded the task In Progress with no pty. An in-process
+  per-task chain (`startsInFlight`, `isTaskStartInFlight`) makes a concurrent
+  second start wait for the first, then withdraw (`checkWithdrawal`) if the
+  task was claimed, or run as an ordinary retry if the first failed. Covered
+  by `__tests__/startTaskConcurrent.test.ts`.
 
 ## Worktree lifecycle hooks (`hooks/`)
 
