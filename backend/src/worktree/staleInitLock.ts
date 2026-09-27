@@ -22,6 +22,9 @@ import { isUnderManagedWorktreesDir } from './cleanupSafety.js';
 import type { ParsedWorktree } from './state.js';
 
 const STALE_AFTER_MS = 10 * 60_000;
+// `git worktree unlock` only deletes a metadata file; the bound only stops a
+// wedged git from stalling the sweep.
+const GIT_UNLOCK_TIMEOUT_MS = 15_000;
 export const GIT_INIT_LOCK_REASON = 'initializing';
 
 export type StaleInitLockDeps = {
@@ -51,7 +54,7 @@ async function lockFileMtimeMs(worktreePath: string, repoRoot: string): Promise<
 const defaultDeps: StaleInitLockDeps = {
   lockFileMtimeMs,
   unlock: async (repoRoot, worktreePath) =>
-    (await projectGit(repoRoot, ['worktree', 'unlock', worktreePath], { timeoutMs: 15_000 })).code === 0,
+    (await projectGit(repoRoot, ['worktree', 'unlock', worktreePath], { timeoutMs: GIT_UNLOCK_TIMEOUT_MS })).code === 0,
   now: () => Date.now(),
 };
 
