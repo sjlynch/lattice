@@ -73,3 +73,34 @@ export function appendOrder(lane: Task[], srcTasks: Task[], ids: string[]): stri
   newLane.push(...srcTasks);
   return newLane.map((task) => task.id);
 }
+
+// Translate a drop slot measured against the lane's *visible* (search-filtered)
+// order into the equivalent slot in the full, unfiltered lane. While the board
+// search is active the Lane renders only the matching cards, so its slot index
+// counts visible cards only; splicing that index into the full lane would land
+// the card beside hidden neighbours instead of where the indicator showed. The
+// slot is anchored on the first visible card at/after it that isn't being moved
+// (the card lands directly above that anchor); with no such card it lands right
+// after the last visible card. Both lanes must be in display order
+// (sortTasksForLane) — `visibleLane` is a subsequence of `fullLane`.
+export function fullLaneDropIndex(
+  fullLane: Task[],
+  visibleLane: Task[],
+  targetIndex: number,
+  movingIds: string[] = [],
+): number {
+  // Unfiltered: the visible lane IS the full lane.
+  if (visibleLane.length === fullLane.length) return targetIndex;
+  const fullIndexOf = (id: string) =>
+    fullLane.findIndex((candidate) => candidate.id === id);
+  for (let i = Math.max(0, targetIndex); i < visibleLane.length; i++) {
+    if (movingIds.includes(visibleLane[i].id)) continue;
+    const idx = fullIndexOf(visibleLane[i].id);
+    if (idx !== -1) return idx;
+  }
+  for (let i = visibleLane.length - 1; i >= 0; i--) {
+    const idx = fullIndexOf(visibleLane[i].id);
+    if (idx !== -1) return idx + 1;
+  }
+  return fullLane.length;
+}

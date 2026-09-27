@@ -42,11 +42,25 @@ const BULK_LANES: BulkStripLane[] = ['open', 'in_progress', 'qa'];
 // Per-lane progress strips for the Open / In Progress / QA bulk actions. The
 // active strip clears as soon as every targeted task has been spawned or
 // accepted into the queue; it then flips to a short auto-dismissing summary.
-export function useBulkRunStrips(tasks: Task[]) {
+//
+// Strips are per project: the launcher stays mounted across project switches,
+// so a switch drops every record and lane timer. Otherwise project A's ids —
+// absent from B's (initially empty) task list — would read as spawned and flash
+// "Started N tasks" on B, and an A resume would spin on B until SAFETY_MS since
+// A's `task-spawned` events stop arriving.
+export function useBulkRunStrips(activeFolder: string, tasks: Task[]) {
   const [records, setRecords] = useState<
     Partial<Record<BulkStripLane, BulkStripRecord>>
   >({});
   const timersRef = useRef<Partial<Record<BulkStripLane, LaneTimers>>>({});
+
+  // Reset during render (not in an effect) so the first render under the new
+  // folder never derives strips — or fires `finish` — from the old records.
+  const [recordsFolder, setRecordsFolder] = useState(activeFolder);
+  if (recordsFolder !== activeFolder) {
+    setRecordsFolder(activeFolder);
+    setRecords({});
+  }
 
   const dismissBulk = useCallback((lane: BulkStripLane) => {
     const t = timersRef.current[lane];
@@ -149,7 +163,8 @@ export function useBulkRunStrips(tasks: Task[]) {
     }
   }, [records, byId, finish]);
 
-  // Clear any pending timers on unmount (folder switch / panel close).
+  // Clear every pending lane timer on a folder switch or unmount, so no old
+  // project's safety/dismiss timer fires into the next project's strips.
   useEffect(
     () => () => {
       for (const lane of BULK_LANES) {
@@ -157,8 +172,9 @@ export function useBulkRunStrips(tasks: Task[]) {
         if (t?.safety) clearTimeout(t.safety);
         if (t?.dismiss) clearTimeout(t.dismiss);
       }
+      timersRef.current = {};
     },
-    [],
+    [activeFolder],
   );
 
   const bulkStrips = useMemo(() => {

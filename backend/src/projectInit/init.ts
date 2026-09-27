@@ -31,7 +31,11 @@ import {
 } from '../worktree/staleGitLocks.js';
 import { buildStarterGitignore } from './gitignoreTemplate.js';
 import { probeProjectGit } from './probe.js';
-import { ProjectInitError, type ProjectInitResult } from './types.js';
+import {
+  ProjectInitError,
+  type ProjectGitProbe,
+  type ProjectInitResult,
+} from './types.js';
 
 // The quick calls (`init`, `diff --cached`, `rev-parse`).
 const GIT_TIMEOUT_MS = 30_000;
@@ -169,14 +173,9 @@ async function runSlowGit(
   );
 }
 
-async function runInit(
-  root: string,
-  opts: InitProjectGitOptions,
-  deps: InitProjectGitDeps,
-): Promise<ProjectInitResult> {
-  // Re-probe inside the lock: the caller's preview may be seconds old, and the
-  // loser of a two-tab race must see the repo the winner just created.
-  const probe = await probeProjectGit(root);
+// Guard the re-probed state; returns whether this is the "finish an unborn
+// HEAD" path rather than a fresh `git init`.
+function assertInitable(root: string, probe: ProjectGitProbe): boolean {
   if (probe.state === 'unavailable') {
     throw new ProjectInitError(
       'git-unavailable',
@@ -196,7 +195,14 @@ async function runInit(
       probe.reason ?? `cannot initialize a git repository at ${root} (${probe.state})`,
     );
   }
+  return finishingUnborn;
+}
 
+async function prepareRepo(
+  root: string,
+  finishingUnborn: boolean,
+  deps: InitProjectGitDeps,
+): Promise<void> {
   if (finishingUnborn) {
     // A previous attempt whose git was killed without `runSlowGit`'s cleanup
     // (an older build's timeout, a crash, a closed terminal) leaves
@@ -211,22 +217,24 @@ async function runInit(
           'Wait for it to finish (or delete the lock file if no git command is running) and try again.',
       );
     }
-  } else {
-    let init = await bareGit(root, ['init', '-b', 'main']);
-    if (init.code !== 0) {
-      // `-b` landed in git 2.28; on an older git fall back and report whichever
-      // branch name it defaults to.
-      init = await bareGit(root, ['init']);
-    }
-    if (init.code !== 0) {
-      throw new ProjectInitError(
-        'git-failed',
-        'git init failed',
-        init.stderr.trim() || init.stdout.trim(),
-      );
-    }
+    return;
   }
+  let init = await bareGit(root, ['init', '-b', 'main']);
+  if (init.code !== 0) {
+    // `-b` landed in git 2.28; on an older git fall back and report whichever
+    // branch name it defaults to.
+    init = await bareGit(root, ['init']);
+  }
+  if (init.code !== 0) {
+    throw new ProjectInitError(
+      'git-failed',
+      'git init failed',
+      init.stderr.trim() || init.stdout.trim(),
+    );
+  }
+}
 
+async function writeIgnoreFiles(root: string, opts: InitProjectGitOptions): Promise<void> {
   const ignorePath = path.join(root, '.gitignore');
   // An explicit `gitignore` always wins, even over a file already on disk. It
   // only ever comes from the dialog, where the user was shown that exact text
@@ -249,7 +257,12 @@ async function runInit(
   // Now possible — it writes into `.git/info/exclude`, which only exists once
   // `git init` has run.
   await ensureLatticeRepoExclude(root);
+}
 
+async function stageAndCommit(
+  root: string,
+  deps: InitProjectGitDeps,
+): Promise<{ filesCommitted: number; commit: string | null }> {
   const add = await runSlowGit(root, ['add', '-A'], deps);
   if (add.code !== 0) {
     throw new ProjectInitError(
@@ -288,15 +301,32 @@ async function runInit(
     timeoutMs: GIT_TIMEOUT_MS,
   });
   const commit = sha.code === 0 && sha.stdout.trim() ? sha.stdout.trim() : null;
+  return { filesCommitted, commit };
+}
 
-  // The navbar chip and the timeline scrubber arm their watchers lazily and
-  // per project; both subscribed to a folder that had no `.git`, so without
-  // this they stay dead until the user reloads the page.
+// The navbar chip and the timeline scrubber arm their watchers lazily and
+// per project; both subscribed to a folder that had no `.git`, so without
+// this they stay dead until the user reloads the page.
+async function rearmGitWatchers(root: string): Promise<void> {
   try {
     await Promise.all([rearmGitBranchWatcher(root), rearmGitStatusWatcher(root)]);
   } catch (err) {
     console.warn('[projectInit] could not re-arm the git watchers:', err);
   }
+}
+
+async function runInit(
+  root: string,
+  opts: InitProjectGitOptions,
+  deps: InitProjectGitDeps,
+): Promise<ProjectInitResult> {
+  // Re-probe inside the lock: the caller's preview may be seconds old, and the
+  // loser of a two-tab race must see the repo the winner just created.
+  const finishingUnborn = assertInitable(root, await probeProjectGit(root));
+  await prepareRepo(root, finishingUnborn, deps);
+  await writeIgnoreFiles(root, opts);
+  const { filesCommitted, commit } = await stageAndCommit(root, deps);
+  await rearmGitWatchers(root);
 
   return {
     toplevel: root,

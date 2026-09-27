@@ -35,7 +35,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | POST   | /api/tasks/reorder                 | Persist one lane's card order `{project, status, ids}` |
 | PATCH  | /api/tasks/:id                     | Update title / description / status. Accepts JSON OR `text/markdown` body (replaces description; `# Heading` replaces title too) |
 | POST   | /api/tasks/:id/append-summary      | Append a summary section. JSON `{summary}` OR `text/markdown` body |
-| DELETE | /api/tasks/:id                     | PERMANENTLY remove a task (not a move to the `deleted` lane — PATCH `status` for that) and tear down its worktree + branch. A branch with commits not on HEAD is KEPT: the response then carries `keptBranch: {name, unmergedCommits, hint}`. Irreversible |
+| DELETE | /api/tasks/:id                     | PERMANENTLY remove a task (not a move to the `deleted` lane — PATCH `status` for that) and tear down its worktree + branch. A branch with commits not on HEAD is KEPT: the response then carries `keptBranch: {name, unmergedCommits, hint}`. **409** while the task is mid-merge — retry. Irreversible |
 | POST   | /api/tasks/:id/run                 | Run an Open task. Optional `{harness, piModel}`. Returns `{accepted, queued}` — see the async note below |
 | POST   | /api/tasks/:id/resume              | Re-spawn the agent in an existing in-progress worktree. Same body and `{accepted, queued}` shape as `/run` |
 | POST   | /api/tasks/:id/cancel-queued-run   | Drop a still-queued run, reverting the task to plain Open. Idempotent (no-op if it already started) |
@@ -46,7 +46,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | GET    | /api/merge-runs/:id                | Snapshot one merge run by id (404 once it's been forgotten) |
 | POST   | /api/merge-runs/:id/cancel         | Cancel a merge run |
 | GET    | /api/workflows?project=            | List workflow definitions — this is how you get the `:id` for the run call below |
-| POST   | /api/workflows/:id/run             | Start a workflow run; optional `{harnessOverride, piModelOverride}` (Pi model applies only with `harnessOverride: "pi"`). One run per project: **409** `active-run-exists` while another is active; transient **503** `workflow-recovering` with `Retry-After: 2` while recovery is loading |
+| POST   | /api/workflows/:id/run             | Start a workflow run; optional `{harnessOverride, piModelOverride}` (Pi model applies only with `harnessOverride: "pi"`). One run per project: **409** `active-run-exists` while another is active; transient **503** `workflow-recovering` with `Retry-After: 2` while recovery is loading; optional `?project=` pin → **404** for another project's workflow |
 | GET    | /api/workflow-runs/active?project= | Active workflow runs |
 | GET    | /api/workflow-runs/:runId?project= | `{run}` — one run by id, incl. a recently finished one (404 once forgotten / after a restart) |
 | POST   | /api/workflow-runs/:runId/cancel   | Cancel an active workflow run |
