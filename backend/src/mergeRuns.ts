@@ -11,13 +11,13 @@
 // are rejected. Inside a run, each task acquires the per-task lock from
 // mergeLocks.ts, so a manual /merge call landing during a run can't race.
 
-import { listTasks } from './tasks.js';
+import { listTasks, type Task } from './tasks.js';
 import {
   isRepoMaintenanceRunning,
   runRepoMaintenance,
   waitForRepoMaintenance,
 } from './worktree/repoMaintenance.js';
-import { RepoMaintenanceBusyError } from './projectRunLock.js';
+import { RepoMaintenanceBusyError, type ProjectRunLockHandle } from './projectRunLock.js';
 import { processTarget } from './mergeRuns/processTarget.js';
 import { runPreflight } from './mergeRuns/preflight.js';
 import {
@@ -174,9 +174,59 @@ export async function startMergeRun(
 
   const targets = await loadRunTargets(canonicalPath, projectLock, deps.listTasks);
 
-  // Charge only after winning project ownership. A second backend losing the
-  // lock is contention, not a failed recovery attempt. Explicit retries remain
-  // available and grant the next interruption a fresh recovery allowance.
+  await chargeRecoveryBudget(canonicalPath, targets, options, projectLock);
+
+  const run = createRunRecord(targets, canonicalPath);
+  runState.runs.set(run.id, run);
+  // Mark live BEFORE the first emit: from here until the worker's finalize
+  // resolves, this record is backed by a worker, and the orphan reaper must
+  // leave it alone.
+  runState.markRunLive(run.id);
+  notify(runState, { type: 'started', run: snapshot(run) });
+
+  // Run the worker async. Fire-and-forget; consumers track via WS / GET.
+  //
+  // finalizeMergeRun guarantees the auto-restart (for tasks that became ready
+  // mid-run) fires only AFTER the project lock is released and finishRun has
+  // moved this run off 'running'. Restarting inline from runTeardown — while
+  // this run still held the lock and was still 'running' — was rejected by the
+  // fresh run's 409 / lock gates and silently swallowed.
+  void finalizeMergeRun({
+    body: () => runMergeRunBody(
+      run, targets, { projectPath: canonicalPath, backendOrigin }, deps, lockMode,
+    ),
+    onError: (err) => {
+      console.error('[mergeRuns] run worker crashed', err);
+      run.status = 'errored';
+      run.errored.push({ taskId: '(run)', error: err instanceof Error ? err.message : String(err) });
+      run.finishedAt = Date.now();
+      notify(runState, { type: 'completed', run: snapshot(run) });
+    },
+    releaseLock: async () => {
+      await projectLock?.release().catch(() => undefined);
+    },
+    restart: () => restartMergeRun(canonicalPath, backendOrigin),
+  }).finally(() => {
+    // Worker is gone (completed, cancelled, or crashed). Any `running` record
+    // left behind is now reapable rather than a permanent block.
+    runState.markRunSettled(run.id);
+    scheduleRepoMaintenance(canonicalPath);
+  });
+
+  return snapshot(run);
+}
+
+// Charge only after winning project ownership. A second backend losing the
+// lock is contention, not a failed recovery attempt. Explicit retries remain
+// available and grant the next interruption a fresh recovery allowance.
+// No worker exists yet, so a refusal releases the lock here before rethrowing
+// (an automatic recovery also leaves an errored "(recovery)" run saying why).
+async function chargeRecoveryBudget(
+  canonicalPath: string,
+  targets: Task[],
+  options: StartMergeRunOptions,
+  projectLock: ProjectRunLockHandle | null,
+): Promise<void> {
   try {
     if (options.automaticRecovery) {
       const budget = await claimRecoveryAttempt(canonicalPath, 'merge', targets.map((t) => t.id).sort().join('|'));
@@ -205,77 +255,58 @@ export async function startMergeRun(
     await projectLock?.release();
     throw err;
   }
+}
 
-  const run = createRunRecord(targets, canonicalPath);
-  runState.runs.set(run.id, run);
-  // Mark live BEFORE the first emit: from here until the worker's finalize
-  // resolves, this record is backed by a worker, and the orphan reaper must
-  // leave it alone.
-  runState.markRunLive(run.id);
-  notify(runState, { type: 'started', run: snapshot(run) });
+type MergeRunBodyContext = { projectPath: string; backendOrigin: string };
 
-  // Run the worker async. Fire-and-forget; consumers track via WS / GET.
-  //
-  // finalizeMergeRun guarantees the auto-restart (for tasks that became ready
-  // mid-run) fires only AFTER the project lock is released and finishRun has
-  // moved this run off 'running'. Restarting inline from runTeardown — while
-  // this run still held the lock and was still 'running' — was rejected by the
-  // fresh run's 409 / lock gates and silently swallowed.
-  void finalizeMergeRun({
-    body: async () => {
-      console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
+// The worker body finalizeMergeRun drives: preflight, the per-target loop,
+// teardown (always, even when the loop throws), the post-merge hook, then
+// finishRun. Resolves to whether tasks became ready mid-run, i.e. a fresh run
+// is owed once this one's lock is released.
+async function runMergeRunBody(
+  run: MergeRun,
+  targets: Task[],
+  ctx: MergeRunBodyContext,
+  deps: { runPreflight: typeof runPreflight; processTarget: typeof processTarget },
+  lockMode: MergeRunLockMode,
+): Promise<boolean> {
+  console.log(`[merge-run] ${run.id} started — ${targets.length} task(s) to merge`);
 
-      const { runSnapshot, baselineHead } = await deps.runPreflight(canonicalPath, run);
-      const runCtx = {
-        projectPath: canonicalPath,
-        backendOrigin,
-        baselineHead,
-        state: runState,
-      };
+  const { runSnapshot, baselineHead } = await deps.runPreflight(ctx.projectPath, run);
+  const runCtx = {
+    projectPath: ctx.projectPath,
+    backendOrigin: ctx.backendOrigin,
+    baselineHead,
+    state: runState,
+  };
 
-      let shouldRestart = false;
-      try {
-        for (const seed of targets) {
-          const action = await deps.processTarget(seed, run, runCtx);
-          if (action === 'halt') break;
-        }
-      } finally {
-        // Unexpected task/read errors must restore the user's captured edits
-        // in this session too, before the outer worker releases run.lock.
-        shouldRestart = await runTeardown(
-          canonicalPath, run, runSnapshot, targets, lockMode,
-        );
-      }
-      await runPostMergeHook(run, canonicalPath, backendOrigin);
-      finishRun(run);
-      return shouldRestart;
-    },
-    onError: (err) => {
-      console.error('[mergeRuns] run worker crashed', err);
-      run.status = 'errored';
-      run.errored.push({ taskId: '(run)', error: err instanceof Error ? err.message : String(err) });
-      run.finishedAt = Date.now();
-      notify(runState, { type: 'completed', run: snapshot(run) });
-    },
-    releaseLock: async () => {
-      await projectLock?.release().catch(() => undefined);
-    },
-    restart: () => restartMergeRun(canonicalPath, backendOrigin),
-  }).finally(() => {
-    // Worker is gone (completed, cancelled, or crashed). Any `running` record
-    // left behind is now reapable rather than a permanent block.
-    runState.markRunSettled(run.id);
-    // Git housekeeping, once, now that the burst of merges is over — auto-gc
-    // is off for every git Lattice runs (worktree/gitAutoGc.ts). After a quiet
-    // minute (a workflow's Merge step often starts the next run right away,
-    // and then this skips), and never while the project is merging.
-    const maintenance = setTimeout(() => {
-      void runRepoMaintenance(canonicalPath, { isBusy: (p) => getActiveRunForProject(p) !== null });
-    }, REPO_MAINTENANCE_DELAY_MS);
-    maintenance.unref?.();
-  });
+  let shouldRestart = false;
+  try {
+    for (const seed of targets) {
+      const action = await deps.processTarget(seed, run, runCtx);
+      if (action === 'halt') break;
+    }
+  } finally {
+    // Unexpected task/read errors must restore the user's captured edits
+    // in this session too, before the outer worker releases run.lock.
+    shouldRestart = await runTeardown(
+      ctx.projectPath, run, runSnapshot, targets, lockMode,
+    );
+  }
+  await runPostMergeHook(run, ctx.projectPath, ctx.backendOrigin);
+  finishRun(run);
+  return shouldRestart;
+}
 
-  return snapshot(run);
+// Git housekeeping, once, now that the burst of merges is over — auto-gc
+// is off for every git Lattice runs (worktree/gitAutoGc.ts). After a quiet
+// minute (a workflow's Merge step often starts the next run right away,
+// and then this skips), and never while the project is merging.
+function scheduleRepoMaintenance(canonicalPath: string): void {
+  const maintenance = setTimeout(() => {
+    void runRepoMaintenance(canonicalPath, { isBusy: (p) => getActiveRunForProject(p) !== null });
+  }, REPO_MAINTENANCE_DELAY_MS);
+  maintenance.unref?.();
 }
 
 function finishRun(run: MergeRun): void {

@@ -28,6 +28,12 @@ import { projectGit } from './projectGit.js';
 export const STALE_GIT_LOCK_AFTER_MS = 10 * 60_000;
 // Process start times and file mtimes come from different clocks' rounding.
 const START_TIME_SLACK_MS = 2_000;
+// Local rev-parse / symbolic-ref probes answer instantly; the bound only stops a
+// wedged git (e.g. a hung filesystem) from stalling lock recovery.
+const GIT_PROBE_TIMEOUT_MS = 15_000;
+// Listing every process (PowerShell startup on Windows) can be slow on a busy
+// machine, so it gets more headroom than a git probe.
+const PROCESS_LIST_TIMEOUT_MS = 20_000;
 
 export type BlockingGitLock = {
   path: string;
@@ -59,7 +65,7 @@ export function gitLockPathFromError(message: string): string | null {
 
 async function lockCandidates(repoRoot: string): Promise<string[]> {
   const dirs = await projectGit(repoRoot, ['rev-parse', '--absolute-git-dir', '--git-common-dir'], {
-    timeoutMs: 15_000,
+    timeoutMs: GIT_PROBE_TIMEOUT_MS,
   });
   if (dirs.code !== 0) return [];
   const [gitDirRaw, commonRaw] = dirs.stdout.split(/\r?\n/).map((s) => s.trim());
@@ -72,7 +78,7 @@ async function lockCandidates(repoRoot: string): Promise<string[]> {
     path.join(gitDir, 'ORIG_HEAD.lock'),
     path.join(commonDir, 'packed-refs.lock'),
   ];
-  const head = await projectGit(repoRoot, ['symbolic-ref', '-q', 'HEAD'], { timeoutMs: 15_000 });
+  const head = await projectGit(repoRoot, ['symbolic-ref', '-q', 'HEAD'], { timeoutMs: GIT_PROBE_TIMEOUT_MS });
   const ref = head.code === 0 ? head.stdout.trim() : '';
   if (/^refs\/heads\/[^\0]+$/.test(ref) && !ref.split('/').includes('..')) {
     out.push(path.join(commonDir, ...ref.split('/')) + '.lock');
@@ -104,7 +110,7 @@ async function gitProcessStartTimes(): Promise<number[] | null> {
         "Get-Process | Where-Object { $_.ProcessName -eq 'git' -or $_.ProcessName -like 'git-*' } | " +
         'ForEach-Object { try { ([DateTimeOffset]$_.StartTime).ToUnixTimeMilliseconds() } catch { -1 } }';
       const r = await exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], os.tmpdir(), {
-        timeoutMs: 20_000,
+        timeoutMs: PROCESS_LIST_TIMEOUT_MS,
       });
       if (r.code !== 0) return null;
       return r.stdout
@@ -113,7 +119,7 @@ async function gitProcessStartTimes(): Promise<number[] | null> {
         .filter(Boolean)
         .map((l) => (Number(l) > 0 ? Number(l) : NaN));
     }
-    const r = await exec('ps', ['-A', '-o', 'etime=,comm='], os.tmpdir(), { timeoutMs: 20_000 });
+    const r = await exec('ps', ['-A', '-o', 'etime=,comm='], os.tmpdir(), { timeoutMs: PROCESS_LIST_TIMEOUT_MS });
     if (r.code !== 0) return null;
     const now = Date.now();
     const out: number[] = [];
