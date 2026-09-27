@@ -47,6 +47,7 @@ import {
   workflowStepAgentId,
 } from '../workflowRuns/sessionSpawner.js';
 import { registerAgentSession } from '../agentSessions.js';
+import { effectiveStepHarness } from '../workflowRuns/stepMarkdown.js';
 import { forgetAgentQuiescence, markAgentReadopted } from '../agentQuiescence.js';
 import { proxyListSessionsOrNull } from '../terminalServerClient.js';
 import type { WorkflowRun } from '../workflowRuns/state.js';
@@ -311,6 +312,9 @@ async function readoptRun(
       agentId: workflowStepAgentId(run.id, run.currentStepIndex),
       projectPath: run.projectPath,
       label: `workflow step ${run.currentStepIndex + 1}`,
+      // Same harness tag as the original spawn, so the re-adopted node keeps
+      // its color.
+      harness: effectiveStepHarness(wf, run, run.currentStepIndex),
     });
   }
   // The previous process had already received this step's Stop and was only

@@ -4,8 +4,9 @@
 // the rightmost tick is "WT" — including it in the range surfaces
 // uncommitted changes as rings on the graph.
 
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState, type MouseEvent } from 'react';
 import type { GitCommit } from '../../api';
+import { CommitTooltip } from './CommitTooltip';
 import {
   formatTimelineTickLabel,
   formatTimelineTickTooltip,
@@ -33,6 +34,8 @@ export const TimelineScrubber = memo(function TimelineScrubber({
 }: Props) {
   const trackRef = useRef<HTMLDivElement>(null);
   const [hover, setHover] = useState<number | null>(null);
+  // Range chip under the pointer, anchored at its top-center (viewport coords).
+  const [chipTip, setChipTip] = useState<{ chip: 'from' | 'to'; x: number; top: number } | null>(null);
 
   // Tick count = commits + 1 working-tree slot.
   const tickCount = commits.length + 1;
@@ -72,6 +75,21 @@ export const TimelineScrubber = memo(function TimelineScrubber({
   const leftPct = tickPositions[left] ?? 0;
   const rightPct = tickPositions[right] ?? 100;
 
+  const chipHoverProps = (chip: 'from' | 'to') => ({
+    onMouseEnter: (e: MouseEvent<HTMLElement>) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      setChipTip({ chip, x: r.left + r.width / 2, top: r.top });
+    },
+    onMouseLeave: () => setChipTip(null),
+    'aria-label': tooltipFor(chip === 'from' ? left : right),
+  });
+
+  let trackTip: { x: number; top: number } | null = null;
+  if (hover !== null && activeHandle === null && trackRef.current) {
+    const r = trackRef.current.getBoundingClientRect();
+    trackTip = { x: r.left + ((tickPositions[hover] ?? 0) / 100) * r.width, top: r.top };
+  }
+
   return (
     <div className="timeline-scrubber">
       <div className="timeline-scrubber-header">
@@ -80,11 +98,11 @@ export const TimelineScrubber = memo(function TimelineScrubber({
           {hasUncommitted && <span className="ts-dirty"> · dirty WT</span>}
         </span>
         <span className="ts-range">
-          <span className="ts-range-chip ts-from" title={tooltipFor(left)}>
+          <span className="ts-range-chip ts-from" {...chipHoverProps('from')}>
             {labelFor(left)}
           </span>
           <span className="ts-range-arrow">→</span>
-          <span className="ts-range-chip ts-to" title={tooltipFor(right)}>
+          <span className="ts-range-chip ts-to" {...chipHoverProps('to')}>
             {labelFor(right)}
           </span>
         </span>
@@ -138,15 +156,13 @@ export const TimelineScrubber = memo(function TimelineScrubber({
           aria-valuenow={right}
           tabIndex={0}
         />
-        {hover !== null && activeHandle === null && (
-          <div
-            className="ts-hover-tip"
-            style={{ left: `${tickPositions[hover] ?? 0}%` }}
-          >
-            {labelFor(hover)}
-          </div>
+        {hover !== null && trackTip && (
+          <CommitTooltip x={trackTip.x} top={trackTip.top} text={tooltipFor(hover)} />
         )}
       </div>
+      {chipTip && (
+        <CommitTooltip x={chipTip.x} top={chipTip.top} text={tooltipFor(chipTip.chip === 'from' ? left : right)} />
+      )}
     </div>
   );
 });

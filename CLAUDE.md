@@ -321,8 +321,10 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   label; subagents are satellites with their own labels (`showSubagentLabels`
   graph setting, off by default, prefixes the `agent_type`). Claude hooks, Codex
   `.codex/hooks.json` and the Pi `lattice-activity.ts` extension all decode in
-  `backend/src/activityHook.ts`. Non-worktree sessions (push / workflow step /
-  post-merge) are fixed orange (`backend/src/agentSessions.ts`).
+  `backend/src/activityHook.ts`. Non-worktree sessions are colored by harness like
+  terminal ones where the harness is known — workflow steps (the step's
+  effective harness) — and fixed orange otherwise (push / QA / post-merge;
+  `backend/src/agentSessions.ts`).
 - **Any agent session in an opened project** (even one the user started) gets a
   node: project open merges activity hooks into the project's
   `.claude/settings.local.json` (`projectClaudeHooks.ts`, opt-out

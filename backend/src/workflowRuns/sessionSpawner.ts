@@ -176,7 +176,8 @@ export function enqueueWorkflowStepSession(opts: {
   projectPath: string;
   stepDir: string;
   command: string;
-  // Informational: every harness now gets a graph presence node.
+  // The step's effective harness (run override, else the step's own) — tags
+  // the graph presence node so it is drawn in that harness's color.
   harness: Workflow['steps'][number]['harness'];
   deps?: Partial<WorkflowStepSessionDeps>;
   // A Run tests step never errors the run: a failed spawn is handed here
@@ -257,13 +258,15 @@ export function enqueueWorkflowStepSession(opts: {
         await killWorkflowStepServer(sess.id, deps);
         return;
       }
-      // Presence: an orange agent node for this non-worktree session. Every
-      // harness reports activity now (Claude hooks, Codex hooks.json, the Pi
-      // activity extension — see stepSpawner.installStepCallbacks).
+      // Presence: an agent node for this non-worktree session, colored by
+      // harness (Claude orange, Codex white, Pi blue). Every harness reports
+      // activity (Claude hooks, Codex hooks.json, the Pi activity extension —
+      // see stepSpawner.installStepCallbacks).
       registerAgentSession({
         agentId: workflowStepAgentId(run.id, stepIndex),
         projectPath,
         label: `workflow step ${stepIndex + 1}`,
+        ...(opts.harness ? { harness: opts.harness } : {}),
       });
 
       notify({

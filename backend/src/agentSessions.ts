@@ -24,9 +24,10 @@ export type AgentSession = {
   projectPath: string;
   label: string;
   startedAt: number;
-  // Set only for a project session (an agent in a terminal the user opened),
-  // so the graph can color it by harness. Lattice-run sessions (push /
-  // workflow step / post-merge hook) leave it unset and keep the fixed orange.
+  // The harness running the session, so the graph can color it (Claude
+  // orange, Codex white, Pi blue). Set for project sessions (an agent in a
+  // terminal the user opened) and workflow steps; push / QA / post-merge hook
+  // sessions leave it unset and keep the fixed orange.
   harness?: AgentHarness;
 };
 

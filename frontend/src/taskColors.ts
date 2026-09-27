@@ -18,16 +18,16 @@ import type { AgentSession, Task } from './api';
 export const CLAUDE_ORANGE = '#d97757';
 
 // A Codex / Pi agent running in a terminal the user opened (sidebar `+` or a
-// startup terminal) — white and blue, so the harnesses read apart at a glance.
-// Lattice-run sessions (workflow steps, push, post-merge hooks) keep
-// CLAUDE_ORANGE whatever their harness, and task agents keep their task color.
+// startup terminal) or as a workflow step — white and blue, so the harnesses
+// read apart at a glance. Push / QA / post-merge sessions keep CLAUDE_ORANGE,
+// and task agents keep their task color.
 export const CODEX_WHITE = '#f1f3f7';
 export const PI_BLUE = '#4d8dff';
 
-// The graph color of a non-task agent session: a terminal Codex / Pi session
-// (the backend tags project sessions with their harness) gets its harness
-// color; every other session — a terminal Claude, or any Lattice-run session —
-// stays Claude orange.
+// The graph color of a non-task agent session: a Codex / Pi session the
+// backend tagged with its harness (terminal sessions and workflow steps) gets
+// its harness color; everything else — Claude, or an untagged push / QA /
+// post-merge session — stays Claude orange.
 export function sessionColor(session: Pick<AgentSession, 'harness'>): string {
   if (session.harness === 'codex') return CODEX_WHITE;
   if (session.harness === 'pi') return PI_BLUE;

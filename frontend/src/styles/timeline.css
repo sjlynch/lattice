@@ -203,24 +203,30 @@
   background: var(--accent-hover);
 }
 
-.ts-hover-tip {
-  position: absolute;
-  bottom: 100%;
-  margin-bottom: 12px;
-  transform: translateX(-50%);
-  background: rgba(15, 17, 21, 0.95);
+.commit-tooltip {
+  /* Portaled to <body> (CommitTooltip.tsx); left is clamped in JS. */
+  position: fixed;
+  z-index: 1000;
+  max-width: min(520px, calc(100vw - 16px));
+  max-height: 60vh;
+  overflow: hidden;
+  background: rgba(15, 17, 21, 0.97);
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
-  font-size: 10.5px;
-  color: var(--text-primary);
-  padding: 4px 8px;
-  white-space: nowrap;
-  pointer-events: none;
-  max-width: 320px;
-  overflow: hidden;
-  text-overflow: ellipsis;
   box-shadow: var(--shadow-md);
-  /* Above the handles (z-index: 3) so the commit-message tooltip is
-     never clipped by a thumb sitting at the same tick. */
-  z-index: 4;
+  padding: 6px 10px;
+  font-size: 11px;
+  color: var(--text-primary);
+  pointer-events: none;
+}
+.commit-tooltip-meta {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+  margin-bottom: 4px;
+}
+.commit-tooltip-message {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  line-height: 1.45;
 }

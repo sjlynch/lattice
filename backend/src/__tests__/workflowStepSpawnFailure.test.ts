@@ -4,7 +4,9 @@ import {
   cancelWorkflowStepSessions,
   enqueueWorkflowStepSession,
   killWorkflowStepSession,
+  workflowStepAgentId,
 } from '../workflowRuns/sessionSpawner.js';
+import { listAgentSessions, unregisterAgentSession } from '../agentSessions.js';
 import { subscribe, type WorkflowRunEvent, type WorkflowRun } from '../workflowRuns/state.js';
 import { queueState } from '../spawnQueue/state.js';
 import { SPAWN_QUEUE_CONFIG } from '../spawnQueue/config.js';
@@ -220,4 +222,31 @@ test('advancing a spawned workflow step kills its terminal session (leak fix)', 
     ['wf-step-session-advance'],
     'the finishing step session is killed exactly once on advance',
   );
+});
+
+test("a spawned step's presence node carries its harness (graph color: Codex white, Pi blue)", async () => {
+  queueState.accounting.setSoftCap(1);
+  queueState.accounting.reconcile(0, Date.now());
+
+  const run = makeRun();
+  const agentId = workflowStepAgentId(run.id, 0);
+  try {
+    await enqueueWorkflowStepSession({
+      run,
+      stepIndex: 0,
+      projectPath: run.projectPath,
+      stepDir: '/tmp/workflow-step-harness',
+      command: 'pi --approve',
+      harness: 'pi',
+      deps: {
+        proxyCreateSession: async () => ({ id: 'wf-step-session-harness' }),
+      },
+    });
+    const session = listAgentSessions(run.projectPath).find((s) => s.agentId === agentId);
+    assert.equal(session?.harness, 'pi');
+  } finally {
+    unregisterAgentSession(agentId);
+    queueState.accounting.setSoftCap(SPAWN_QUEUE_CONFIG.softCap);
+    queueState.accounting.reconcile(0, Date.now() + 1);
+  }
 });

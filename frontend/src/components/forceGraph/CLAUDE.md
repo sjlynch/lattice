@@ -19,8 +19,8 @@ label physics in `labelPhysics/CLAUDE.md`.
   **label**, and a **satellite** per subagent (with its own file label). Lives
   in `graph.scene()` (NOT `graphData`), so an agent appearing/finishing never
   reheats the sim. Worktree (`task-activity`) + non-worktree (`agent-activity`)
-  sessions alike — the latter orange, or white / blue for a terminal Codex / Pi
-  (`taskColors.sessionColor`). Activity for an agent whose node hasn't arrived
+  sessions alike — the latter orange, or white / blue for a terminal or workflow-step
+  Codex / Pi (`taskColors.sessionColor`). Activity for an agent whose node hasn't arrived
   yet (its presence rides a different socket) is held in
   `agentActivityBuffer.ts` and replayed when it does — dropping it left a
   label-less dot.
