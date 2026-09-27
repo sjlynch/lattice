@@ -10,6 +10,11 @@ export const GIT_LOG_FIELD_SEPARATOR = '␟';
 // custom record header marker that's unique enough to split on safely.
 export const GIT_LOG_COMMIT_HEADER = '␃COMMIT␃';
 
+// Ends a commit's metadata. The last metadata field is the commit body (`%b`),
+// which spans lines, so "first newline ends the header" no longer holds; the
+// name-status block starts after this marker instead.
+export const GIT_LOG_MESSAGE_END = '␃ENDMSG␃';
+
 const STATUS_PRIORITY: Record<GitFileStatus, number> = {
   M: 1,
   A: 2,

@@ -12,6 +12,8 @@ export type GitCommit = {
   sha: string;
   shortSha: string;
   subject: string;
+  // Commit message body after the subject (`%b`), trimmed; '' when none.
+  body: string;
   authorName: string;
   date: number; // ms since epoch
   changes: GitCommitChange[];

@@ -133,6 +133,7 @@ export function useTaskBoardController(activeFolder: string) {
   // action map. Owns the strip state and bridges the resume notifier back to
   // the spawn handler via `setBulkSpawnNotifier`.
   const { runAllActionByLane, bulkStrips, dismissBulk } = useLaneBulkActions({
+    activeFolder,
     tasks,
     setBulkSpawnNotifier,
     runAllOpen,

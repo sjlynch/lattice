@@ -1,5 +1,5 @@
 import type http from 'node:http';
-import { detectHarnesses } from '../harnessDetect.js';
+import { detectHarnesses, onHarnessAvailabilityChange } from '../harnessDetect.js';
 import { ensurePiSubagentsInstalled } from '../piSubagents.js';
 import { ensurePiMcpInstalled } from '../piMcp.js';
 import { reconcilePiModelsJson, refreshEndpointDiscovery } from '../piModels.js';
@@ -67,6 +67,14 @@ export function startHarnessDetection(): void {
   // shared Lattice-owned dir so the first Pi spawn that enables an MCP server
   // has a shim target. Fire-and-forget; never throws. See piMcp.ts.
   ensurePiMcpInstalled().catch(() => {});
+  // A boot probe that timed out reports `pi` unavailable and the two installs
+  // above skip; when the background re-probe finds it, retry them (both are
+  // single-flight and short-circuit once installed).
+  onHarnessAvailabilityChange((avail) => {
+    if (!avail.pi) return;
+    ensurePiSubagentsInstalled().catch(() => {});
+    ensurePiMcpInstalled().catch(() => {});
+  });
   // Reconcile any Lattice-managed Pi providers into ~/.pi/agent/models.json so
   // the endpoints configured in Settings → Pi survive an out-of-band edit and
   // are present before the first spawn. Fire-and-forget; never throws.

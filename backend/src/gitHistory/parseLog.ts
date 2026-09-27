@@ -1,6 +1,7 @@
 import {
   GIT_LOG_COMMIT_HEADER,
   GIT_LOG_FIELD_SEPARATOR,
+  GIT_LOG_MESSAGE_END,
   normalizeGitPath,
   parseNameStatusToken,
   unquoteGitPath,
@@ -19,6 +20,7 @@ export function gitLogFormat(): string {
     '%an',
     '%at',
     '%s',
+    `%b${GIT_LOG_MESSAGE_END}`,
   ].join(GIT_LOG_FIELD_SEPARATOR);
 }
 
@@ -26,15 +28,20 @@ export function parseGitLogNameStatus(out: string): GitCommit[] {
   const blocks = out.split(GIT_LOG_COMMIT_HEADER).slice(1); // drop preamble before first marker
   const commits: GitCommit[] = [];
   for (const block of blocks) {
-    // First newline ends the format line; everything after is the
-    // name-status block (until the next sentinel, which split already
-    // consumed).
+    // The message-end marker closes the multi-line format output (the body
+    // spans lines); everything after it is the name-status block (until the
+    // next sentinel, which split already consumed). Without the marker, the
+    // first newline ends a body-less format line.
+    const endIdx = block.indexOf(GIT_LOG_MESSAGE_END);
     const nlIdx = block.indexOf('\n');
-    const headerLine = nlIdx === -1 ? block : block.slice(0, nlIdx);
-    const body = nlIdx === -1 ? '' : block.slice(nlIdx + 1);
-    const parts = headerLine.split(GIT_LOG_FIELD_SEPARATOR);
+    const headerEnd = endIdx !== -1 ? endIdx : nlIdx === -1 ? block.length : nlIdx;
+    const bodyStart = endIdx !== -1 ? endIdx + GIT_LOG_MESSAGE_END.length : headerEnd + 1;
+    const headerText = block.slice(0, headerEnd);
+    const body = block.slice(bodyStart);
+    const parts = headerText.split(GIT_LOG_FIELD_SEPARATOR);
     if (parts.length < 5) continue;
-    const [sha, shortSha, authorName, atSec, subject] = parts;
+    const [sha, shortSha, authorName, atSec, subject, ...messageParts] = parts;
+    const message = messageParts.join(GIT_LOG_FIELD_SEPARATOR).replace(/\r\n/g, '\n').trim();
     const dateMs = Number(atSec) * 1000;
 
     const changes: GitCommitChange[] = [];
@@ -65,6 +72,7 @@ export function parseGitLogNameStatus(out: string): GitCommit[] {
       sha,
       shortSha,
       subject: subject ?? '',
+      body: message,
       authorName: authorName ?? '',
       date: dateMs,
       changes,
