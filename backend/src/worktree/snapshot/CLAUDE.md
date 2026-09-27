@@ -1,138 +1,140 @@
 # backend/src/worktree/snapshot
 
-Restore module map:
+Safety-critical copy-based working-tree snapshots. Never replace with
+`git stash --include-untracked`.
 
-- `restore.ts` — stable public exports, mutation ownership, ordered whole-snapshot
-  restore, guarded directory cleanup, and `describePartialRestore`.
-- `restoreTypes.ts` — shared options/result types, conflict suffix, and the single
-  `StaleSnapshotConflict` / `SnapshotPathKept` constructors used for classification.
-- `restorePath.ts` — guarded per-path copy/deletion, three-way reconciliation,
-  destination version checks, and exclusive/reusable conflict copies.
-- `restoreRetirement.ts` — narrow partial-restore manifests to retryable entries;
-  retire settled paths and archive when none remain, retaining payloads.
+- `capture.ts` — `snapshotWorkingTree` (under `withProjectMutation`),
+  `createSnapshotDirectory`, `writeCapturedSnapshotManifest`,
+  `buildSnapshotCleanupPlan`; scope filter, free-space refusal, partial-dir
+  removal, `readHeadCommit` (→ `baseCommit`). Re-exports most helpers of the
+  next two.
+- `pathClassification.ts` — `parseStatusRecords` / `parseStatus` (`-z` parser,
+  four buckets); `filterSafeDirtyPaths` / `classifySafeDirtyPaths`
+  (repo-containment guard).
+- `copyAndCleanup.ts` — `copyDirtyPathsToSnapshot`, `resetTrackedSnapshotPaths`,
+  `unstageAddedSnapshotPaths`, `restoreDeletedSnapshotPaths`,
+  `cleanupCapturedUntrackedPaths`; `chunkPathsForArgv` / `GIT_ARGV_CHAR_BUDGET`.
+- `versions.ts` — `pathVersion`: streamed sha256 / `link:` target / `null` if
+  absent.
+- `manifest.ts` — `SNAPSHOTS_BASE`, `SNAPSHOT_MANIFEST_FILENAME`
+  (`_lattice-snapshot.json`), `SnapshotHandle` / `SnapshotManifest` /
+  `RetiredSnapshotPath`, `readSnapshotManifest` via `isSupportedSnapshotManifest`.
+- `restore.ts` — public `restoreSnapshot` (mutation ownership, ordered
+  whole-snapshot restore, guarded dir removal) and `describePartialRestore`.
+- `restoreTypes.ts` — options/result types, `SNAPSHOT_CONFLICT_SUFFIX`, the single
+  `StaleSnapshotConflict` / `SnapshotPathKept` constructors used to classify.
+- `restorePath.ts` — `restoreSnapshotPath` / `reapplySnapshotDeletion`: guarded
+  per-path copy/delete, destination version checks, exclusive/reusable conflict
+  copies.
+- `threeWay.ts` — `reconcileWithCommittedChange`, `deletedSinceCapture`,
+  `MAX_THREE_WAY_MERGE_BYTES` (8 MB).
+- `restoreRetirement.ts` — `retireSettledEntries`: narrow a partial restore's
+  manifest to retryable entries; archive when none remain.
+- `recovery.ts` — boot `recoverPendingSnapshots`: `listPendingSnapshotDirs`
+  (lazy `<hash>/<snap>` walk) → `validateSnapshotForRecovery` (skip
+  missing/unsupported/archived manifests, dir hash must match `repoRoot`, repo
+  must exist) → `recoverOneSnapshot` (`noteInterruptedRunBeforeSteal`, own run
+  lock, manifest re-read, `guardStaleOverwrite` restore; errors defer).
 
-Safety-critical copy-based working-tree snapshots. Keep the capture order in
-`capture.ts` intact:
+Capture order (keep intact):
 
-1. Parse `git status --porcelain=v1 -z --untracked-files=all`. The `-z`
-   (machine-parse) form is required: it emits NUL-terminated records with
-   verbatim, unquoted pathnames and splits a rename/copy into a
-   destination field + a source field (no ` -> ` arrow). The default
-   newline form mangles renames (`R  old -> new`) and quotes special-char
-   names, which made those paths fail to copy and silently drop from the
-   snapshot. `parseStatus` sorts records into FOUR buckets, because each
-   needs a different cleanup: `untracked` (copy + delete), `modified` (copy +
-   `checkout HEAD --`), `added` (`A`/`R`/`C` — in the index but not in HEAD:
-   copy + `reset HEAD --` + delete; `checkout HEAD` cannot reset a path HEAD
-   lacks, and git refuses the WHOLE batched checkout on one bad pathspec, so
-   one staged-new file used to leave every modified file dirty and fail every
-   fast-forward) and `deleted` (` D`/`D ` and a rename's source — nothing to
-   copy: `checkout HEAD --` resurrects it so the FF sees a clean tree, the
-   manifest lists it under `deleted`, and restore re-deletes it only if the
-   on-disk file is still a clean tracked HEAD copy). `MD` stays `modified`
-   (index-only content must not be reset). Every batched `checkout`/`reset`
-   retries per path on a non-zero exit so one bad pathspec can't block the
-   rest.
-2. Drop any path that fails the repo-containment guard; dropped paths must not
-   be copied, reset, or deleted.
-3. Create the snapshot dir and copy dirty paths, recording successes and
-   failures separately.
-4. Write the manifest only after copies, and list only successfully copied
-   paths.
-5. Reset tracked files and delete untracked files **only** from the successful
-   copy lists. A failed copy stays dirty in the user's working tree so follow-up
-   git operations fail safely instead of losing data.
+1. Parse `git status --porcelain=v1 -z --untracked-files=all`. `-z` is required:
+   NUL-terminated verbatim paths, a rename/copy split into destination + source
+   fields. The newline form mangles renames (`R  old -> new`) and quotes
+   special-char names, which silently dropped them from the snapshot. FOUR
+   buckets, each cleaned differently: `untracked` (copy + delete), `modified`
+   (copy + `checkout HEAD --`), `added` (`A`/`R`/`C`, in the index not HEAD:
+   copy + `reset HEAD --` + delete — `checkout HEAD` can't reset a path HEAD
+   lacks, and git refuses a WHOLE batched checkout on one bad pathspec) and
+   `deleted` (` D`/`D `/rename source — nothing to copy: `checkout HEAD --`
+   resurrects it for a clean FF, the manifest lists it, restore re-deletes it
+   only if still a clean tracked HEAD copy). `MD` stays `modified` (index-only
+   content must not be reset). Every batched `checkout`/`reset` retries per path
+   on a non-zero exit.
+2. Drop paths failing the repo-containment guard; never copy/reset/delete them.
+3. Create the snapshot dir and copy, recording successes and failures separately.
+4. Write the manifest only after copies, listing only successful copies.
+5. Reset/delete **only** successfully copied paths. A failed copy stays dirty so
+   later git operations fail safely instead of losing data.
 
-Do not replace this with `git stash --include-untracked`.
+Scale limits (2026-09-23 — ~1 GB of uncommitted art filled the disk):
 
-Scale limits (2026-09-23 — a user's ~1 GB of uncommitted art filled the disk):
-
-- **Scope.** `snapshotWorkingTree(repo, label, { onlyPaths })` captures only
-  dirty paths that collide with `onlyPaths` (equal, or one an ancestor
-  directory of the other). `fastForwardMain` passes `git diff --name-only
-  --no-renames HEAD <branch>` — a `merge --ff-only` rewrites nothing else, and
-  git refuses without writing if an unlisted dirty path would be clobbered —
-  and the merge-run stash passes the union of each Ready-to-Merge branch's
-  `HEAD...branch`. Nothing overlapping ⇒ no snapshot. A failed diff ⇒ the full
-  snapshot, as before. Unscoped, every fast-forward copied the whole dirty tree.
-- **Free space.** Before creating the dir, the bytes to copy are summed and the
-  capture is refused (tree untouched) if they would cross
-  `globalSettings.minFreeDiskGb` — instead of dying mid-copy on ENOSPC.
-- **Command-line length.** Path-list git calls are chunked
-  (`chunkPathsForArgv`, 8,000-char budget): one call with 1,610 paths hit
-  Windows' 32,767-char limit as `spawn ENAMETOOLONG` — an exception the per-path
-  retry never saw — failing every capture after its copy.
+- **Scope.** `onlyPaths` captures only dirty paths colliding with it (equal, or
+  one an ancestor dir of the other). `fastForwardMain` passes `git diff
+  --name-only --no-renames HEAD <branch>` (`merge --ff-only` rewrites nothing
+  else and refuses without writing if an unlisted dirty path would be
+  clobbered); the merge-run stash passes the union of each Ready-to-Merge
+  branch's `HEAD...branch`. No overlap ⇒ no snapshot; a failed diff ⇒ full
+  snapshot.
+- **Free space.** Bytes to copy are summed before creating the dir; the capture
+  is refused (tree untouched) if they would cross `globalSettings.minFreeDiskGb`.
+- **Command-line length.** Path-list git calls are chunked at 8,000 chars: 1,610
+  paths hit Windows' 32,767-char limit as `spawn ENAMETOOLONG` — an exception the
+  per-path retry never saw — failing every capture after its copy.
 - **Partial copies.** A capture that throws before its manifest is written
-  removes its directory (nothing in the tree was reset yet, and recovery
-  ignores manifest-less dirs), so a failed capture no longer strands its copy.
+  removes its dir (nothing was reset yet; recovery ignores manifest-less dirs).
 
-Additional recovery invariants (2026-09 stability review):
+Recovery invariants (2026-09 stability review):
 
-- Snapshot directories use `mkdtemp`, so same-label captures in one millisecond
-  cannot share payloads or overwrite each other's manifest.
-- `_lattice-snapshot.json` at the snapshot root is metadata. A repository path
-  with that name (case-insensitive) is left dirty rather than captured/reset;
-  older manifests listing the metadata path are refused on restore.
+- Snapshot dirs use `mkdtemp`: same-label captures in one millisecond never
+  share payloads or manifests.
+- A repository path named `_lattice-snapshot.json` (case-insensitive) is left
+  dirty, not captured/reset; older manifests listing it are refused on restore.
 - Untracked cleanup is nonrecursive and rechecks parent symlinks. A file that
-  became a directory after capture contains uncaptured work and must survive.
-- The manifest reader validates recovery fields and arrays before returning a
-  supported record. A version number alone does not make a record safe to use.
+  became a directory after capture holds uncaptured work and must survive.
+- The manifest reader validates recovery fields and arrays; a version number
+  alone does not make a record safe.
 - Stale conflict copies use exclusive creation with numbered suffixes; existing
   recovery work is never overwritten. Identical copies are reused across boots.
 
 Ownership and edit preservation (2026-09 follow-up):
 
-- Capture manifests carry the owning project lock generation. Boot recovery
-  acquires its own project lock and re-reads the manifest before restoring;
-  it never borrows a live merge's local ownership. Live-owned snapshots defer.
-- Cleanup requires the snapshot directory and compares captured/current content
-  hashes or symlink targets before resetting/deleting. Missing version evidence
-  refuses cleanup. Literal Git pathspecs prevent wildcard names resetting other
-  files. Hashing streams file contents to keep large artifacts off the JS heap.
+- Manifests carry the owning project lock generation. Boot recovery acquires its
+  own project lock and re-reads the manifest before restoring; it never borrows
+  a live merge's local ownership. Live-owned snapshots defer.
+- Cleanup requires the snapshot dir and compares captured/current `pathVersion`
+  before resetting/deleting; missing version evidence refuses cleanup. Literal
+  Git pathspecs stop wildcard names resetting other files. Hashing streams, to
+  keep large artifacts off the JS heap.
 - Default restoration preserves newer dirty edits and overlays only tracked
-  destinations verified clean against HEAD. Assume-unchanged/skip-worktree paths
-  are treated as uncertain. Boot restoration stays stricter: all differing
-  destinations keep their current content and receive captured conflict copies.
-- Restoration returns a structured restored/partial result with restored paths,
-  conflicts, failures and snapshot retention. Partial teardown becomes a run
-  error; a post-FF partial is surfaced to the finalize caller without retrying
-  an already-successful HEAD move. Recursive cleanup refuses reparse points,
+  destinations verified clean against HEAD; assume-unchanged/skip-worktree
+  paths count as uncertain. Boot restoration is stricter: every differing
+  destination keeps its content and gets a captured conflict copy.
+- Restoration returns a structured restored/partial result (restored paths,
+  conflicts, failures, retention). Partial teardown becomes a run error; a
+  post-FF partial is surfaced to the finalize caller without retrying the
+  already-successful HEAD move. Recursive cleanup refuses reparse points,
   filesystem roots, and any snapshot/project containment overlap.
-- External editors do not participate in Lattice's lock. Version checks detect
-  changes before cleanup, but a write racing the final comparison and Git/file
-  replacement is not an OS-level compare-and-swap; that residual window remains.
+- External editors don't take Lattice's lock. Version checks catch changes
+  before cleanup, but a write racing the final comparison and the Git/file
+  replacement is not an OS-level compare-and-swap; that window remains.
 
 Restoring over a change that landed after capture (2026-09-25):
 
-- A capture records the HEAD it sat on (`baseCommit`, handle + manifest). An
-  in-session restore of a tracked destination that is clean against the NEW
-  HEAD compares `baseCommit:<path>` with `HEAD:<path>` (`threeWay.ts`): the
-  same object → the captured copy overlays it as before; different (the
-  fast-forward rewrote the file) → `git merge-file -p` of base / captured copy
-  / current file. Before this, the copy of the user's pre-merge file overlaid
-  the task's version: HEAD had the task's change, the working tree silently
-  reverted it, reported `restored` (and the QA-lane Push's `git add -A`
-  committed the revert). A clean merge writes the combined file; overlapping
-  hunks, binary/non-UTF-8 content or > 8 MB keep HEAD's version and save the
-  captured copy as `<file>.lattice-conflict` → `'partial'`, which the FF
-  finalize and the merge-run teardown surface (`describePartialRestore` names
-  the conflict copies). Conflict markers are never written into the main
-  checkout. A modified file the merge DELETED is also a conflict copy, not
-  resurrected at its path. Boot recovery (`guardStaleOverwrite: true`) is
-  unchanged: it never merges. `merge-file` is whitelisted in `projectGit` only
-  in its print form (`-p`), fed temp copies of the checked bytes.
-- A partial restore narrows the manifest (`retireSettledEntries`): restored
-  paths, conflict-copied paths, deliberately-kept paths (a captured deletion of
-  a file edited since) and unsafe entries move to `retired`; only paths whose
-  failure a retry could fix stay listed. Nothing left → `archived: true`: the
-  payload stays for the user and `recovery.ts` skips it. Before, every boot
-  re-applied the whole manifest — resurrecting files the user had deleted and
-  re-creating reviewed `.lattice-conflict` copies, indefinitely.
-- Boot recovery takes the project run lock and so steals an interrupted Merge
-  All's dead `merge-run` lock (or a workflow Merge/Push step's). Before
-  stealing it records `interrupted-run.json` (`../../projectRunLock/interruptedRun.ts`)
-  so `resumeInterruptedMergeRuns` still resumes the run and the owed post-merge
-  hook check still defers; the resume clears it once it has acted.
+- A capture records its HEAD (`baseCommit`, handle + manifest). An in-session
+  restore of a tracked destination clean against the NEW HEAD compares
+  `baseCommit:<path>` with `HEAD:<path>`: same object → the copy overlays it;
+  different (the FF rewrote it) → `git merge-file -p` of base / captured /
+  current. Before, the pre-merge copy silently reverted the task's change while
+  reporting `restored` (and the QA-lane Push's `git add -A` committed the
+  revert). A clean merge writes the combined file; overlapping hunks,
+  binary/non-UTF-8 or > 8 MB keep HEAD's version and save the capture as
+  `<file>.lattice-conflict` → `'partial'`, surfaced by FF finalize and merge-run
+  teardown. Conflict markers never reach the main checkout. A modified file the
+  merge DELETED is a conflict copy too, not resurrected. Boot recovery
+  (`guardStaleOverwrite: true`) never merges. `projectGit` whitelists
+  `merge-file` only as `-p`, fed temp copies of the checked bytes.
+- A partial restore moves restored, conflict-copied, deliberately-kept (a
+  captured deletion of a since-edited file) and unsafe entries to `retired`;
+  only retry-fixable failures stay listed. Nothing left → `archived: true`: the
+  payload stays for the user and recovery skips it. Before, every boot
+  re-applied the whole manifest, resurrecting deleted files and re-creating
+  reviewed conflict copies indefinitely.
+- Boot recovery's run lock steals an interrupted Merge All's dead `merge-run`
+  lock (or a workflow Merge/Push step's), so it first records
+  `interrupted-run.json` (`../../projectRunLock/interruptedRun.ts`):
+  `resumeInterruptedMergeRuns` still resumes and the owed post-merge hook check
+  still defers; the resume clears it once it has acted.
 
 Discarded-worktree archives (`../discardArchive.ts`) share this directory tree
 and the copy routine but are NOT pending snapshots: their manifest is

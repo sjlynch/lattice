@@ -173,10 +173,18 @@ undoes that bump, and any other failure clears the run-queue state:
 Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
 `buildTaskHookRouter` assembles the router; one handler module per route:
 
-- `hooks/complete.ts` — `/complete`. Two sub-branches: resolver-finished
-  (ready_to_merge + conflict → `finalizeResolvedTask`) and the original
-  in_progress → ready_to_merge flip (**only** with a branch commit; kills the
-  idle pty after responding).
+- `hooks/complete.ts` — `/complete`. First `rejectStaleReplay`: an outbox
+  replay whose session moved on since `replayQueuedAt` is refused **409**
+  `stale-replay` (final — see `../../callbackOutbox/CLAUDE.md`). Then two
+  sub-branches: resolver-finished (ready_to_merge + conflict →
+  `finalizeResolvedTask`, rendered by `respondToResolverFinalize`, which waits
+  out an outside-run post-merge hook on a clean finalize) and the
+  in_progress → ready_to_merge flip, decided by the exported pure
+  `decideInProgressComplete` (a real zero-commit count → `awaitingCommit`; a
+  git error flips anyway — the Stop hook fires once). After responding,
+  `scheduleWorktreePtyKill` kills the idle pty `PTY_KILL_DELAY_MS` (1 s) later
+  — the calling curl runs inside it and must read the response — then
+  `notifySessionsFreed`.
 - `hooks/merged.ts` — `/merged`. Resolver success → `finalizeResolvedTask`,
   but **only while `task.conflict` is still set** (same gate `/complete`'s
   resolver branch uses). A late `/merged` from a resolver abandoned by
@@ -194,17 +202,22 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
   project run-lock → later merges 409). The aborted task is left at plain
   ready_to_merge to retry on the next merge-all (no auto-restart, unlike
   /complete + /merged). Runs the recovery **under the per-task `mergeLocks`
-  lock** (`git merge --abort` mutates the worktree index, like every other
-  in-worktree git mutation that takes it), so a Cancel can't race a live
-  `git merge` on the same index. A held lock is WAITED for (up to
+  lock** (`git merge --abort` mutates the worktree index), so a Cancel can't
+  race a live `git merge`. A held lock is WAITED for (up to
   `MERGE_ABORT_LOCK_WAIT_MS`, 5 s — the run's conflict wait parks lock-free,
-  so the lock is only held for the seconds a merge/finalize takes, and a
-  resolver Claude's give-up curl is one-shot and cannot retry) and only then
-  answered **409**. Has an injectable deps seam (`recover` +
-  `signalConflictWaiter` + `lockWaitMs`) mirroring `finalizeResolved.ts` for
-  the parked-run regression test.
+  and a resolver's give-up curl is one-shot) and only then answered **409**.
+  Deps seam (`recover` + `signalConflictWaiter` + `lockWaitMs`) for the
+  parked-run regression test.
 - `hooks/stashResolved.ts` — `/stash-resolved`. Cleanup → qa, then
-  auto-restart the merge run for remaining work.
+  auto-restart the merge run for remaining work — but **only** when the task
+  is ready_to_merge AND `git merge-base --is-ancestor refs/heads/<branch> HEAD`
+  (via `projectGit`) positively says the branch is merged; any other outcome
+  (not an ancestor, missing ref, git error, `.git` gone) is an `{ok:true}`
+  no-op. Why: a stray or late curl from an old stash-resolver tab used to
+  `branch -D` unmerged commits and stamp a fake `mergedAt` that QA verdict
+  logic treats as a real merge. Cleanup still passes `keepBranchIfUnmerged` as
+  a backstop. Honours the `?project=` pin (404); deps seam mirrors
+  `mergeAborted.ts` (`__tests__/stashResolvedGuard.test.ts`).
 - `hooks/postMergeHookHelper.ts` — `awaitPostMergeHookOutsideRun`, shared by
   complete / merged / stash-resolved. Skips the gate when a merge run is
   active (the run owns its own end-of-run hook fire; double-firing deadlocks).
