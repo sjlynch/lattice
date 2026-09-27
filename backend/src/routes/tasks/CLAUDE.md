@@ -75,7 +75,15 @@ the implementations live in focused modules:
   the only copy of that work — survives; the response then adds
   `keptBranch: {name, unmergedCommits, hint}` (`keptBranchPayload`), otherwise
   it stays `{ok: true}`. The MCP `delete_task` tool leads its result with the
-  hint.
+  hint. Delete takes the **per-task `mergeLocks` lock** (after the project-pin
+  check, before any side effect) and holds it across worktree teardown +
+  record removal, so it can't pull a worktree out from under a live
+  `git merge` or erase the record mid-finalize (which used to land the deleted
+  work on main plus a "qa state could not be saved" run error). A held lock is
+  waited for up to `TASK_DELETE_LOCK_WAIT_MS` (5 s, `mergeLocks.acquireBriefly`,
+  shared with `/merge-aborted`), then answered **409** `{error, merging: true}`
+  — the board toasts it. Deps seam `createTaskDeleteHandler({cleanupWorktree,
+  lockWaitMs})` for the regression test.
 - `crudTypes.ts` — shared `TaskIdRequest` type.
 
 Keep the markdown/`text/plain` body handling intact — those routes use the
