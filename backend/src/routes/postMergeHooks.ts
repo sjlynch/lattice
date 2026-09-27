@@ -112,8 +112,9 @@ export function buildPostMergeHooksRouter(): Router {
   // Gate + node + quiescence teardown, best-effort pty kill (immediate user
   // feedback), finish, scratch cleanup — all in `endPostMergeHook`, shared with
   // the terminal-tab close path and the gate's wait expiry. A hook still in its
-  // launch window (scratch setup / queued spawn) is caught by the trigger's
-  // post-await re-checks, which kill the late pty and skip the node.
+  // launch window (scratch setup / queued spawn) has its queued spawn cancelled
+  // (launchAbort.ts), and the trigger's post-await re-checks kill any late pty
+  // and skip the node.
   r.post('/api/post-merge-hooks/:id/abort', async (req, res) => {
     await endPostMergeHook(req.params.id, 'aborted', 'aborted by user');
     res.json({ ok: true });
