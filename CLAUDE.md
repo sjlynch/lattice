@@ -236,7 +236,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | POST | `/api/workflows` | Create a workflow definition |
 | PATCH | `/api/workflows/:id` | Update (optional `?project=` pin → 404 cross-project) |
 | DELETE | `/api/workflows/:id` | Delete (optional `?project=` pin) |
-| POST | `/api/workflows/:id/run` | Start a run; one per project (**409** `active-run-exists`) |
+| POST | `/api/workflows/:id/run` | Start a run; one per project (**409** `active-run-exists`); optional `?project=` pin → 404 cross-project |
 | POST | `/api/workflow-prompt-customizations` | Spawn a harness to tailor a step prompt |
 | GET | `/api/workflow-prompt-customizations/:id` | Poll customization status/result |
 | POST | `/api/workflow-prompt-customizations/:id/complete` | Harness callback with the customized prompt |
