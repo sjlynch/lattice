@@ -27,6 +27,7 @@ from.
   marker) for `cwd-missing` / `restore-failed` so the UI can show why.
   `endWhere()` is what the kill paths (`terminalProxy.ts` wrappers, the
   `/api/terminals/:id` DELETE) and the exit watcher use.
+- `recordCodec.ts` — the untrusted-file codec: `deserializeTerminalRecord(s)` (per-field parsers, retention prune), re-exported from `store.ts`.
 - `startupSupersede.ts` — `endSupersededStartupRecords`: when
   `recordSpawnedTerminal` creates a new `startup` record, every older record of
   the same `startupId` whose pty is definitely dead (no `serverId`, or a
