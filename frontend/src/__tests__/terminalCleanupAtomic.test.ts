@@ -6,6 +6,8 @@ import type { Ctx, TerminalSpec } from '../terminal/terminalTypes';
 import {
   planCloseTerminals,
   removeTerminalFromList,
+  reorderTerminalInList,
+  setStatusInList,
   terminalIdsForTask,
 } from '../terminal/terminalState.ts';
 import { TerminalsProvider, useTerminals } from '../TerminalsContext.tsx';
@@ -199,4 +201,100 @@ test('terminalIdsForTask spares the tab the task-spawned event is delivering', (
   assert.deepEqual(terminalIdsForTask(tabs, 't1', { id: 'new' }), ['old']);
   assert.deepEqual(terminalIdsForTask(tabs, 't1', { serverId: 'srv-new' }), ['old'], 'matched by pty id too');
   assert.deepEqual(terminalIdsForTask(tabs, 't1', { id: 'absent', serverId: 'absent' }), ['old', 'new']);
+});
+
+// reorderTerminalInList feeds TerminalsContext.reorderTerminal, whose result
+// becomes the persisted tab order (PATCH /api/terminal-tabs {order}). It must
+// work on ids over the FULL list even though the tab strip shows only a
+// scoped, search-filtered subset — applying filtered indices to the full list
+// scrambles the durable order (cf. the taskboard lane bug, 5ad4044).
+function ids(list: TerminalSpec[]): string[] {
+  return list.map((t) => t.id);
+}
+
+function lettered(...names: string[]): TerminalSpec[] {
+  return names.map((n) => term(n, undefined, `s${n}`));
+}
+
+test('reorderTerminalInList: a forward drag lands after the target, a backward drag before it', () => {
+  const input = lettered('a', 'b', 'c', 'd', 'e');
+  const snapshot = ids(input);
+
+  assert.deepEqual(ids(reorderTerminalInList(input, 'a', 'd')), ['b', 'c', 'd', 'a', 'e'], 'forward: after the target');
+  assert.deepEqual(ids(reorderTerminalInList(input, 'e', 'b')), ['a', 'e', 'b', 'c', 'd'], 'backward: before the target');
+  // Adjacent drags swap in either direction.
+  assert.deepEqual(ids(reorderTerminalInList(input, 'b', 'c')), ['a', 'c', 'b', 'd', 'e']);
+  assert.deepEqual(ids(reorderTerminalInList(input, 'c', 'b')), ['a', 'c', 'b', 'd', 'e']);
+
+  assert.deepEqual(ids(input), snapshot, 'the input array is never mutated');
+});
+
+test('reorderTerminalInList over a filtered subset keeps hidden tabs in place and in order', () => {
+  // Only a, b, c are visible in the strip; x and y belong to another
+  // project/panel or are filtered out by the search.
+  const input = lettered('a', 'x', 'b', 'y', 'c');
+  const snapshot = ids(input);
+
+  const out = reorderTerminalInList(input, 'a', 'c');
+  assert.deepEqual(ids(out), ['x', 'b', 'y', 'c', 'a'], 'a lands directly after c');
+  assert.equal(out.length, input.length, 'no tab dropped or duplicated');
+  assert.deepEqual(new Set(ids(out)), new Set(snapshot));
+  assert.deepEqual(
+    ids(out).filter((id) => id === 'x' || id === 'y'),
+    ['x', 'y'],
+    'hidden tabs keep their relative order',
+  );
+  assert.deepEqual(
+    ids(out).filter((id) => id === 'a' || id === 'b' || id === 'c'),
+    ['b', 'c', 'a'],
+    'the visible subset reflects the drop',
+  );
+
+  // Backward over the same hidden tabs: c onto a lands before a.
+  assert.deepEqual(ids(reorderTerminalInList(input, 'c', 'a')), ['c', 'a', 'x', 'b', 'y']);
+
+  assert.deepEqual(ids(input), snapshot, 'the input array is never mutated');
+});
+
+test('reorderTerminalInList no-ops return the input reference unchanged', () => {
+  const input = lettered('a', 'b', 'c');
+  const snapshot = ids(input);
+
+  assert.equal(reorderTerminalInList(input, 'b', 'b'), input, 'dragged onto itself');
+  assert.equal(reorderTerminalInList(input, 'nope', 'b'), input, 'unknown dragged id');
+  assert.equal(reorderTerminalInList(input, 'b', 'nope'), input, 'unknown target id');
+
+  assert.deepEqual(ids(input), snapshot, 'the input array is never mutated');
+});
+
+// A repeated status report (`live` on every (re)connect) must hand back the
+// SAME array, or the whole tab strip re-renders on each report.
+test('setStatusInList returns the same reference when nothing changes and a fresh array otherwise', () => {
+  const input: TerminalSpec[] = [
+    { ...term('a', undefined, 'sa'), status: 'live' },
+    { ...term('b', undefined, 'sb'), status: 'exited', exitCode: 1 },
+    term('c', undefined, 'sc'),
+  ];
+  const snapshot = input.map((t) => ({ ...t }));
+
+  assert.equal(setStatusInList(input, 'nope', 'dead'), input, 'unknown id');
+  assert.equal(setStatusInList(input, 'a', 'live'), input, 'identical status, no exit code');
+  assert.equal(setStatusInList(input, 'b', 'exited', 1), input, 'identical status + exit code');
+
+  const changed = setStatusInList(input, 'a', 'reconnecting');
+  assert.notEqual(changed, input);
+  assert.equal(changed[0].status, 'reconnecting');
+  assert.equal(changed[1], input[1], 'untouched tabs keep their object identity');
+  assert.equal(changed[2], input[2]);
+
+  // Same status, but the exit code goes undefined → 0.
+  const exited: TerminalSpec[] = [{ ...term('a', undefined, 'sa'), status: 'exited' }, input[2]];
+  const withCode = setStatusInList(exited, 'a', 'exited', 0);
+  assert.notEqual(withCode, exited, 'an exit-code-only change is still a change');
+  assert.equal(withCode[0].status, 'exited');
+  assert.equal(withCode[0].exitCode, 0);
+  assert.equal(withCode[1], exited[1]);
+  assert.equal(exited[0].exitCode, undefined, 'the input tab is not mutated');
+
+  assert.deepEqual(input, snapshot, 'the input array is never mutated');
 });
