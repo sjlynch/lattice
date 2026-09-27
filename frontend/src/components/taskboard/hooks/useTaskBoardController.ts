@@ -100,6 +100,7 @@ export function useTaskBoardController(activeFolder: string) {
     activeFolder,
     tasks,
     grouped,
+    visibleGrouped: filteredGrouped,
     getLaneSortMode,
     mergeRun,
     addTerminal,
