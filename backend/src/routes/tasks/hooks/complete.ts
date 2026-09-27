@@ -6,11 +6,11 @@
 //                                 (delegated to finalizeResolvedTask).
 
 import type { Request, Response } from 'express';
-import { getTask, updateTaskCrashSafe } from '../../../tasks.js';
+import { getTask, updateTaskCrashSafe, type Task } from '../../../tasks.js';
 import { branchCommitCount } from '../../../worktree.js';
 import { proxyKillSessionsByCwd } from '../../../terminalProxy.js';
 import { notifySessionsFreed } from '../../../spawnQueue.js';
-import { finalizeResolvedTask } from '../finalizeResolved.js';
+import { finalizeResolvedTask, type FinalizeResolvedResult } from '../finalizeResolved.js';
 import { awaitPostMergeHookOutsideRun } from './postMergeHookHelper.js';
 import { requireTaskInRequestedProject } from '../requestUtils.js';
 import {
@@ -37,6 +37,84 @@ export async function decideInProgressComplete(
     console.error('[complete] branchCommitCount failed; flipping anyway', err);
     return 'flip';
   }
+}
+
+// The in-worktree Claude has finished its turn and committed; the pty
+// now just holds an idle Claude waiting for input that will never come.
+// Kill it so terminal-server resources are released and the worktree's
+// dir lock is dropped on Windows. Deferred so the curl that called us
+// (running inside the very pty we're killing) gets to read this response
+// before the connection is torn down. The Stop hook's callback script
+// (callbackOutbox/script.ts) exits in well under that once it has the
+// response, so 1s is plenty of slack.
+const PTY_KILL_DELAY_MS = 1000;
+
+function scheduleWorktreePtyKill(worktreePath: string): void {
+  setTimeout(() => {
+    proxyKillSessionsByCwd(worktreePath)
+      // The kill freed a pty slot — poke the spawn queue so a deferred
+      // spawn reuses it now instead of waiting for the next poll.
+      .then(() => notifySessionsFreed())
+      .catch(() => {});
+  }, PTY_KILL_DELAY_MS);
+}
+
+// A callback the outbox replays arrives late by design — after the
+// backend came back, when the user may already have typed a new
+// instruction into the idle agent. Acting on it then would flip the task
+// (or finalize a resolver) and kill the pty in the middle of that new
+// turn. The new turn ends in its own Stop, so a stale replay is simply
+// refused; 409 is final, so the drain drops it. Returns true when it
+// responded.
+async function rejectStaleReplay(
+  task: Task,
+  replayQueuedAt: number | null,
+  res: Response,
+): Promise<boolean> {
+  const actsOnSession =
+    task.status === 'in_progress' || (task.status === 'ready_to_merge' && !!task.conflict);
+  if (replayQueuedAt === null || !actsOnSession) return false;
+  const stale = await taskSessionActiveSince(task, replayQueuedAt);
+  if (!stale) return false;
+  console.warn(
+    `[complete] task ${task.id}: ignoring outbox replay queued ` +
+      `${new Date(replayQueuedAt).toISOString()} — the session has moved on (${stale})`,
+  );
+  res.status(409).json({ ok: false, error: 'stale-replay', reason: stale });
+  return true;
+}
+
+// Render a resolver-finalize result. A clean finalize first waits out any
+// post-merge hook the finalize started outside a merge run.
+async function respondToResolverFinalize(
+  result: FinalizeResolvedResult,
+  task: Task,
+  backendOrigin: string,
+  res: Response,
+): Promise<Response> {
+  if (result.kind === 'mid-merge') {
+    return res.json({ ok: true, awaitingResolution: true });
+  }
+  if (result.kind === 'already-finalizing') {
+    // Another caller (the merge-run worker, or a duplicate hook fire)
+    // holds the per-task merge lock and is finalizing this task. The
+    // callback is idempotent, so report success and let the holder finish.
+    return res.json({ ok: true, finalizing: true });
+  }
+  if (result.kind === 'merge-conflict') {
+    return res.json({
+      ok: true,
+      requiresReResolution: true,
+      conflictedFiles: result.conflictedFiles,
+      command: result.command,
+      cwd: result.cwd,
+    });
+  }
+  if (result.kind === 'error') {
+    return res.json({ ok: false, error: result.message });
+  }
+  await awaitPostMergeHookOutsideRun(task.projectPath, backendOrigin);
+  return res.json({ ok: true, finalized: true });
 }
 
 // Hook callback: claude finished a turn.
@@ -66,24 +144,7 @@ export function handleTaskComplete(backendOrigin: string) {
         `${replayQueuedAt !== null ? `, outbox replay queued ${new Date(replayQueuedAt).toISOString()}` : ''})`,
     );
 
-    // A callback the outbox replays arrives late by design — after the
-    // backend came back, when the user may already have typed a new
-    // instruction into the idle agent. Acting on it then would flip the task
-    // (or finalize a resolver) and kill the pty in the middle of that new
-    // turn. The new turn ends in its own Stop, so a stale replay is simply
-    // refused; 409 is final, so the drain drops it.
-    const actsOnSession =
-      task.status === 'in_progress' || (task.status === 'ready_to_merge' && !!task.conflict);
-    if (replayQueuedAt !== null && actsOnSession) {
-      const stale = await taskSessionActiveSince(task, replayQueuedAt);
-      if (stale) {
-        console.warn(
-          `[complete] task ${task.id}: ignoring outbox replay queued ` +
-            `${new Date(replayQueuedAt).toISOString()} — the session has moved on (${stale})`,
-        );
-        return res.status(409).json({ ok: false, error: 'stale-replay', reason: stale });
-      }
-    }
+    if (await rejectStaleReplay(task, replayQueuedAt, res)) return;
 
     // Resolver-Claude finished. The merge in the worktree is committed;
     // fast-forward main and clean up.
@@ -94,29 +155,7 @@ export function handleTaskComplete(backendOrigin: string) {
       task.worktreePath
     ) {
       const result = await finalizeResolvedTask(task, backendOrigin, 'complete');
-      if (result.kind === 'mid-merge') {
-        return res.json({ ok: true, awaitingResolution: true });
-      }
-      if (result.kind === 'already-finalizing') {
-        // Another caller (the merge-run worker, or a duplicate hook fire)
-        // holds the per-task merge lock and is finalizing this task. The
-        // callback is idempotent, so report success and let the holder finish.
-        return res.json({ ok: true, finalizing: true });
-      }
-      if (result.kind === 'merge-conflict') {
-        return res.json({
-          ok: true,
-          requiresReResolution: true,
-          conflictedFiles: result.conflictedFiles,
-          command: result.command,
-          cwd: result.cwd,
-        });
-      }
-      if (result.kind === 'error') {
-        return res.json({ ok: false, error: result.message });
-      }
-      await awaitPostMergeHookOutsideRun(task.projectPath, backendOrigin);
-      return res.json({ ok: true, finalized: true });
+      return respondToResolverFinalize(result, task, backendOrigin, res);
     }
 
     if (task.status !== 'in_progress') {
@@ -155,23 +194,7 @@ export function handleTaskComplete(backendOrigin: string) {
     });
     res.json({ ok: true });
 
-    // The in-worktree Claude has finished its turn and committed; the pty
-    // now just holds an idle Claude waiting for input that will never come.
-    // Kill it so terminal-server resources are released and the worktree's
-    // dir lock is dropped on Windows. Deferred so the curl that called us
-    // (running inside the very pty we're killing) gets to read this response
-    // before the connection is torn down. The Stop hook's callback script
-    // (callbackOutbox/script.ts) exits in well under that once it has the
-    // response, so 1s is plenty of slack.
-    const wt = task.worktreePath;
-    if (wt) {
-      setTimeout(() => {
-        proxyKillSessionsByCwd(wt)
-          // The kill freed a pty slot — poke the spawn queue so a deferred
-          // spawn reuses it now instead of waiting for the next poll.
-          .then(() => notifySessionsFreed())
-          .catch(() => {});
-      }, 1000);
-    }
+    // Response first: the kill is deferred (see scheduleWorktreePtyKill).
+    if (task.worktreePath) scheduleWorktreePtyKill(task.worktreePath);
   };
 }
