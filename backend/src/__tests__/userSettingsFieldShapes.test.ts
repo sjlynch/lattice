@@ -70,7 +70,9 @@ for (const [label, globs] of [
       const result = await scan(dir);
       assert.ok(Array.isArray(result.nodes));
     } finally {
-      await fs.rm(dir, { recursive: true, force: true });
+      // scan() persists .lattice/health-cache.json asynchronously; retry the
+      // removal (ENOTEMPTY) rather than race that write.
+      await fs.rm(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 50 });
     }
   });
 }
