@@ -14,14 +14,12 @@
 //     Lattice-spawned non-worktree sessions (reuses agentSessions +
 //     agentActivity); presence follows turns (projectClaude/lifecycle.ts).
 
-import { promises as fs } from 'node:fs';
 import { Router } from 'express';
-import { canonicalProjectPath } from '../projectPath.js';
 import { applyProjectActivityHook } from '../projectClaude/activity.js';
 import { reconcileProjectInstrumentation } from '../projectClaude/reconcile.js';
 import { endProjectSession } from '../projectClaude/lifecycle.js';
 import { subscribeTerminalRegistry } from '../terminalRegistry/store.js';
-import { readProjectParam } from './projectParam.js';
+import { readProjectParam, requireExistingProjectDir } from './projectParam.js';
 
 export { applyProjectActivityEvent } from '../projectClaude/lifecycle.js';
 
@@ -50,11 +48,7 @@ export function buildProjectClaudeRouter(backendOrigin: string): Router {
     // entry for it, so a mistyped (or since-deleted) absolute project used to
     // be CREATED on disk as a phantom folder. Refuse anything that isn't an
     // existing directory.
-    const root = canonicalProjectPath(project);
-    const isDir = await fs.stat(root).then((st) => st.isDirectory(), () => false);
-    if (!isDir) {
-      return res.status(400).json({ error: `project is not an existing directory: ${JSON.stringify(root)}` });
-    }
+    if (!(await requireExistingProjectDir(project, res))) return;
     try {
       const result = await reconcileProjectInstrumentation(project, backendOrigin);
       res.json({ ok: true, ...result });

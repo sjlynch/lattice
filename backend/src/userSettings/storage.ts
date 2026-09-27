@@ -73,6 +73,35 @@ function normalizeStartupTerminals(raw: unknown): StartupTerminal[] {
   return out;
 }
 
+// String-array fields consumers `.map`/`.includes` without checking:
+// `deadCodeEntryGlobs` goes straight into `globs.map(globToRegExp)` (scanner,
+// health watcher), so `"src/**"` or `[null]` broke `/api/scan`,
+// `/api/health/dead-code` and `/ws/health` until the file was hand-fixed.
+const STRING_ARRAY_FIELDS = ['deadCodeEntryGlobs', 'metricsIgnoredExts'] as const;
+// Plain-string fields consumers `.trim()` / regex-match without checking
+// (`postMergeHookPrompt` in the post-merge trigger, the Pi model ids).
+const STRING_FIELDS = ['postMergeHookPrompt', 'piModel', 'postMergeHookPiModel'] as const;
+
+// Why a PATCH body's value for one of the fields above is refused, or `null`
+// when every such field is well-shaped. `null` clears a field and is allowed.
+// The route 400s on this so an API caller learns about the mistake instead of
+// having it silently healed (normalizeUserSettings still heals it on read).
+export function userSettingsShapeError(partial: Record<string, unknown>): string | null {
+  for (const field of STRING_ARRAY_FIELDS) {
+    const v = partial[field];
+    if (v === undefined || v === null) continue;
+    if (!Array.isArray(v) || v.some((x) => typeof x !== 'string')) {
+      return `${field} must be an array of strings, got ${JSON.stringify(v)}`;
+    }
+  }
+  for (const field of STRING_FIELDS) {
+    const v = partial[field];
+    if (v === undefined || v === null) continue;
+    if (typeof v !== 'string') return `${field} must be a string, got ${JSON.stringify(v)}`;
+  }
+  return null;
+}
+
 // Coerce the fields whose shape the rest of the app takes on trust. Applied on
 // every read AND to every incoming patch, so a corrupt file heals on read and a
 // bad write never lands. Only fields that can brick a consumer belong here —
@@ -82,6 +111,19 @@ function normalizeUserSettings<T extends Partial<UserSettings>>(settings: T): T 
     settings.startupTerminals = normalizeStartupTerminals(
       settings.startupTerminals,
     );
+  }
+  // A malformed value becomes `undefined`: absent on read, and in a patch it
+  // clears the stored value (JSON.stringify drops it) rather than keeping it.
+  const s: Partial<UserSettings> = settings;
+  for (const field of STRING_ARRAY_FIELDS) {
+    if (!(field in s)) continue;
+    const v: unknown = s[field];
+    s[field] = Array.isArray(v)
+      ? v.filter((x): x is string => typeof x === 'string' && x.trim().length > 0)
+      : undefined;
+  }
+  for (const field of STRING_FIELDS) {
+    if (field in s && typeof s[field] !== 'string') s[field] = undefined;
   }
   if (settings.mcpOverrides && typeof settings.mcpOverrides === 'object') {
     settings.mcpOverrides = withoutRetiredMcpIds(settings.mcpOverrides);

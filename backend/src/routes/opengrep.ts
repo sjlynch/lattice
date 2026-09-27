@@ -32,7 +32,7 @@ import {
   type OpengrepSeverity,
   type ScanWithDigestResult,
 } from '../opengrep/index.js';
-import { readProjectParam } from './projectParam.js';
+import { readProjectParam, requireExistingProjectDir } from './projectParam.js';
 
 // How long `POST /api/opengrep/scan {async: true}` waits for the scan before
 // answering 202 with its id: short enough to stay far under any HTTP client's
@@ -298,6 +298,9 @@ export function buildOpengrepRouter(): Router {
   r.post('/api/opengrep/ignore', async (req, res) => {
     const project = readProjectParam(req, res);
     if (project === null) return;
+    // Writes `<project>/.lattice/userSettings.json`, whose store `mkdir -p`s —
+    // a missing project folder would be recreated.
+    if (!(await requireExistingProjectDir(project, res))) return;
     const body = (req.body ?? {}) as { ruleIds?: unknown; fingerprints?: unknown };
     const ruleIds = Array.isArray(body.ruleIds) ? body.ruleIds : [];
     const fingerprints = Array.isArray(body.fingerprints) ? body.fingerprints : [];

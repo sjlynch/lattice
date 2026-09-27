@@ -18,6 +18,7 @@
 // project only narrows a machine-wide answer); a present-but-relative one is
 // still refused.
 
+import fs from 'node:fs/promises';
 import type { Response } from 'express';
 import {
   canonicalProjectPath,
@@ -52,6 +53,22 @@ export function readProjectParam(
     return null;
   }
   return raw;
+}
+
+// For a route that WRITES under the project folder (`<project>/.lattice/…`):
+// the per-project stores `mkdir -p` their directory, so a typo'd project — or a
+// UI tab still open on a project whose folder was deleted — would otherwise
+// resurrect the folder on its next save. Returns true when the canonical
+// project path is an existing directory; false once it has sent the 400.
+export async function requireExistingProjectDir(
+  project: string,
+  res: Response,
+): Promise<boolean> {
+  const root = canonicalProjectPath(project);
+  const isDir = await fs.stat(root).then((st) => st.isDirectory(), () => false);
+  if (isDir) return true;
+  res.status(400).json({ error: `project is not an existing directory: ${JSON.stringify(root)}` });
+  return false;
 }
 
 // The `?project=` / `?path=` convention of the read-only graph routes

@@ -104,8 +104,26 @@ test('createDir validates parent and returns the new folder listing', async () =
 // Regression: a relative path resolved under the BACKEND's cwd — listDir showed
 // a folder the user never named, and createDir created one there.
 test('listDir and createDir refuse relative paths', async () => {
-  await assert.rejects(() => listDir('some-relative-dir'), /Path must be absolute/);
-  await assert.rejects(() => createDir('some-relative-dir', 'child'), /Parent path must be absolute/);
+  await assert.rejects(() => listDir('some-relative-dir'), /must be an absolute path/);
+  await assert.rejects(() => createDir('some-relative-dir', 'child'), /must be an absolute path/);
+});
+
+// Regression: bare path.isAbsolute accepted Windows root-relative spellings —
+// `\tmp` and the Git-Bash `/c/Users` — which resolve onto the backend's current
+// drive: list-dir listed `C:\c\Users` (or threw a raw ENOENT) and create-dir
+// created `C:\tmp\<name>`.
+test('win32: listDir and createDir refuse root-relative / MSYS paths and create nothing', { skip: process.platform !== 'win32' }, async () => {
+  const probe = `lattice-fsbrowse-probe-${Date.now()}`;
+  for (const bad of ['\\tmp', '/c/Users']) {
+    await assert.rejects(() => listDir(bad), /must be an absolute path/, bad);
+    await assert.rejects(() => createDir(bad, probe), /must be an absolute path/, bad);
+    await assert.rejects(fs.access(path.resolve(bad, probe)), bad);
+  }
+  // The MSYS spelling gets the drive-absolute suggestion.
+  await assert.rejects(
+    () => listDir('/c/Users'),
+    (err) => err instanceof Error && err.message.includes(JSON.stringify('C:\\Users')),
+  );
 });
 
 // Regression: the containment check was `relative.startsWith('..')`, which also

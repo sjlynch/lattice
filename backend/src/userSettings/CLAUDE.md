@@ -52,7 +52,14 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   would break a consumer, and keep any minted identity **deterministic** — the
   frontend matches a live startup pty to its config by `id`, so an id that
   changed between reads would spawn a duplicate terminal on every reload. Pinned
-  by `__tests__/startupTerminalsShape.test.ts`.
+  by `__tests__/startupTerminalsShape.test.ts`. The same guard covers the
+  string-array fields (`deadCodeEntryGlobs`, `metricsIgnoredExts` — non-string /
+  blank entries dropped, a non-array becomes absent; a string once made every
+  `/api/scan` throw `globs.map is not a function`) and the plain-string fields
+  (`postMergeHookPrompt`, `piModel`, `postMergeHookPiModel` — a non-string
+  becomes absent). `userSettingsShapeError` lets `PATCH /api/settings` 400 such
+  a value instead of silently healing it. Pinned by
+  `__tests__/userSettingsFieldShapes.test.ts`.
 - **Toggles for removed built-in MCP servers are stripped on read and on
   write** (`mcpOverrides`, `mcpHarnessOverrides.{codex,pi}`; ids in
   `mcp/retiredServers.ts`), so a stale `context7: true` can never switch on a

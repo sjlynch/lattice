@@ -124,8 +124,14 @@ separate: durable bindings preserve existing stores when canonical spelling
 changes. See [project identity](../projectIdentity/CLAUDE.md) for that protocol.
 
 `POST /api/terminals` applies the same rule to `cwd` and `projectPath`, and
-`POST /api/project-instrumentation` additionally requires the project to be
-an existing directory (its reconcile mkdirs `<project>/.claude/`). Always act
+a route that WRITES under the project folder additionally requires it to be an
+existing directory via `requireExistingProjectDir` (same module) —
+`POST /api/project-instrumentation` (its reconcile mkdirs `<project>/.claude/`),
+`PATCH /api/settings` and `POST /api/opengrep/ignore` (the settings store
+mkdirs `<project>/.lattice/`, so a typo'd or since-deleted project was
+recreated by the next save). The folder browser (`/api/list-dir`,
+`/api/create-dir`, `../fsbrowse/`) uses `isRealAbsoluteProjectPath` +
+`relativeProjectError` too. Always act
 on the value `readProjectParam` returns (trimmed), never the raw body field.
 The read-only graph routes that take `?path=` (or `?project=`) with a
 default-root fallback —

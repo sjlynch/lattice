@@ -1,7 +1,8 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { canonicalProjectPath } from '../projectPath.js';
+import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../projectPath.js';
+import { relativeProjectError } from '../routes/projectParam.js';
 import { listRoots } from './roots.js';
 import type { DirListing } from './types.js';
 
@@ -13,9 +14,11 @@ export async function listDir(target?: string): Promise<DirListing> {
   const requested = target && target.trim() ? target.trim() : os.homedir();
   // A relative path (typed into the picker's path box, or shell-stripped
   // backslashes) would resolve under the BACKEND's cwd and list a folder the
-  // user never named — which they could then pick as a project.
-  if (!path.isAbsolute(requested)) {
-    throw new Error(`Path must be absolute, got ${JSON.stringify(requested)}`);
+  // user never named — which they could then pick as a project. Bare
+  // path.isAbsolute isn't enough on Windows: `\foo` and the Git-Bash `/d/proj`
+  // pass it but resolve onto the backend's current drive.
+  if (!isRealAbsoluteProjectPath(requested)) {
+    throw new Error(relativeProjectError(requested));
   }
   const abs = canonicalProjectPath(requested);
   const stat = await fs.stat(abs);

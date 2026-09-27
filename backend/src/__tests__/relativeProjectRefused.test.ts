@@ -133,8 +133,10 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
 });
 
 // An ABSOLUTE project that doesn't exist: the instrumentation reconcile mkdirs
-// `<project>/.claude/`, so a mistyped path used to be born on disk.
-test('/api/project-instrumentation refuses a nonexistent project and creates nothing', async () => {
+// `<project>/.claude/` and the settings store `<project>/.lattice/`, so a
+// mistyped path — or a UI tab still open on a deleted project, on its next
+// sidebar resize — used to be born on disk.
+test('instrumentation / settings / opengrep-ignore writes refuse a nonexistent project and create nothing', async () => {
   const tmp = await mkdtemp(path.join(os.tmpdir(), 'lattice-instr-missing-'));
   const missing = path.join(tmp, 'does-not-exist');
   let server: http.Server | null = null;
@@ -143,15 +145,22 @@ test('/api/project-instrumentation refuses a nonexistent project and creates not
     const app = createBackendApp({ defaultRoot: tmp, backendOrigin: 'http://127.0.0.1:5184' });
     server = http.createServer(app);
     const port = await listen(server);
-    const res = await fetch(`http://127.0.0.1:${port}/api/project-instrumentation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project: missing }),
-    });
-    const body = (await res.json()) as { error?: string };
-    assert.equal(res.status, 400, JSON.stringify(body));
-    assert.match(String(body.error), /not an existing directory/);
-    await assert.rejects(access(missing));
+    const json = { 'Content-Type': 'application/json' };
+    const q = `project=${encodeURIComponent(missing)}`;
+    const calls: Array<[string, RequestInit]> = [
+      ['/api/project-instrumentation', { method: 'POST', headers: json, body: JSON.stringify({ project: missing }) }],
+      [`/api/settings?${q}`, { method: 'PATCH', headers: json, body: JSON.stringify({ sidebarWidth: 300 }) }],
+      // Checked before shape validation: the missing project is what's reported.
+      [`/api/settings?${q}`, { method: 'PATCH', headers: json, body: JSON.stringify({ deadCodeEntryGlobs: 'x' }) }],
+      ['/api/opengrep/ignore', { method: 'POST', headers: json, body: JSON.stringify({ project: missing, ruleIds: ['r'] }) }],
+    ];
+    for (const [p, init] of calls) {
+      const res = await fetch(`http://127.0.0.1:${port}${p}`, init);
+      const body = (await res.json()) as { error?: string };
+      assert.equal(res.status, 400, `${init.method} ${p} → ${JSON.stringify(body)}`);
+      assert.match(String(body.error), /not an existing directory/, p);
+      await assert.rejects(access(missing), p);
+    }
   } finally {
     if (server) await close(server);
     await rm(tmp, { recursive: true, force: true });
