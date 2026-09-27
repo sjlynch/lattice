@@ -3,6 +3,7 @@ import {
   newestDistMtimeMs,
   shouldRestartForDist,
 } from './distSignature.mjs';
+import { createParkedProbeCache } from './parkedProbe.mjs';
 import {
   describeRunLocks,
   heldRunLocks,
@@ -165,10 +166,7 @@ export function createRestartPolicy({
   // A restart handshake is in flight; further triggers coalesce into it (the
   // respawn loads whatever dist/ holds by then).
   let preparing = false;
-  // Cached "are the lock holders parked on live agents?" answer, keyed by the
-  // exact set of locks it was asked about.
-  let parkedProbe = null; // { key, at, report }
-  let parkedProbeInFlight = false;
+  const parkedProbeCache = createParkedProbeCache({ now, queryLockHolders, ttlMs: PARKED_PROBE_TTL_MS });
   let parkedHoldLoggedAt = 0;
   // Bumped on every backend spawn. A handshake that straddles a spawn (the
   // poll can start one in the instant between a kill and the respawn) must not
@@ -299,34 +297,6 @@ export function createRestartPolicy({
     if (!accepted) releaseDrain('restart was not applied');
   }
 
-  function lockSetKey(locks) {
-    return locks.map((lock) => `${lock.hash}:${lock.pid}:${lock.startedAt}`).sort().join('|');
-  }
-
-  // The cached parked answer for exactly this lock set, if fresh; else null.
-  function freshParkedReport(locks) {
-    if (!parkedProbe) return null;
-    if (parkedProbe.key !== lockSetKey(locks)) return null;
-    if (now() - parkedProbe.at >= PARKED_PROBE_TTL_MS) return null;
-    return parkedProbe.report;
-  }
-
-  function startParkedProbe(locks) {
-    if (parkedProbeInFlight || !queryLockHolders) return;
-    parkedProbeInFlight = true;
-    const key = lockSetKey(locks);
-    Promise.resolve()
-      .then(() => queryLockHolders())
-      .then(
-        (report) => report,
-        (err) => ({ ok: false, why: `lock-holder query threw: ${err?.message ?? err}` }),
-      )
-      .then((report) => {
-        parkedProbeInFlight = false;
-        parkedProbe = { key, at: now(), report: report ?? { ok: false, why: 'no answer' } };
-      });
-  }
-
   function onBackendSpawned(candidate) {
     // A successful kill request does not prove a new backend ran: kill can
     // later fail with EPERM. Commit the output baseline only on actual spawn.
@@ -430,7 +400,7 @@ export function createRestartPolicy({
     // on a live agent (then it's not wedged). The answer arrives async;
     // decide on the next tick.
     if (queryLockHolders && !parkedReport) {
-      startParkedProbe(locks);
+      parkedProbeCache.start(locks);
       return;
     }
     console.warn(
@@ -452,8 +422,8 @@ export function createRestartPolicy({
           `${parkedDetail(locks, parkedReport)}. Held by: ${describeRunLocks(locks)}`,
       );
     }
-    // Keep the answer current: re-ask once it goes stale.
-    if (now() - (parkedProbe?.at ?? 0) >= PARKED_PROBE_TTL_MS / 2) startParkedProbe(locks);
+    // Keep the answer current: re-ask at half its TTL during a parked hold.
+    parkedProbeCache.refreshIfDue(locks);
   }
 
   function onDeferHoldWorkflow(locks) {
@@ -505,7 +475,7 @@ export function createRestartPolicy({
       if (preparing) return;
       const locks = scanRunLocks();
       if (locks.length > 0) lastLockSeenAt = now();
-      const parkedReport = locks.length > 0 ? freshParkedReport(locks) : null;
+      const parkedReport = locks.length > 0 ? parkedProbeCache.freshReport(locks) : null;
       const action = classifyDeferAction({
         deferredSince,
         now: now(),
