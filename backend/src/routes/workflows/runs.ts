@@ -4,7 +4,7 @@
 // edges into it.
 
 import { Router } from 'express';
-import { normalizeWorkflowRunHarnessOverride } from '../../workflows.js';
+import { getWorkflow, normalizeWorkflowRunHarnessOverride } from '../../workflows.js';
 import {
   getActiveRunsForProject as getActiveWorkflowRunsForProject,
   startWorkflowRun,
@@ -36,6 +36,12 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
       if (rawOverride !== null && harnessOverride === null) {
         return res.status(400).json({ error: 'invalid workflow harness override' });
       }
+      // `?project=` pin (optional), as on PATCH/DELETE: a workflow id is looked
+      // up across every project, so a caller naming its board must not start
+      // another board's workflow (404, before any spawn). An unknown id falls
+      // through to startWorkflowRun's own error; no project sent → unpinned.
+      const wf = await getWorkflow(req.params.id);
+      if (wf && !requireOwnedByRequestedProject(wf.projectPath, `workflow ${wf.id}`, req, res)) return;
       // A body `requireNoActiveRun` (sent by older frontends' sequential queue)
       // is still accepted and ignored: every start now refuses a second active
       // run for the project.

@@ -14,6 +14,7 @@ type UseTaskActionsArgs = {
   activeFolder: string;
   tasks: Task[];
   grouped: GroupedTasks;
+  visibleGrouped: GroupedTasks;
   getLaneSortMode: (status: TaskStatus) => LaneSortMode;
   mergeRun: MergeRun | null;
   addTerminal: AddTerminal;
@@ -30,6 +31,7 @@ export function useTaskActions({
   activeFolder,
   tasks,
   grouped,
+  visibleGrouped,
   getLaneSortMode,
   mergeRun,
   addTerminal,
@@ -42,6 +44,7 @@ export function useTaskActions({
     activeFolder,
     tasks,
     grouped,
+    visibleGrouped,
     getLaneSortMode,
     clearSelection,
     showError,

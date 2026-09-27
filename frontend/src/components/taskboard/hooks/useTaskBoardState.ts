@@ -1,8 +1,6 @@
 import { useMemo } from 'react';
 import type { Task, TaskSpawnedEvent, TaskStatus } from '../../../api';
-import type { LaneSortMode } from '../laneSort';
 import { useTaskList } from './useTaskList';
-import { useTaskSelection } from './useTaskSelection';
 
 export type GroupedTasks = Record<TaskStatus, Task[]>;
 
@@ -27,14 +25,14 @@ export function groupTasksByStatus(tasks: Task[]): GroupedTasks {
   return grouped;
 }
 
-// Combines task list syncing, lane grouping/sorting, derived board counts,
-// and multi-selection into the single state shape consumed by the launcher.
-// `onTaskSpawned` is threaded straight to useTaskList so the launcher can
-// lazy-mount a queued task's terminal when its pty spawns. `getLaneSortMode`
-// feeds selection so shift-ranges follow the on-screen (display-sorted) order.
+// Combines task list syncing, lane grouping/sorting and derived board counts
+// into the single state shape consumed by the launcher. `onTaskSpawned` is
+// threaded straight to useTaskList so the launcher can lazy-mount a queued
+// task's terminal when its pty spawns. Multi-selection lives in
+// useTaskBoardDataView, after the search filter, so shift-ranges slice the
+// lanes as rendered.
 export function useTaskBoardState(
   activeFolder: string,
-  getLaneSortMode: (lane: TaskStatus) => LaneSortMode,
   onTaskSpawned?: (event: TaskSpawnedEvent) => void,
 ) {
   const { tasks, error, setError, showError } = useTaskList(
@@ -42,7 +40,6 @@ export function useTaskBoardState(
     onTaskSpawned,
   );
   const grouped = useMemo(() => groupTasksByStatus(tasks), [tasks]);
-  const selection = useTaskSelection(tasks, grouped, getLaneSortMode);
   const activeCount = useMemo(
     () =>
       tasks.filter(
@@ -61,10 +58,5 @@ export function useTaskBoardState(
     error,
     setError,
     showError,
-    selected: selection.selectedIds,
-    selectedIds: selection.selectedIds,
-    clearSelection: selection.clearSelection,
-    toggleSelect: selection.handleToggleSelect,
-    rangeSelect: selection.handleRangeSelect,
   };
 }

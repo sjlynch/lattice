@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { probePiEndpoint, type PiProbeModel, type PiProvider } from '../../api';
 import {
   addHeaderEntry,
@@ -67,12 +67,28 @@ export function useEndpointState() {
 // back through `onDetected` so the caller can pre-select them on the provider;
 // it never touches provider state directly. `dropEndpoint` forgets one id's
 // entries when that endpoint is removed.
+//
+// `generation` fences probes to the Settings session that started them: `reset`
+// (run on every dialog open) and unmount bump it, and a probe that resolves
+// under an older generation touches nothing — no `setDetected`, no
+// `onDetected`. Without it a slow Detect from a cancelled session landed after
+// reopen, replaced that endpoint's curated models and marked the draft touched,
+// so the next unrelated Save wrote the clobbered list.
 export function useProbeDetection() {
   const [probing, setProbing] = useState<Record<string, boolean>>({});
   const [detected, setDetected] = useState<Record<string, PiProbeModel[]>>({});
   const [probeError, setProbeError] = useState<Record<string, string>>({});
+  const generation = useRef(0);
+
+  useEffect(
+    () => () => {
+      generation.current += 1;
+    },
+    [],
+  );
 
   const reset = () => {
+    generation.current += 1;
     setProbing({});
     setDetected({});
     setProbeError({});
@@ -113,6 +129,8 @@ export function useProbeDetection() {
       setProbeError((e) => ({ ...e, [id]: 'Enter a base URL first.' }));
       return;
     }
+    const gen = generation.current;
+    const stale = () => gen !== generation.current;
     setProbing((p) => ({ ...p, [id]: true }));
     setProbeError((e) => ({ ...e, [id]: '' }));
     try {
@@ -120,6 +138,7 @@ export function useProbeDetection() {
         ep.baseUrl.trim(),
         ep.apiKey?.trim() || undefined,
       );
+      if (stale()) return;
       setDetected((d) => ({ ...d, [id]: models }));
       // A reachable endpoint that lists nothing is worth saying out loud —
       // otherwise the button just blinks and the checklist stays empty.
@@ -132,12 +151,15 @@ export function useProbeDetection() {
       // Pre-select all detected models (the common case); the user can uncheck.
       onDetected(models);
     } catch (err) {
+      if (stale()) return;
       setProbeError((e) => ({
         ...e,
         [id]: (err as Error).message || 'Probe failed',
       }));
     } finally {
-      setProbing((p) => ({ ...p, [id]: false }));
+      // `reset` already cleared `probing`; a stale probe must not write into
+      // the new session's map.
+      if (!stale()) setProbing((p) => ({ ...p, [id]: false }));
     }
   };
 

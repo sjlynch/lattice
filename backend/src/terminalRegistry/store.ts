@@ -14,145 +14,28 @@
 // pty exited is simply removed (the `ended` event tells live clients why). A
 // tab restore could not relaunch (`cwd-missing` / `restore-failed`) is KEPT
 // with its `ended` marker so the sidebar can show why and the user can retry
-// once the cause is fixed; those are pruned after ENDED_RETENTION_MS.
+// once the cause is fixed; those are pruned after ENDED_RETENTION_MS (the
+// file codec lives in recordCodec.ts).
 
 import { randomUUID } from 'node:crypto';
 import { ProjectStateManager } from '../projectStateManager.js';
 import { homeProjectScratchDir } from '../projectPath.js';
 import { listKnownProjects as listKnownTaskProjects } from '../tasks.js';
-import { isAgentHarness } from '../harnesses.js';
+import { deserializeTerminalRecords } from './recordCodec.js';
 import type {
-  AgentSessionSource,
   RestoreSummary,
-  TerminalEndReason,
   TerminalEnded,
-  TerminalOwner,
   TerminalRecord,
   TerminalRegistryEvent,
 } from './types.js';
 
+export { deserializeTerminalRecord, deserializeTerminalRecords } from './recordCodec.js';
+
 export const TERMINALS_FILENAME = 'terminals.json';
 const FILE_VERSION = 1;
-const ENDED_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
-
-const AGENT_SESSION_SOURCES: ReadonlySet<AgentSessionSource> = new Set<AgentSessionSource>([
-  'minted', 'rollout-scan', 'transcript-scan', 'command',
-]);
-
-const OWNERS: ReadonlySet<string> = new Set<TerminalOwner>([
-  'user', 'task', 'merge', 'startup', 'workflow-step', 'push', 'qa',
-  'post-merge', 'prompt-customization',
-]);
-const END_REASONS: ReadonlySet<string> = new Set<TerminalEndReason>([
-  'exit', 'closed', 'killed', 'owner-finished', 'cwd-missing', 'restore-failed',
-]);
 
 export function terminalsFile(projectPath: string): string {
   return homeProjectScratchDir(projectPath, TERMINALS_FILENAME);
-}
-
-function str(v: unknown): string | undefined {
-  return typeof v === 'string' && v ? v : undefined;
-}
-function num(v: unknown): number | undefined {
-  return typeof v === 'number' && Number.isFinite(v) ? v : undefined;
-}
-
-// Every field is re-validated: the file is untrusted input (a crash mid-write,
-// a hand edit). A record missing anything load-bearing is dropped, not
-// "repaired" into a tab that would relaunch the wrong thing.
-export function deserializeTerminalRecord(raw: unknown): TerminalRecord | null {
-  if (!raw || typeof raw !== 'object') return null;
-  const r = raw as Record<string, unknown>;
-  const id = str(r.id);
-  const projectPath = str(r.projectPath);
-  const cwd = str(r.cwd);
-  const owner = str(r.owner);
-  if (!id || !projectPath || !cwd || !owner || !OWNERS.has(owner)) return null;
-  const launchRaw = (r.launch && typeof r.launch === 'object' ? r.launch : {}) as Record<string, unknown>;
-  const launch: TerminalRecord['launch'] = {};
-  if (str(launchRaw.initialCommand)) launch.initialCommand = launchRaw.initialCommand as string;
-  if (isAgentHarness(launchRaw.harness)) launch.harness = launchRaw.harness;
-  if (str(launchRaw.piModel)) launch.piModel = launchRaw.piModel as string;
-  if (launchRaw.isQaRun === true) launch.isQaRun = true;
-  if (str(launchRaw.taskId)) launch.taskId = launchRaw.taskId as string;
-  if (launchRaw.mcpScope === 'task-worktree') launch.mcpScope = 'task-worktree';
-  const record: TerminalRecord = {
-    id,
-    projectPath,
-    cwd,
-    label: str(r.label) ?? id,
-    order: num(r.order) ?? 0,
-    owner: owner as TerminalOwner,
-    launch,
-    createdAt: num(r.createdAt) ?? Date.now(),
-    updatedAt: num(r.updatedAt) ?? Date.now(),
-  };
-  if (r.kind === 'merge' || r.kind === 'startup') record.kind = r.kind;
-  if (str(r.taskId)) record.taskId = r.taskId as string;
-  if (str(r.startupId)) record.startupId = r.startupId as string;
-  if (str(r.serverId)) record.serverId = r.serverId as string;
-  if (str(r.serverInstanceId)) record.serverInstanceId = r.serverInstanceId as string;
-  if (num(r.restoreCount) !== undefined) record.restoreCount = r.restoreCount as number;
-  if (num(r.restoredAt) !== undefined) record.restoredAt = r.restoredAt as number;
-  const discovery = r.codexDiscovery as Record<string, unknown> | undefined;
-  if (discovery && typeof discovery === 'object'
-    && num(discovery.createdSince) !== undefined && (discovery.createdSince as number) >= 0
-    && num(discovery.writtenSince) !== undefined && (discovery.writtenSince as number) >= 0
-    && (discovery.mode === 'fresh' || discovery.mode === 'resumed')) {
-    record.codexDiscovery = {
-      createdSince: discovery.createdSince as number,
-      writtenSince: discovery.writtenSince as number,
-      mode: discovery.mode,
-    };
-  }
-  // A relaunch that was in flight when the process died is not in flight now.
-  // (Deliberately not persisted-through: the flag only means anything for the
-  // backend process that queued it.)
-  const as = r.agentSession as Record<string, unknown> | undefined;
-  if (as && typeof as === 'object' && isAgentHarness(as.harness) && str(as.id)) {
-    record.agentSession = {
-      harness: as.harness,
-      id: as.id as string,
-      source: AGENT_SESSION_SOURCES.has(as.source as AgentSessionSource)
-        ? as.source as AgentSessionSource
-        : 'minted',
-      ...(as.ambiguous === true ? { ambiguous: true } : {}),
-    };
-  }
-  const lb = r.lastBusy as Record<string, unknown> | undefined;
-  if (lb && typeof lb === 'object' && typeof lb.busy === 'boolean' && num(lb.at) !== undefined) {
-    record.lastBusy = { busy: lb.busy, at: lb.at as number };
-  }
-  const ended = r.ended as Record<string, unknown> | undefined;
-  if (ended && typeof ended === 'object' && str(ended.reason) && END_REASONS.has(ended.reason as string)) {
-    record.ended = {
-      at: num(ended.at) ?? Date.now(),
-      reason: ended.reason as TerminalEndReason,
-      ...(num(ended.exitCode) !== undefined ? { exitCode: ended.exitCode as number } : {}),
-      ...(str(ended.detail) ? { detail: ended.detail as string } : {}),
-    };
-  }
-  return record;
-}
-
-export function deserializeTerminalRecords(raw: unknown): TerminalRecord[] | null {
-  const list = Array.isArray(raw)
-    ? raw
-    : raw && typeof raw === 'object' && Array.isArray((raw as { terminals?: unknown }).terminals)
-      ? (raw as { terminals: unknown[] }).terminals
-      : null;
-  if (!list) return null;
-  const now = Date.now();
-  const out: TerminalRecord[] = [];
-  for (const item of list) {
-    const rec = deserializeTerminalRecord(item);
-    if (!rec) continue;
-    // Prune long-ended leftovers so the file can't grow forever.
-    if (rec.ended && now - rec.ended.at > ENDED_RETENTION_MS) continue;
-    out.push(rec);
-  }
-  return out.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);
 }
 
 export type TerminalRegistrySubscriber = (event: TerminalRegistryEvent) => void;
@@ -261,6 +144,27 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
     return record ? { ...record } : null;
   }
 
+  // The shared body of every single-record write (call it inside
+  // runProjectWrite): re-find `id` in the cached list, hand `fn` a copy of the
+  // list to change, then cache + persist that copy. Returns `null` — and
+  // writes nothing — when the record is gone or `fn` declines with `null`;
+  // otherwise `fn`'s result, so the caller can emit after the write.
+  private writeRecordList<R>(
+    key: string,
+    id: string,
+    fn: (list: TerminalRecord[], idx: number) => R | null,
+  ): R | null {
+    const records = this.getCached(key) ?? [];
+    const idx = records.findIndex((r) => r.id === id);
+    if (idx < 0) return null;
+    const list = [...records];
+    const result = fn(list, idx);
+    if (result === null) return null;
+    this.setCached(key, list);
+    this.schedulePersist(key);
+    return result;
+  }
+
   async update(
     id: string,
     patch: Partial<Omit<TerminalRecord, 'id' | 'projectPath' | 'createdAt'>>,
@@ -269,18 +173,16 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
     const loc = await this.locate(id, projectPath);
     if (!loc) return null;
     return this.runProjectWrite(loc.key, () => {
-      const records = this.getCached(loc.key) ?? [];
-      const idx = records.findIndex((r) => r.id === id);
-      if (idx < 0) return null;
-      const next: TerminalRecord = { ...records[idx]!, ...patch, updatedAt: Date.now() };
-      // `undefined` in a patch clears the field on disk too.
-      for (const [k, v] of Object.entries(patch)) {
-        if (v === undefined) delete (next as Record<string, unknown>)[k];
-      }
-      const list = [...records];
-      list[idx] = next;
-      this.setCached(loc.key, list);
-      this.schedulePersist(loc.key);
+      const next = this.writeRecordList(loc.key, id, (list, idx) => {
+        const patched: TerminalRecord = { ...list[idx]!, ...patch, updatedAt: Date.now() };
+        // `undefined` in a patch clears the field on disk too.
+        for (const [k, v] of Object.entries(patch)) {
+          if (v === undefined) delete (patched as Record<string, unknown>)[k];
+        }
+        list[idx] = patched;
+        return patched;
+      });
+      if (!next) return null;
       this.emit({ type: 'upsert', projectPath: next.projectPath, record: { ...next } });
       return { ...next };
     });
@@ -292,26 +194,25 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
     const loc = await this.locate(id, projectPath);
     if (!loc) return false;
     return this.runProjectWrite(loc.key, () => {
-      const records = this.getCached(loc.key) ?? [];
-      const idx = records.findIndex((r) => r.id === id);
-      if (idx < 0) return false;
-      const record = records[idx]!;
-      // Re-ending an already-ended record for the same reason keeps its
-      // original timestamp, so the retention prune still counts from the
-      // FIRST failure rather than restarting on every retry.
-      const at = ended.at
-        ?? (record.ended?.reason === ended.reason ? record.ended.at : Date.now());
-      const full: TerminalEnded = { ...ended, at };
-      const keep = full.reason === 'cwd-missing' || full.reason === 'restore-failed';
-      const list = [...records];
-      if (keep) {
-        list[idx] = { ...record, ended: full, serverId: undefined, updatedAt: full.at };
-        delete list[idx]!.serverId;
-      } else {
-        list.splice(idx, 1);
-      }
-      this.setCached(loc.key, list);
-      this.schedulePersist(loc.key);
+      const done = this.writeRecordList(loc.key, id, (list, idx) => {
+        const record = list[idx]!;
+        // Re-ending an already-ended record for the same reason keeps its
+        // original timestamp, so the retention prune still counts from the
+        // FIRST failure rather than restarting on every retry.
+        const at = ended.at
+          ?? (record.ended?.reason === ended.reason ? record.ended.at : Date.now());
+        const full: TerminalEnded = { ...ended, at };
+        const keep = full.reason === 'cwd-missing' || full.reason === 'restore-failed';
+        if (keep) {
+          list[idx] = { ...record, ended: full, serverId: undefined, updatedAt: full.at };
+          delete list[idx]!.serverId;
+        } else {
+          list.splice(idx, 1);
+        }
+        return { record, full, keep };
+      });
+      if (!done) return false;
+      const { record, full, keep } = done;
       this.emit({
         type: 'ended',
         projectPath: record.projectPath,
@@ -328,14 +229,8 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
     const loc = await this.locate(id, projectPath);
     if (!loc) return false;
     return this.runProjectWrite(loc.key, () => {
-      const records = this.getCached(loc.key) ?? [];
-      const idx = records.findIndex((r) => r.id === id);
-      if (idx < 0) return false;
-      const record = records[idx]!;
-      const list = [...records];
-      list.splice(idx, 1);
-      this.setCached(loc.key, list);
-      this.schedulePersist(loc.key);
+      const record = this.writeRecordList(loc.key, id, (list, idx) => list.splice(idx, 1)[0]!);
+      if (!record) return false;
       this.emit({ type: 'removed', projectPath: record.projectPath, id });
       return true;
     });
@@ -394,19 +289,16 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
       const busy = busyServerIds.has(record.serverId);
       if (record.lastBusy?.busy === busy) continue;
       await this.runProjectWrite(projectKey, () => {
-        const records = this.getCached(projectKey) ?? [];
-        const idx = records.findIndex((r) => r.id === record.id);
-        if (idx < 0) return;
-        // The verdict is about the pty the snapshot named. A record relaunched
-        // onto a new pty (or ended) since then must not inherit it — a
-        // relaunch clears `lastBusy` precisely so the dead pty's state can't
-        // leak into the interruption verdict for the new one.
-        const cur = records[idx]!;
-        if (cur.ended || cur.serverId !== record.serverId) return;
-        const list = [...records];
-        list[idx] = { ...list[idx]!, lastBusy: { busy, at: now } };
-        this.setCached(projectKey, list);
-        this.schedulePersist(projectKey);
+        this.writeRecordList(projectKey, record.id, (list, idx) => {
+          // The verdict is about the pty the snapshot named. A record relaunched
+          // onto a new pty (or ended) since then must not inherit it — a
+          // relaunch clears `lastBusy` precisely so the dead pty's state can't
+          // leak into the interruption verdict for the new one.
+          const cur = list[idx]!;
+          if (cur.ended || cur.serverId !== record.serverId) return null;
+          list[idx] = { ...cur, lastBusy: { busy, at: now } };
+          return true;
+        });
       });
     }
   }

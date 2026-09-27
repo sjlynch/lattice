@@ -37,6 +37,13 @@ session wait both have timeouts. `runControlStepWorker` takes injectable deps
 
 ## `shared.ts` — task waits / `emitControlProgress`
 
+The waits live in their own files; `shared.ts` re-exports every name below.
+
+- `laneWait.ts` — `waitForLaneEmpty` + `LaneWaitDeps`.
+- `mergeWorkWait.ts` — `waitForMergeWork` + `MergeWorkWaitDeps`; poll interval and per-task phases are named constants.
+- `postMergeHookWait.ts` — `waitForPostMergeHookIdle` + `PostMergeHookWaitDeps`.
+- `waitPrimitives.ts` — import-cycle-free leaf: `isRunEndedEvent`, `createWaitSettler` (settle-once finish/fail + cleanup), `createUnrefTimer` (re-armable no-progress timer).
+
 `waitForMergeWork(project, run, onProgress, maxWaitMs, deps?)` resolves with a
 task snapshot when ready work exists **or** no admitted/running task remains.
 It considers `in_progress`, persisted `runQueued`, and live `task-run:<id>`

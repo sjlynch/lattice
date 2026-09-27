@@ -5,6 +5,10 @@ import {
   type TriggerPostMergeHookDeps,
 } from '../postMergeHooks/trigger.js';
 import { hasPendingPostMergeHookTrigger } from '../postMergeHooks/registry.js';
+import {
+  abortPostMergeHookLaunch,
+  trackPostMergeHookLaunch,
+} from '../postMergeHooks/launchAbort.js';
 import type { UserSettings } from '../userSettings/types.js';
 import type { PostMergeHookRun } from '../postMergeHooks/types.js';
 
@@ -81,6 +85,7 @@ function makeDeps(settings: UserSettings): {
     cleanupPostMergeHookSession: async (projectPath, id) => {
       calls.cleaned.push({ projectPath, id });
     },
+    trackPostMergeHookLaunch,
   };
 
   return { deps, calls };
@@ -323,6 +328,106 @@ test('an abort while the queued spawn is pending kills the late pty and register
   assert.equal(calls.registered.length, 0, 'no presence node after the abort');
   assert.equal(calls.patched.length, 0, 'no progress event for a finished run');
   assert.deepEqual(calls.cleaned, [{ projectPath: PROJECT, id: calls.recorded[0].id }]);
+});
+
+// Abort used to only mark the run `aborted`, leaving the queued spawn alive:
+// the trigger's caller (a merge run holding run.lock) stayed blocked until the
+// queue admitted it, and — with a per-project dedupe key — the NEXT hook was
+// handed that same request, so its pty spawned with the aborted hook's
+// cwd/instructions, got killed by the aborted hook's trigger, and the new hook
+// "started" on a dead session. The stub below behaves like the real queue: it
+// only settles when admitted (never, here) or when its signal is aborted.
+test('aborting a hook whose spawn is still queued cancels it, and the next hook gets its own spawn', async () => {
+  const { deps, calls } = makeDeps({
+    postMergeHookPrompt: 'run the post-merge checks',
+  });
+  const admit = new Map<string, (sess: { id: string }) => void>();
+  deps.queuedCreateSession = (args) => {
+    calls.queued.push(args);
+    return new Promise((resolve, reject) => {
+      const signal = args.signal;
+      if (signal?.aborted) return reject(signal.reason);
+      signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      admit.set(args.dedupeKey, resolve);
+    });
+  };
+  const options = {
+    projectPath: PROJECT,
+    backendOrigin: ORIGIN,
+    trigger: 'merge-run' as const,
+  };
+
+  const first = triggerPostMergeHookWithDeps(options, deps);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls.queued.length, 1, 'H1 spawn is queued');
+  const h1 = calls.recorded[0].id;
+  assert.equal(calls.queued[0].dedupeKey, `post-merge-hook:${h1}`);
+
+  // What endPostMergeHook does for a hook with no pty yet.
+  deps.finishPostMergeHook(h1, 'aborted', 'aborted by user');
+  assert.equal(abortPostMergeHookLaunch(h1, 'aborted by user'), true);
+  const firstOutcome = await Promise.race([
+    first,
+    new Promise<'hung'>((resolve) => setTimeout(() => resolve('hung'), 1000)),
+  ]);
+  assert.notEqual(firstOutcome, 'hung', 'the abort releases the trigger without the spawn being admitted');
+  if (firstOutcome === 'hung') return;
+  assert.equal(firstOutcome.kind === 'skipped' && firstOutcome.reason, 'aborted');
+  assert.deepEqual(calls.cleaned, [{ projectPath: PROJECT, id: h1 }]);
+  assert.equal(calls.registered.length, 0);
+  assert.equal(calls.patched.length, 0);
+  assert.equal(abortPostMergeHookLaunch(h1, 'again'), false, 'the launch was released');
+
+  const second = triggerPostMergeHookWithDeps(options, deps);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  assert.equal(calls.queued.length, 2, 'H2 issues its own spawn request');
+  const h2 = calls.recorded[1].id;
+  assert.notEqual(h2, h1);
+  assert.equal(calls.queued[1].dedupeKey, `post-merge-hook:${h2}`);
+  assert.notEqual(calls.queued[1].dedupeKey, calls.queued[0].dedupeKey);
+  assert.equal(calls.queued[1].signal?.aborted, false, "H1's abort does not cancel H2");
+
+  admit.get(calls.queued[1].dedupeKey)!({ id: 'server_h2' });
+  const secondOutcome = await second;
+  assert.equal(secondOutcome.kind, 'started');
+  if (secondOutcome.kind !== 'started') return;
+  assert.equal(secondOutcome.serverId, 'server_h2');
+  assert.equal(secondOutcome.run.id, h2);
+  assert.deepEqual(calls.killed, [], "H1's cleanup never kills H2's session");
+  assert.deepEqual(calls.cleaned, [{ projectPath: PROJECT, id: h1 }]);
+});
+
+test('endPostMergeHook cancels the launch of a hook that has no pty yet', async () => {
+  const { endPostMergeHook } = await import('../postMergeHooks/session.js');
+  const { recordPostMergeHook, getPostMergeHook } = await import('../postMergeHooks/registry.js');
+  const { createPostMergeHookId } = await import('../postMergeHooks/paths.js');
+  const fs = await import('node:fs/promises');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-pmh-launch-abort-'));
+  try {
+    const id = createPostMergeHookId();
+    recordPostMergeHook({
+      id,
+      projectPath: project,
+      harness: 'claude',
+      prompt: 'run the checks',
+      cwd: path.join(os.tmpdir(), id),
+      status: 'running',
+      startedAt: Date.now(),
+      trigger: 'merge-run',
+    });
+    const launch = trackPostMergeHookLaunch(id);
+
+    const ended = await endPostMergeHook(id, 'aborted', 'aborted by user');
+
+    assert.equal(ended?.status, 'aborted');
+    assert.equal(getPostMergeHook(id)?.status, 'aborted');
+    assert.equal(launch.signal.aborted, true, 'the queued spawn is cancelled');
+    launch.release();
+  } finally {
+    await fs.rm(project, { recursive: true, force: true });
+  }
 });
 
 test('an abort while scratch setup is pending skips the spawn entirely', async () => {
