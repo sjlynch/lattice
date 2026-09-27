@@ -52,6 +52,7 @@ export const FINGERPRINT_FILES = [
   // A change to which Origins are accepted must invalidate a stale orphan.
   'wsOriginAllowlist.js',
   'terminalServerAuth.js',
+  'persistedSecretFile.js',
   'terminal.js',
   'terminal/sessionTypes.js',
   'terminal/sessionStore.js',

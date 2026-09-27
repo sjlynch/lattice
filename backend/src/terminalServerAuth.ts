@@ -7,9 +7,9 @@
 // detached terminal-server after a dev/backend restart while preserving PTYs.
 
 import { randomBytes, timingSafeEqual } from 'node:crypto';
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { latticeHomeDir } from './projectPath.js';
+import { loadOrCreatePersistedSecret } from './persistedSecretFile.js';
 
 export const TERMINAL_SERVER_TOKEN_ENV = 'LATTICE_TERMINAL_TOKEN';
 export const TERMINAL_SERVER_AUTH_HEADER = 'x-lattice-terminal-token';
@@ -29,32 +29,38 @@ function validToken(token: string): boolean {
   return token.length >= 32;
 }
 
+// Throws (uncached, so the next call retries) when the token file exists but
+// stays unreadable: minting a replacement would lock this backend out of the
+// running detached terminal-server, which still holds the old token.
 export function getTerminalServerAuthToken(): string {
   if (cachedToken) return cachedToken;
-  const file = tokenFilePath();
+  let result;
   try {
-    const existing = readFileSync(file, 'utf8').trim();
-    if (validToken(existing)) {
-      cachedToken = existing;
-      return existing;
-    }
-  } catch {
-    /* absent or unreadable — fall through and create one */
-  }
-
-  const token = randomBytes(TOKEN_BYTES).toString('base64url');
-  try {
-    mkdirSync(latticeHomeDir(), { recursive: true });
-    writeFileSync(file, `${token}\n`, { mode: 0o600 });
-    chmodSync(file, 0o600); // best-effort owner-only (inert on Windows)
+    result = loadOrCreatePersistedSecret({
+      file: tokenFilePath(),
+      label: '[terminal-auth]',
+      parse: (raw) => {
+        const token = raw.toString('utf8').trim();
+        return validToken(token) ? token : null;
+      },
+      generate: () => {
+        const token = randomBytes(TOKEN_BYTES).toString('base64url');
+        return { value: token, bytes: `${token}\n` };
+      },
+    });
   } catch (err) {
-    // Degrade to a process-lifetime token if the home scratch area is
-    // unavailable. Existing PTYs may not survive a backend restart in this rare
-    // mode, but the mutating API remains protected for this process.
-    console.warn('[terminal-auth] could not persist terminal-server token:', err);
+    console.error('[terminal-auth] terminal-server token unavailable:', err);
+    throw err;
   }
-  cachedToken = token;
-  return token;
+  // `persisted: false` = a process-lifetime token (home scratch area not
+  // writable). Existing PTYs may not survive a backend restart in this rare
+  // mode, but the mutating API remains protected for this process.
+  cachedToken = result.value;
+  return result.value;
+}
+
+export function resetTerminalServerAuthTokenForTests(): void {
+  cachedToken = null;
 }
 
 export function terminalServerAuthHeaders(): Record<string, string> {
