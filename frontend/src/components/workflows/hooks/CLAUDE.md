@@ -97,20 +97,18 @@ there.
   sees *this* tab's `activeRuns`, so a run's startup window or a second tab can
   slip past it); the backend is authoritative and 409s any start while a run is
   already active.
-  The hook maps a start to one of four `StartOutcome`s: `started` (attach the
-  runId), `finished` (the completion WS beat the `/run` response; buffer the
-  finish then attach/consume the run id so the queue cannot stall), `busy` (the
-  409 — `dispatchRejected` requeues the entry to retry when the slot frees, no
-  error toast), or `failed` (drop). A run leaving `activeRuns` with no
-  `recentRuns` entry never got a terminal WS event — it vanished from a `hello`
-  full-replace. It is never read as `'completed'` (cascading the next workflow
-  onto a killed run's still-pending tasks was the "second workflow continues,
-  leaving open + unmerged tasks" bug), but no longer as `'errored'` on the spot
-  either — that stopped the queue on every backend restart. For a run the queue
-  owns, `vanishedRunResolver.ts` waits a grace (3 s), then asks
+  `startOutcomeActions.ts` maps each `/run` `StartOutcome` to queue actions and
+  splits vanished runs; the hook keeps the refs and side effects. `busy` (the
+  409) requeues via `dispatchRejected` to retry when the slot frees, no error
+  toast. A run leaving `activeRuns` with no `recentRuns` entry vanished from a
+  `hello` full-replace: never read as `'completed'` (cascading the next workflow
+  onto a killed run's pending tasks was the "second workflow continues, leaving
+  open + unmerged tasks" bug) nor `'errored'` on the spot (that stopped the
+  queue on every backend restart). For a run the queue owns,
+  `vanishedRunResolver.ts` waits a grace (3 s), then asks
   `GET /api/workflow-runs/:id`: back in `activeRuns` → nothing; a recorded final
-  status (it finished while the socket was down) → reported; 404 → `'errored'`,
-  which STOPS the queue; unreachable → re-asked, `'errored'` after 3 min.
+  status → reported; 404 → `'errored'`, which STOPS the queue; unreachable →
+  re-asked, `'errored'` after 3 min.
   `fetchRun` / `vanishedRunTiming` are test seams. Covered by
   `src/__tests__/backendRestartResilience.test.ts`. Queue state is **per-project**:
   WorkflowsLauncher isn't remounted on a project switch, so the hook resets to
@@ -119,6 +117,10 @@ there.
   the previous project's running/queued status and the diff would
   dispatchFail-drop the prior project's pending entry. Regression-covered in
   `src/__tests__/useWorkflowQueueProjectScope.test.ts`.
+- `startOutcomeActions.ts` — the queue's pure halves: `queueActionsForStartOutcome`
+  (`finished` → `runFinished` then `workflowStarted`, so a completion WS that beat
+  `/run` still retires the entry; another project's run → `dispatchFailed`) and
+  `classifyVanishedRuns` (report now vs. hand to `vanishedRunResolver`).
 - `useWorkflowQueueActions.ts` — enqueue/remove/clear/start/stop callbacks
   dispatched into `useWorkflowQueue`. Each enqueue captures the workflow's current
   harness/Pi-model override and reports whether an entry was queued;
