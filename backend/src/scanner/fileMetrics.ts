@@ -64,25 +64,28 @@ const STAT_BATCH = 32;
 // moment the file analyzes successfully or its (mtime,size) moves.
 const unanalyzable = new Map<string, { mtimeMs: number; size: number; loc: number | undefined }>();
 
-export async function computeFileMetrics(
+// Yield the event loop once, then re-check cancellation — the shared step
+// between batches (phase 1) and every YIELD_EVERY_N_FILES files (phase 3).
+async function yieldAndCheckCancelled(options: ComputeFileMetricsOptions): Promise<void> {
+  await new Promise<void>((r) => setImmediate(r));
+  if (options.isCancelled?.()) throw new ScanCancelledError();
+}
+
+// ── Phase 1 (main thread): stat + cache lookup. Cheap and non-hanging.
+// Stats run STAT_BATCH at a time; the event loop is yielded between
+// batches so other requests keep being served during a large pass. ──
+async function statAndLookup(
   files: string[],
-  options: ComputeFileMetricsOptions = {},
-): Promise<FileMetric[]> {
+  options: ComputeFileMetricsOptions,
+): Promise<{ out: FileMetric[]; misses: MissJob[] }> {
   // Filled by index so the returned array preserves input order regardless of
   // when each file's analysis lands (cache hit inline, worker result later).
   const out: FileMetric[] = new Array(files.length);
   const misses: MissJob[] = [];
-  if (options.isCancelled?.()) throw new ScanCancelledError();
 
-  // ── Phase 1 (main thread): stat + cache lookup. Cheap and non-hanging.
-  // Stats run STAT_BATCH at a time; the event loop is yielded between
-  // batches so other requests keep being served during a large pass. ──
   for (let start = 0; start < files.length; start += STAT_BATCH) {
     if (options.isCancelled?.()) throw new ScanCancelledError();
-    if (start > 0) {
-      await new Promise<void>((r) => setImmediate(r));
-      if (options.isCancelled?.()) throw new ScanCancelledError();
-    }
+    if (start > 0) await yieldAndCheckCancelled(options);
     const slice = files.slice(start, start + STAT_BATCH);
     const stats = await Promise.all(slice.map((f) => fs.stat(f).then((st) => st, () => null)));
 
@@ -125,10 +128,22 @@ export async function computeFileMetrics(
     }
   }
 
-  if (misses.length === 0) return out;
+  return { out, misses };
+}
 
+type ApplyResult = (index: number, loc: number | undefined, analysis: JobAnalysis | null) => void;
+
+// Lands one analysis result (worker or in-thread) into its `out` slot. The
+// health cache is written only for a stat'd file with a known `loc`; the
+// `unanalyzable` memo is cleared on success and set on a stat'd failure.
+function createResultApplier(
+  files: string[],
+  out: FileMetric[],
+  misses: MissJob[],
+  options: ComputeFileMetricsOptions,
+): ApplyResult {
   const missByIndex = new Map(misses.map((m) => [m.index, m]));
-  const apply = (index: number, loc: number | undefined, analysis: JobAnalysis | null): void => {
+  return (index, loc, analysis) => {
     const slot = out[index];
     if (loc !== undefined) slot.loc = loc;
     const m = missByIndex.get(index);
@@ -143,29 +158,19 @@ export async function computeFileMetrics(
       unanalyzable.set(files[index], { mtimeMs: m.mtimeMs, size: m.size, loc });
     }
   };
+}
 
-  // ── Phase 2: analyze cache-misses in an ISOLATED WORKER. A file whose
-  // analysis hangs pins only the worker thread; the main event loop keeps
-  // serving. The per-file stall watchdog inside runHealthAnalysis terminates a
-  // genuinely-hung file and continues. Anything the worker couldn't handle
-  // (worker unavailable — e.g. from `src` under tsx — or a respawn-limit tail)
-  // comes back as `unhandled` for the in-thread fallback below. ──
-  const jobs: AnalysisJob[] = misses.map((m) => ({ index: m.index, filePath: m.filePath, ext: m.ext }));
-  const { unhandled } = await runHealthAnalysis(jobs, {
-    isCancelled: options.isCancelled,
-    onResult: (r) => apply(r.index, r.loc, r.analysis),
-  });
-  if (options.isCancelled?.()) throw new ScanCancelledError();
-
-  // ── Phase 3: in-thread fallback (same behaviour as before the worker) for
-  // jobs the worker didn't handle. Note the watchdog already emitted+skipped any
-  // culprit before handing back its tail, so we never re-run a hanging file. ──
+// ── Phase 3: in-thread fallback (same behaviour as before the worker) for
+// jobs the worker didn't handle. Note the watchdog already emitted+skipped any
+// culprit before handing back its tail, so we never re-run a hanging file. ──
+async function analyzeInThread(
+  unhandled: AnalysisJob[],
+  apply: ApplyResult,
+  options: ComputeFileMetricsOptions,
+): Promise<void> {
   for (let k = 0; k < unhandled.length; k += 1) {
     if (options.isCancelled?.()) throw new ScanCancelledError();
-    if (k > 0 && k % YIELD_EVERY_N_FILES === 0) {
-      await new Promise<void>((r) => setImmediate(r));
-      if (options.isCancelled?.()) throw new ScanCancelledError();
-    }
+    if (k > 0 && k % YIELD_EVERY_N_FILES === 0) await yieldAndCheckCancelled(options);
     const job = unhandled[k];
     const read = await readForAnalysis(job.filePath);
     let analysis: JobAnalysis | null = null;
@@ -181,6 +186,33 @@ export async function computeFileMetrics(
     }
     apply(job.index, read.loc, analysis);
   }
+}
+
+export async function computeFileMetrics(
+  files: string[],
+  options: ComputeFileMetricsOptions = {},
+): Promise<FileMetric[]> {
+  if (options.isCancelled?.()) throw new ScanCancelledError();
+
+  const { out, misses } = await statAndLookup(files, options);
+  if (misses.length === 0) return out;
+
+  const apply = createResultApplier(files, out, misses, options);
+
+  // ── Phase 2: analyze cache-misses in an ISOLATED WORKER. A file whose
+  // analysis hangs pins only the worker thread; the main event loop keeps
+  // serving. The per-file stall watchdog inside runHealthAnalysis terminates a
+  // genuinely-hung file and continues. Anything the worker couldn't handle
+  // (worker unavailable — e.g. from `src` under tsx — or a respawn-limit tail)
+  // comes back as `unhandled` for the in-thread fallback below. ──
+  const jobs: AnalysisJob[] = misses.map((m) => ({ index: m.index, filePath: m.filePath, ext: m.ext }));
+  const { unhandled } = await runHealthAnalysis(jobs, {
+    isCancelled: options.isCancelled,
+    onResult: (r) => apply(r.index, r.loc, r.analysis),
+  });
+  if (options.isCancelled?.()) throw new ScanCancelledError();
+
+  await analyzeInThread(unhandled, apply, options);
 
   return out;
 }
