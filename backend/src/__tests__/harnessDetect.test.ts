@@ -42,8 +42,9 @@ function installFakeSpawn(): void {
 
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-beforeEach((t: TestContext) => {
-  t.mock.timers.enable({ apis: ['setTimeout'] });
+beforeEach((t) => {
+  // Top-level hooks run around each test, so the context is a TestContext.
+  (t as TestContext).mock.timers.enable({ apis: ['setTimeout'] });
   modes = { claude: 'found', pi: 'found', codex: 'found' };
   spawnCount = {};
   installFakeSpawn();
@@ -56,6 +57,8 @@ afterEach(() => {
 test('a timed-out probe reports unavailable but is re-probed on the next call', async (t) => {
   modes.pi = 'hang';
   const first = detectHarnesses();
+  // Let the non-hanging probes close before the probe timeout fires.
+  await flush();
   t.mock.timers.tick(5000);
   assert.deepEqual(await first, { claude: true, pi: false, codex: true });
 
@@ -94,6 +97,8 @@ test('concurrent callers share one in-flight probe', async () => {
 test('the background re-probe publishes the corrected snapshot to listeners', async (t) => {
   modes.pi = 'hang';
   const first = detectHarnesses();
+  // Let the non-hanging probes close before the probe timeout fires.
+  await flush();
   t.mock.timers.tick(5000);
   assert.equal((await first).pi, false);
 

@@ -91,10 +91,7 @@ test("installCodexStopHook('if-absent') skips (returns false) when the existing 
 
   const file = codexHooksJsonPath(dir);
   await fs.mkdir(path.dirname(file), { recursive: true });
-  const repoOwned = '{
-  "hooks": { "Stop": [] }
-}
-';
+  const repoOwned = '{\n  "hooks": { "Stop": [] }\n}\n';
   await fs.writeFile(file, repoOwned, 'utf8');
 
   const realReadFile = fs.readFile;

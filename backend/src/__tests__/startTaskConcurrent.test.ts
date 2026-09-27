@@ -83,8 +83,10 @@ function fakeDeps(firstSetup: Promise<void>, opts: { failFirst?: boolean } = {})
   return { deps, calls };
 }
 
-// What `enqueueTaskRun` enqueues, with the fake deps injected.
-async function enqueueRun(taskId: string, deps: Partial<StartTaskDeps>): Promise<Promise<void>> {
+// What `enqueueTaskRun` enqueues, with the fake deps injected. The run's
+// promise is wrapped: an async function returning it bare would adopt it, so
+// awaiting the enqueue would wait for the whole run.
+async function enqueueRun(taskId: string, deps: Partial<StartTaskDeps>): Promise<{ done: Promise<void> }> {
   await updateTask(taskId, { runQueued: true, runQueuedAt: Date.now() });
   const { done } = enqueueSpawn<void>({
     kind: 'task-run',
@@ -95,7 +97,7 @@ async function enqueueRun(taskId: string, deps: Partial<StartTaskDeps>): Promise
         startTaskById(taskId, ORIGIN, { deps, throwOnCapacity: true, signal }),
       ),
   });
-  return done;
+  return { done };
 }
 
 test('a /run queued while a direct start is on the checkout gate withdraws instead of killing the first agent', async () => {
@@ -110,7 +112,7 @@ test('a /run queued while a direct start is on the checkout gate withdraws inste
 
   // Run All / ▶ meanwhile: the task is still `open`, so the route admits it.
   assert.equal((await getTask(task.id))?.status, 'open');
-  const queued = await enqueueRun(task.id, deps);
+  const { done: queued } = await enqueueRun(task.id, deps);
   const queuedRejected = assert.rejects(queued, (err) => isTaskStartWithdrawn(err));
   // The thunk counts its attempt (a store write) before calling startTaskById;
   // let it get there, so it really is a second start racing the first.
