@@ -13,6 +13,9 @@ import type { StartOutcome } from './useWorkflowRunActions';
 import { resolveVanishedRun, type VanishedRunDeps } from './vanishedRunResolver';
 import { classifyVanishedRuns, queueActionsForStartOutcome } from './startOutcomeActions';
 
+// Bound busy retries even when HTTP works but the workflow socket is stale.
+export const BUSY_RETRY_DELAY_MS = 2_000;
+
 // Count the active runs the queue itself didn't dispatch (a manual ▶ Run, or a
 // run from another tab). Queue-owned runs are the ones whose runId is attached
 // to a `started` entry; everything else in `activeRuns` is external and feeds
@@ -113,6 +116,7 @@ export function useWorkflowQueue({
   const prevActiveRef = useRef(activeRuns);
 
   const dispatch = useCallback((action: QueueAction) => {
+    if (unmountedRef.current) return;
     const ctx = externalActiveContext(stateRef.current, activeRunsRef.current);
     const result = step(stateRef.current, action, ctx);
     // Apply the new state to the ref BEFORE the recursive dispatches below,
@@ -139,11 +143,12 @@ export function useWorkflowQueue({
       void (async () => {
         const outcome = await runWorkflowRef.current(wf, entry);
         if (
+          unmountedRef.current ||
           activeFolderRef.current !== startProject ||
           activeFolderGenerationRef.current !== startGeneration
         ) {
-          // The request belongs to the project we left. Do not attach its result
-          // (or failure) to the newly active project's queue state.
+          // The request outlived its queue/project. Do not attach its result
+          // (or failure) or schedule another start from a stale continuation.
           return;
         }
         for (const next of queueActionsForStartOutcome(outcome, entry.id, startProject)) {
@@ -154,7 +159,7 @@ export function useWorkflowQueue({
   }, []);
 
   // Reset per-project queue state when the active project changes. The queue
-  // (running/queued/started/preFinishedRunIds) belongs to the project it
+  // (running/queued/started/preFinishedRuns/deferredRetry) belongs to the project it
   // was built in, and WorkflowsLauncher isn't remounted across a project
   // switch — so without this the new project would render the previous
   // project's queued/running status, and the activeRuns-diff below would fire
@@ -179,8 +184,31 @@ export function useWorkflowQueue({
     unmountedRef.current = false;
     return () => {
       unmountedRef.current = true;
+      // Also fence old continuations if StrictMode replays setup after cleanup.
+      activeFolderGenerationRef.current += 1;
     };
   }, []);
+
+  useEffect(() => {
+    const retry = state.deferredRetry;
+    if (!retry || !state.running) return;
+    const project = activeFolderRef.current;
+    const generation = activeFolderGenerationRef.current;
+    const timer = setTimeout(() => {
+      if (
+        unmountedRef.current ||
+        activeFolderRef.current !== project ||
+        activeFolderGenerationRef.current !== generation ||
+        stateRef.current.deferredRetry !== retry ||
+        !stateRef.current.running
+      ) return;
+      dispatch({ type: 'retryReady', entryId: retry.entryId });
+    }, BUSY_RETRY_DELAY_MS);
+    // Stop, removal, clear, project changes and unmount cancel pending work.
+    // Lifecycle updates cannot shorten this minimum delay; once it expires,
+    // the normal active-run gate still holds the slot if the blocker is known.
+    return () => clearTimeout(timer);
+  }, [state.deferredRetry, state.running, activeFolder, dispatch]);
 
   // Watch `activeRuns` for runs that disappeared since the last render —
   // that's the signal the workflow finished. Dispatch runFinished so the

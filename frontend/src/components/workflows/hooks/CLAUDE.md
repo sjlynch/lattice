@@ -99,8 +99,13 @@ there.
   already active.
   `startOutcomeActions.ts` maps each `/run` `StartOutcome` to queue actions and
   splits vanished runs; the hook keeps the refs and side effects. `busy` (the
-  409) requeues via `dispatchRejected` to retry when the slot frees, no error
-  toast. A run leaving `activeRuns` with no `recentRuns` entry vanished from a
+  409) requeues via `dispatchRejected` with a two-second minimum retry delay,
+  no error toast. Admission stays deferred even if the socket still shows an
+  empty slot, then retries without requiring a socket event; a known active
+  run still blocks admission after the delay. Timers and start continuations
+  are fenced by project generation and unmount; Stop/removal/clear cancel a
+  deferred retry, and stale timers cannot release a newer retry for the same
+  entry. A run leaving `activeRuns` with no `recentRuns` entry vanished from a
   `hello` full-replace: never read as `'completed'` (cascading the next workflow
   onto a killed run's pending tasks was the "second workflow continues, leaving
   open + unmerged tasks" bug) nor `'errored'` on the spot (that stopped the
@@ -119,7 +124,8 @@ there.
   `src/__tests__/useWorkflowQueueProjectScope.test.ts`.
 - `startOutcomeActions.ts` — the queue's pure halves: `queueActionsForStartOutcome`
   (`finished` → `runFinished` then `workflowStarted`, so a completion WS that beat
-  `/run` still retires the entry; another project's run → `dispatchFailed`) and
+  `/run` still retires the entry with its terminal status, stopping the queue
+  on error/cancellation; another project's run → `dispatchFailed`) and
   `classifyVanishedRuns` (report now vs. hand to `vanishedRunResolver`).
 - `useWorkflowQueueActions.ts` — enqueue/remove/clear/start/stop callbacks
   dispatched into `useWorkflowQueue`. Each enqueue captures the workflow's current

@@ -37,16 +37,20 @@ export type QueueState = {
   // Queue entries the queue has dispatched /run for, that we still consider
   // in-flight or active. At most one at a time.
   started: StartedEntry[];
-  // Run IDs whose `runFinished` action arrived before `workflowStarted` could
+  // Runs whose `runFinished` action arrived before `workflowStarted` could
   // attach them to a started entry — i.e. the run finished server-side faster
   // than the /run HTTP response made it back. `workflowStarted` consumes
   // these to retire the entry immediately rather than attaching a runId that
   // is already dead. Without this, the queue stalls after the first
   // workflow when the run completes (or is cancelled) before /run resolves.
-  preFinishedRunIds: string[];
+  // Keep the terminal status so early failures obey the same stop policy.
+  preFinishedRuns: { runId: string; status: WorkflowRunStatus }[];
+  // A 409 reserves the FIFO head until the adapter's retry delay expires.
+  // Each rejection creates a new object, also used to fence stale timers.
+  deferredRetry: { entryId: string } | null;
 };
 
-// Cap on preFinishedRunIds. The set should normally drain immediately when
+// Cap on preFinishedRuns. The set should normally drain immediately when
 // workflowStarted fires, but a manual run completing while the queue is also
 // active will push an unmatched runId in. Bounding the list prevents
 // long-lived queues from accumulating without limit.
@@ -56,7 +60,8 @@ export const initialQueueState: QueueState = {
   queued: [],
   running: false,
   started: [],
-  preFinishedRunIds: [],
+  preFinishedRuns: [],
+  deferredRetry: null,
 };
 
 export type QueueAction =
@@ -77,10 +82,11 @@ export type QueueAction =
   // The /run HTTP returned 409 — the backend's authoritative one-run-per-project
   // guard rejected the start because a run is already active for the project. Unlike
   // dispatchFailed this is NOT a failure: put the entry back at the FRONT of
-  // the queue so it retries once the active run frees the slot (the next
-  // runFinished re-evaluates pendingStarts). Closes the startup-window /
-  // multi-tab race the frontend-only externalActiveCount gate can't see.
+  // the queue, deferring admission even when the active-run snapshot is stale.
   | { type: 'dispatchRejected'; entryId: string }
+  // The busy retry delay expired. This only releases admission; it never
+  // starts a stopped queue or bypasses an active run.
+  | { type: 'retryReady'; entryId: string }
   // A run finished server-side (WS completed/cancelled/errored). Matched by
   // runId because workflowId alone is ambiguous when the same workflow is
   // queued multiple times. `status` lets the queue bail when a
@@ -97,7 +103,7 @@ type QueueMutationAction = Extract<
 type RunningAction = Extract<QueueAction, { type: 'startQueue' | 'stopQueue' }>;
 type DispatchLifecycleAction = Extract<
   QueueAction,
-  { type: 'dispatchStart' | 'workflowStarted' | 'dispatchFailed' | 'dispatchRejected' }
+  { type: 'dispatchStart' | 'workflowStarted' | 'dispatchFailed' | 'dispatchRejected' | 'retryReady' }
 >;
 type RunLifecycleAction = Extract<QueueAction, { type: 'runFinished' }>;
 
@@ -133,12 +139,13 @@ function reduceQueueMutation(state: QueueState, action: QueueMutationAction): Qu
       return {
         ...state,
         queued: state.queued.filter((entry) => entry.id !== action.entryId),
+        deferredRetry: state.deferredRetry?.entryId === action.entryId ? null : state.deferredRetry,
       };
     }
 
     case 'clearQueue':
       if (state.queued.length === 0) return state;
-      return { ...state, queued: [] };
+      return { ...state, queued: [], deferredRetry: null };
   }
 }
 
@@ -151,8 +158,15 @@ function reduceRunning(state: QueueState, action: RunningAction): QueueState {
 
     case 'stopQueue':
       if (!state.running) return state;
-      return { ...state, running: false };
+      return { ...state, running: false, deferredRetry: null };
   }
+}
+
+function finishStartedEntry(state: QueueState, idx: number, status: WorkflowRunStatus): QueueState {
+  const cleared = { ...state, started: removeStartedEntry(state.started, idx) };
+  // A failed/cancelled queue-owned run leaves later entries for an explicit
+  // restart. Both early completion and already-attached runs use this policy.
+  return status === 'completed' ? cleared : reduceRunning(cleared, { type: 'stopQueue' });
 }
 
 function reduceDispatchLifecycle(state: QueueState, action: DispatchLifecycleAction): QueueState {
@@ -180,15 +194,15 @@ function reduceDispatchLifecycle(state: QueueState, action: DispatchLifecycleAct
       );
       if (idx === -1) return state;
 
-      const preIdx = state.preFinishedRunIds.indexOf(action.runId);
+      const preIdx = state.preFinishedRuns.findIndex((run) => run.runId === action.runId);
       if (preIdx !== -1) {
         // The run already finished server-side before we could attach the
         // runId. Skip attachment and retire the entry now.
-        return {
-          ...state,
-          started: removeStartedEntry(state.started, idx),
-          preFinishedRunIds: removeAt(state.preFinishedRunIds, preIdx),
-        };
+        return finishStartedEntry(
+          { ...state, preFinishedRuns: removeAt(state.preFinishedRuns, preIdx) },
+          idx,
+          state.preFinishedRuns[preIdx].status,
+        );
       }
 
       return {
@@ -211,9 +225,8 @@ function reduceDispatchLifecycle(state: QueueState, action: DispatchLifecycleAct
     case 'dispatchRejected': {
       // 409 "slot busy": move the entry out of `started` and back to the FRONT
       // of `queued` so it's the next to retry (preserving FIFO intent). The
-      // subsequent `step` re-evaluates pendingStarts — it re-dispatches only if
-      // the slot is genuinely free now, otherwise the entry waits for the
-      // active run's runFinished. `running` is intentionally left on.
+      // active-run snapshot may still look empty, so block admission until a
+      // retryReady action. `running` is intentionally left on.
       const idx = state.started.findIndex(
         (entry) => entry.id === action.entryId && entry.runId === null,
       );
@@ -233,8 +246,13 @@ function reduceDispatchLifecycle(state: QueueState, action: DispatchLifecycleAct
         ...state,
         started: removeStartedEntry(state.started, idx),
         queued: [requeued, ...state.queued],
+        deferredRetry: state.running ? { entryId: action.entryId } : null,
       };
     }
+
+    case 'retryReady':
+      if (!state.running || state.deferredRetry?.entryId !== action.entryId) return state;
+      return { ...state, deferredRetry: null };
   }
 }
 
@@ -247,26 +265,15 @@ function reduceRunLifecycle(state: QueueState, action: RunLifecycleAction): Queu
     // never tracked. Remember it so a later workflowStarted can retire the
     // entry instead of attaching a dead runId; an unmatched id ages out via
     // PRE_FINISHED_CAP.
-    if (state.preFinishedRunIds.includes(action.runId)) return state;
-    const next = [...state.preFinishedRunIds, action.runId];
+    if (state.preFinishedRuns.some((run) => run.runId === action.runId)) return state;
+    const next = [...state.preFinishedRuns, { runId: action.runId, status }];
     return {
       ...state,
-      preFinishedRunIds:
+      preFinishedRuns:
         next.length > PRE_FINISHED_CAP ? next.slice(next.length - PRE_FINISHED_CAP) : next,
     };
   }
-  const cleared: QueueState = {
-    ...state,
-    started: removeStartedEntry(state.started, idx),
-  };
-  // The queue must NOT cascade into the next queued workflow when a workflow
-  // errored or was cancelled — otherwise one bad run takes down the rest of
-  // the pipeline silently. Stop running; the remaining queued entries stay so
-  // the user can inspect and resume.
-  if (status !== 'completed' && cleared.running) {
-    return reduceRunning(cleared, { type: 'stopQueue' });
-  }
-  return cleared;
+  return finishStartedEntry(state, idx, status);
 }
 
 // Pure reducer. No I/O, no side effects.
@@ -285,6 +292,7 @@ export function reduceQueue(state: QueueState, action: QueueAction): QueueState 
     case 'workflowStarted':
     case 'dispatchFailed':
     case 'dispatchRejected':
+    case 'retryReady':
       return reduceDispatchLifecycle(state, action);
 
     case 'runFinished':
@@ -316,6 +324,7 @@ export function pendingStarts(
   ctx: StepContext = NO_EXTERNAL_RUNS,
 ): WorkflowQueueEntry[] {
   if (!state.running) return [];
+  if (state.deferredRetry) return [];
   if (state.queued.length === 0) return [];
   if (state.started.length > 0 || ctx.externalActiveCount > 0) return [];
   return [state.queued[0]];

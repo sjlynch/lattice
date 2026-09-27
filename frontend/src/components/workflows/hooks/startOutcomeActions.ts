@@ -23,7 +23,7 @@ export function queueActionsForStartOutcome(
     // never appeared in activeRuns and the diff effect cannot emit
     // runFinished for it. Feed the scheduler both halves in order: buffer
     // the finish, then attach/consume the matching run id. This retires
-    // the entry and lets the queue advance immediately.
+    // the entry, advancing only on success and stopping on failure/cancellation.
     return [
       { type: 'runFinished', runId: outcome.run.id, status: outcome.run.status },
       { type: 'workflowStarted', entryId, runId: outcome.run.id },
@@ -31,7 +31,7 @@ export function queueActionsForStartOutcome(
   }
   if (outcome.status === 'busy') {
     // Backend rejected the start (409): a run is already active. Requeue
-    // and wait for the active run's runFinished to free the slot.
+    // with a retry delay so a stale active-run snapshot cannot cause a loop.
     return [{ type: 'dispatchRejected', entryId }];
   }
   return [{ type: 'dispatchFailed', entryId }];
