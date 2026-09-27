@@ -152,11 +152,14 @@ serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
   switch on a custom server imported under that id); the importer renames such
   an import to `<id>-imported`.
 - `registry.ts` — resolver facade: `mergedCatalog()` (built-ins ⊕
-  `mcpBuiltinOverrides` ⊕ `mcpCustomServers`), `resolveMcpEntries`, the
-  shapers, `effectiveMcpServers` + `resolveManaged*Servers`,
-  `shapeLatticeEntry`/`withSpawnContext`, `shapeOrSkip`, and the public
-  `McpResolveContext` (`isQaRun`, `projectPath`, `apiUrl`, `taskId`,
-  `latticeOnly`).
+  `mcpBuiltinOverrides` ⊕ `mcpCustomServers`), `effectiveMcpServers` +
+  `resolveManaged*Servers` (inputs via `loadResolveInputs`, ctx via
+  `withSpawnContext`); re-exports the two modules below — import from here.
+- `resolveEntries.ts` — pure core: `resolveMcpEntries`, `harnessToggleOn`,
+  `shapeLatticeEntry`, and the public `McpResolveContext` (`isQaRun`,
+  `projectPath`, `apiUrl`, `taskId`, `latticeOnly`) / `ResolveSettings`.
+- `harnessResolvers.ts` — pure per-harness shapers
+  (`resolve{Claude,Codex,Pi}Servers`), `shapeOrSkip`, secret-env clash skip.
 - `resolverPolicy.ts` — pure `resolvePlaywright` (two-scope policy above).
 - `taskWorktreeScope.ts` — `latticeOnlyMcpApplies`, the Claude strict
   `--mcp-config` writer/flags, `codexUserServerDisableArgs`.
