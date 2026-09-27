@@ -59,7 +59,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `harnessSystemPrompts.ts` / `harnessSystemPrompts/` — per-harness system-prompt Append/Replace + the always-on Lattice preamble, injected at the spawn chokepoint. See its `CLAUDE.md`.
 - `latticeApiDocs.ts` / `latticeApiDocs/` — generates `<project>/.lattice/LATTICE_API.md` (short index the preamble names, size-budgeted by test) + `LATTICE_API_RECIPES.md` from `*.template.md`. `latticeApiDocs/docPath.ts` only names the doc path, so the terminal-server's fingerprinted import graph skips the generator/templates — **never import `latticeApiDocs.ts` from terminal-server code** (every API tweak would mark the executor stale).
 - `claudeStopHook.ts` — renders `.claude/settings.local.json` Stop + activity hooks for worktrees and non-worktree sessions (via the callback script).
-- `codexStopHook.ts` — `.codex/hooks.json` Stop + activity hooks (if-absent write); Codex's `Stop` fires once, so no quiescence gate.
+- `codexStopHook.ts` — `.codex/hooks.json` Stop + activity hooks (if-absent write; only `ENOENT` is absent — any other read error leaves the file untouched); Codex's `Stop` fires once, so no quiescence gate.
 - `piExtension.ts` / `piExtension/` — Pi's `lattice-complete.ts` completion backstop (`session_shutdown` → callback). See `piExtension/CLAUDE.md`.
 - `callbackOutbox.ts` / `callbackOutbox/` — durable completion callbacks: `lattice-callback.cjs`, the outbox, replay after a restart. See its `CLAUDE.md`.
 - `claudeTrust.ts` / `claudeTrust/` — writes `~/.claude.json` folder trust + managed MCP entries (apply side only). See `claudeTrust/CLAUDE.md`.
@@ -76,7 +76,8 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `agentActivity.ts` — `agent-activity` pub/sub (file beams) for those sessions, fed by `routes/agentActivity.ts`.
 - `agentActivityTokens.ts` — HMAC token minted into `/api/agent-activity/:token` hook URLs; secret persisted under `~/.lattice`.
 - `piActivity.ts` — generates Pi's `.pi/extensions/lattice-activity.ts`, posting Claude-shaped bodies from `tool_execution_start/end`.
-- `projectClaudeHooks.ts` — merge-installs activity hooks into the project's own `.claude/settings.local.json` (temp + rename; never overwrites an unparseable file).
+- `projectClaudeHooks.ts` — merge-installs activity hooks into the project's own `.claude/settings.local.json` (temp + rename; never overwrites an unparseable or unreadable file — only `ENOENT` is absent).
+- `projectCodexHooks.ts` — Codex analogue for user-opened Codex tabs: per-launch `--config hooks.*` overrides + `--dangerously-bypass-hook-trust` (`CODEX_HOOK_TRUST_BYPASS_FLAG`); nothing written to the repo or `~/.codex` (`wantsProjectCodexHooks`, `projectCodexHookConfigArgs`, `withCodexHookTrustBypass`).
 - `projectClaude/` — project-root Claude instrumentation behind `routes/projectClaude.ts`: hook reconcile, session presence lifecycle, activity fan-out. See `projectClaude/CLAUDE.md`.
 
 ### Terminal (detached PTY executor)
@@ -99,7 +100,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `terminalActivityPoller.ts` — the shared **display-only** poll (generation fencing, 5 s staleness expiry); never affects pty/task/workflow liveness.
 - `terminalActivityRelay.ts` — title facts parsed from browser streams, only for old executors lacking `capabilities.nativeTerminalTitle`.
 - `codexTerminalActivity.ts` — per-launch Codex `-c` defaults: status-only terminal title + `tui.terminal_resize_reflow_max_rows` (500).
-- `processTree.ts` — Windows `taskkill /F /T` of a pty's whole process tree after `pty.kill`.
+- `processTree.ts` — the one home for process-tree kills (don't add another): `killProcessTreeWindows` (`taskkill /F /T` after `pty.kill`, `terminal/kill.ts`) + shell-aware `killChildTree(child, {shell})` (`spawnWithTimeout.ts`).
 - `nodePtyCleanupFailure.ts` — recognizes the one ignorable Windows node-pty cleanup `TypeError` (by stack frame, not message alone).
 
 ### Git watchers, search & graph
@@ -120,7 +121,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 
 - `piModels.ts` / `piModels/` — Pi model discovery, menu, models.json reconcile, endpoint probe / auto-discovery, thinking levels. See `piModels/CLAUDE.md`.
 - `piProviderValidation.ts` — `PiProvider` types + validation of `globalSettings.piProviders` (re-exported from `globalSettings.ts`).
-- `spawnWithTimeout.ts` — spawn + capture output + kill-on-timeout, shared by `pi --list-models` and `pi install`.
+- `spawnWithTimeout.ts` — spawn + capture output + kill-on-timeout (whole child tree via `processTree.ts` `killChildTree`) for bounded external CLI calls: Pi model listing/installs, Opengrep.
 - `piSubagents.ts` / `piSubagents/` — auto-installs `@tintinweb/pi-subagents` + cwd-exact shims (incl. the project root). See `piSubagents/CLAUDE.md`.
 - `piMcp.ts` / `piMcp/` — Pi MCP via `pi-mcp-adapter`; the backend writes cwd `.pi/mcp.json` + shim at spawn (`applyPiMcpForSpawn`). See `piMcp/CLAUDE.md`.
 - `mcp/` — MCP control plane: catalog, per-harness resolvers, secrets, import; resolved in the backend, applied by the executor. See `mcp/CLAUDE.md`.
