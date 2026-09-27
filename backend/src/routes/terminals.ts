@@ -6,6 +6,7 @@ import { Router } from 'express';
 import { isRealAbsoluteProjectPath } from '../projectPath.js';
 import { relativeProjectError } from './projectParam.js';
 import { proxyCreateSession, proxyListSessions } from '../terminalProxy.js';
+import { isPtyDimension } from '../terminal/ptyDimension.js';
 // The RAW kill (no registry bookkeeping): this route ends the record itself,
 // with the `closed` reason a user-closed tab needs — see the DELETE handler.
 import { proxyKillSession as rawProxyKillSession } from '../terminalServerClient.js';
@@ -13,6 +14,62 @@ import { getSpawnQueueSnapshot, notifySessionsFreed } from '../spawnQueue.js';
 import { terminalRegistry } from '../terminalRegistry/store.js';
 import { getTerminalServerStatus } from '../terminalServerStatus.js';
 import { abortPostMergeHookForServerId } from '../postMergeHooks.js';
+
+type CreateTerminalInput = Parameters<typeof proxyCreateSession>[0];
+
+// Validate a POST /api/terminals body into the `proxyCreateSession` input, or
+// the 400 error text for the first check it fails.
+export function parseCreateTerminalBody(rawBody: unknown): CreateTerminalInput | { error: string } {
+  const body = (rawBody ?? {}) as {
+    cwd?: string;
+    initialCommand?: string;
+    projectPath?: string;
+    cols?: number;
+    rows?: number;
+    // Registry decorations for the durable tab record (see
+    // terminalRegistry/). Only `user` / `startup` owners are accepted from
+    // the browser; every other owner is reserved for backend spawn sites.
+    label?: string;
+    owner?: string;
+    startupId?: string;
+    piModel?: string;
+  };
+  const owner = body.owner === 'startup' ? 'startup' : 'user';
+  // Shape checks: a non-string cwd/command would otherwise reach the pty
+  // spawn (and the registry record) as garbage; a relative cwd would spawn
+  // the shell under the backend's own cwd and register a tab for it.
+  for (const [key, value] of [['cwd', body.cwd], ['initialCommand', body.initialCommand], ['projectPath', body.projectPath]] as const) {
+    if (value !== undefined && typeof value !== 'string') {
+      return { error: `${key} must be a string` };
+    }
+  }
+  if (typeof body.cwd === 'string' && body.cwd.trim() && !isRealAbsoluteProjectPath(body.cwd.trim())) {
+    return { error: relativeProjectError(body.cwd.trim()).replace('project must', 'cwd must') };
+  }
+  // Same for projectPath: it keys the registry record and the MCP / system-
+  // prompt resolution, so a relative one registered the tab (and read the
+  // settings) of a phantom project under the backend's cwd.
+  if (typeof body.projectPath === 'string' && body.projectPath.trim() && !isRealAbsoluteProjectPath(body.projectPath.trim())) {
+    return { error: relativeProjectError(body.projectPath.trim()).replace('project must', 'projectPath must') };
+  }
+  return {
+    // Pass the TRIMMED paths that were validated above: `" C:\\proj"` passed
+    // the absolute check yet, raw, resolves relative to the cwd.
+    cwd: typeof body.cwd === 'string' ? body.cwd.trim() || undefined : undefined,
+    initialCommand: body.initialCommand,
+    projectPath: typeof body.projectPath === 'string' ? body.projectPath.trim() || undefined : undefined,
+    // Positive integer within ConPTY's 16-bit limit; anything else is dropped.
+    cols: isPtyDimension(body.cols) ? body.cols : undefined,
+    rows: isPtyDimension(body.rows) ? body.rows : undefined,
+    registry: {
+      owner,
+      ...(typeof body.label === 'string' && body.label.trim() ? { label: body.label.trim() } : {}),
+      ...(owner === 'startup' ? { kind: 'startup' as const } : {}),
+      ...(typeof body.startupId === 'string' && body.startupId ? { startupId: body.startupId } : {}),
+      ...(typeof body.piModel === 'string' && body.piModel ? { piModel: body.piModel } : {}),
+    },
+  };
+}
 
 export function buildTerminalsRouter(): Router {
   const r = Router();
@@ -43,57 +100,9 @@ export function buildTerminalsRouter(): Router {
   // is a single deliberate action that should open immediately; the terminal
   // server's own hard session cap is the runaway backstop.
   r.post('/api/terminals', async (req, res) => {
-    const body = (req.body ?? {}) as {
-      cwd?: string;
-      initialCommand?: string;
-      projectPath?: string;
-      cols?: number;
-      rows?: number;
-      // Registry decorations for the durable tab record (see
-      // terminalRegistry/). Only `user` / `startup` owners are accepted from
-      // the browser; every other owner is reserved for backend spawn sites.
-      label?: string;
-      owner?: string;
-      startupId?: string;
-      piModel?: string;
-    };
-    const owner = body.owner === 'startup' ? 'startup' : 'user';
-    // Shape checks: a non-string cwd/command would otherwise reach the pty
-    // spawn (and the registry record) as garbage; a relative cwd would spawn
-    // the shell under the backend's own cwd and register a tab for it.
-    for (const [key, value] of [['cwd', body.cwd], ['initialCommand', body.initialCommand], ['projectPath', body.projectPath]] as const) {
-      if (value !== undefined && typeof value !== 'string') {
-        return res.status(400).json({ error: `${key} must be a string` });
-      }
-    }
-    if (typeof body.cwd === 'string' && body.cwd.trim() && !isRealAbsoluteProjectPath(body.cwd.trim())) {
-      return res.status(400).json({ error: relativeProjectError(body.cwd.trim()).replace('project must', 'cwd must') });
-    }
-    // Same for projectPath: it keys the registry record and the MCP / system-
-    // prompt resolution, so a relative one registered the tab (and read the
-    // settings) of a phantom project under the backend's cwd.
-    if (typeof body.projectPath === 'string' && body.projectPath.trim() && !isRealAbsoluteProjectPath(body.projectPath.trim())) {
-      return res.status(400).json({ error: relativeProjectError(body.projectPath.trim()).replace('project must', 'projectPath must') });
-    }
-    // Positive integer within ConPTY's 16-bit limit — mirrors `isPtyDimension`.
-    const cols = Number.isInteger(body.cols) && (body.cols as number) > 0 && (body.cols as number) <= 32767 ? body.cols : undefined;
-    const rows = Number.isInteger(body.rows) && (body.rows as number) > 0 && (body.rows as number) <= 32767 ? body.rows : undefined;
-    const result = await proxyCreateSession({
-      // Pass the TRIMMED paths that were validated above: `" C:\\proj"` passed
-      // the absolute check yet, raw, resolves relative to the cwd.
-      cwd: typeof body.cwd === 'string' ? body.cwd.trim() || undefined : undefined,
-      initialCommand: body.initialCommand,
-      projectPath: typeof body.projectPath === 'string' ? body.projectPath.trim() || undefined : undefined,
-      cols,
-      rows,
-      registry: {
-        owner,
-        ...(typeof body.label === 'string' && body.label.trim() ? { label: body.label.trim() } : {}),
-        ...(owner === 'startup' ? { kind: 'startup' as const } : {}),
-        ...(typeof body.startupId === 'string' && body.startupId ? { startupId: body.startupId } : {}),
-        ...(typeof body.piModel === 'string' && body.piModel ? { piModel: body.piModel } : {}),
-      },
-    });
+    const parsed = parseCreateTerminalBody(req.body);
+    if ('error' in parsed) return res.status(400).json({ error: parsed.error });
+    const result = await proxyCreateSession(parsed);
     if ('error' in result) {
       // 503 for the hard-cap refusal (matches the terminal-server's CAP code)
       // so the frontend can distinguish "at capacity" from a real spawn error.

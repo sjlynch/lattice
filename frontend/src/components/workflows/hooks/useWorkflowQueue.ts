@@ -11,6 +11,7 @@ import { sameProjectPath } from '../../../terminal/terminalScope';
 import { fetchWorkflowRun } from '../../../api';
 import type { StartOutcome } from './useWorkflowRunActions';
 import { resolveVanishedRun, type VanishedRunDeps } from './vanishedRunResolver';
+import { classifyVanishedRuns, queueActionsForStartOutcome } from './startOutcomeActions';
 
 // Count the active runs the queue itself didn't dispatch (a manual ▶ Run, or a
 // run from another tab). Queue-owned runs are the ones whose runId is attached
@@ -145,29 +146,8 @@ export function useWorkflowQueue({
           // (or failure) to the newly active project's queue state.
           return;
         }
-        if (outcome.status === 'started' && sameProjectPath(outcome.run.projectPath, startProject)) {
-          dispatch({ type: 'workflowStarted', entryId: entry.id, runId: outcome.run.id });
-        } else if (
-          outcome.status === 'finished' &&
-          sameProjectPath(outcome.run.projectPath, startProject)
-        ) {
-          // The completion WS event arrived before /run returned, so this run
-          // never appeared in activeRuns and the diff effect cannot emit
-          // runFinished for it. Feed the scheduler both halves in order: buffer
-          // the finish, then attach/consume the matching run id. This retires
-          // the entry and lets the queue advance immediately.
-          dispatch({
-            type: 'runFinished',
-            runId: outcome.run.id,
-            status: outcome.run.status,
-          });
-          dispatch({ type: 'workflowStarted', entryId: entry.id, runId: outcome.run.id });
-        } else if (outcome.status === 'busy') {
-          // Backend rejected the start (409): a run is already active. Requeue
-          // and wait for the active run's runFinished to free the slot.
-          dispatch({ type: 'dispatchRejected', entryId: entry.id });
-        } else {
-          dispatch({ type: 'dispatchFailed', entryId: entry.id });
+        for (const next of queueActionsForStartOutcome(outcome, entry.id, startProject)) {
+          dispatch(next);
         }
       })();
     }
@@ -231,14 +211,18 @@ export function useWorkflowQueue({
   useEffect(() => {
     const prev = prevActiveRef.current;
     if (prev !== activeRuns) {
-      for (const id of Object.keys(prev)) {
-        if (activeRuns[id]) continue;
-        const recentStatus = recentRunsRef.current[id]?.status;
-        const owned = stateRef.current.started.some((entry) => entry.runId === id);
-        if (recentStatus || !owned) {
-          dispatch({ type: 'runFinished', runId: id, status: recentStatus ?? 'errored' });
-          continue;
-        }
+      // Classified before dispatching: runFinished only retires its own run's
+      // entry, so reporting one run can't change whether the queue owns another.
+      const { report, resolve } = classifyVanishedRuns(
+        prev,
+        activeRuns,
+        recentRunsRef.current,
+        stateRef.current.started,
+      );
+      for (const { runId, status } of report) {
+        dispatch({ type: 'runFinished', runId, status });
+      }
+      for (const id of resolve) {
         const resolving = resolvingVanishedRef.current;
         if (resolving.has(id)) continue;
         resolving.add(id);
