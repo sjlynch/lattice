@@ -111,7 +111,17 @@ function stripLatticeEntries(hooks: HooksMap): HooksMap {
 // must leave such a file alone — treating it as `{}` and writing back used to
 // replace the user's whole `settings.local.json` (permissions, env, their own
 // hooks) with just Lattice's entries.
+//
+// A file that exists but can't be READ right now (EBUSY/EPERM/EACCES — on
+// Windows an antivirus scan, an editor or a sync tool briefly holding it) is
+// MALFORMED too, not absent: only ENOENT means absent. Treating any read error
+// as "absent" built the settings from `{}` and renamed that over the user's
+// file.
 const MALFORMED = Symbol('malformed-settings');
+
+function isNotFound(err: unknown): boolean {
+  return (err as NodeJS.ErrnoException | null)?.code === 'ENOENT';
+}
 
 async function readJson(
   file: string,
@@ -119,8 +129,8 @@ async function readJson(
   let raw: string;
   try {
     raw = await fs.readFile(file, 'utf8');
-  } catch {
-    return null;
+  } catch (err) {
+    return isNotFound(err) ? null : MALFORMED;
   }
   try {
     const parsed: unknown = JSON.parse(raw);
@@ -134,17 +144,24 @@ async function readJson(
 
 function warnMalformed(file: string, action: string): void {
   console.warn(
-    `[project-claude-hooks] ${file} exists but is not a JSON object; ${action} skipped so the file is never overwritten`,
+    `[project-claude-hooks] ${file} exists but is not a readable JSON object; ${action} skipped so the file is never overwritten`,
   );
 }
 
 // Write `next` only if it differs from what's on disk; returns whether it wrote.
+// A non-ENOENT read error skips the write: the file exists but we can't see
+// it, so writing could only clobber it.
 async function writeIfChanged(file: string, next: string): Promise<boolean> {
   let prev: string | null = null;
   try {
     prev = await fs.readFile(file, 'utf8');
-  } catch {
-    /* absent */
+  } catch (err) {
+    if (!isNotFound(err)) {
+      console.warn(
+        `[project-claude-hooks] could not read ${file} (${(err as NodeJS.ErrnoException)?.code ?? err}); write skipped so the file is never overwritten`,
+      );
+      return false;
+    }
   }
   if (prev === next) return false;
   await fs.mkdir(path.dirname(file), { recursive: true });

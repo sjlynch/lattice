@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   fmtAge,
   formatTimelineTickLabel,
+  formatTimelineTickTooltip,
   formatWorkingTreeLabel,
   nearestHandleForIndex,
   rangeForHandleMove,
@@ -43,6 +44,20 @@ test('formatTimelineTickLabel keeps working-tree labels separate from commits', 
   assert.equal(formatTimelineTickLabel(0, commits, false, now), 'abc1234 · Split scrubber · 1h ago');
   assert.equal(formatTimelineTickLabel(1, commits, false, now), 'Working tree (clean)');
   assert.equal(formatWorkingTreeLabel(true), 'Working tree (uncommitted)');
+});
+
+test('formatTimelineTickTooltip shows the full commit message', () => {
+  const now = 10 * day;
+  const commits = [
+    { shortSha: 'abc1234', subject: 'Split scrubber', body: 'Why:\n- reasons', authorName: 'Ann', date: now - hour },
+    { shortSha: 'def5678', subject: 'No body', date: now - minute * 5 },
+  ];
+  assert.equal(
+    formatTimelineTickTooltip(0, commits, false, now),
+    'abc1234 · Ann · 1h ago\n\nSplit scrubber\n\nWhy:\n- reasons',
+  );
+  assert.equal(formatTimelineTickTooltip(1, commits, false, now), 'def5678 · 5m ago\n\nNo body');
+  assert.equal(formatTimelineTickTooltip(2, commits, true, now), 'Working tree (uncommitted)');
 });
 
 test('rangeForHandleMove carries the opposite handle when crossing', () => {

@@ -37,6 +37,13 @@ session wait both have timeouts. `runControlStepWorker` takes injectable deps
 
 ## `shared.ts` — task waits / `emitControlProgress`
 
+The waits live in their own files; `shared.ts` re-exports every name below.
+
+- `laneWait.ts` — `waitForLaneEmpty` + `LaneWaitDeps`.
+- `mergeWorkWait.ts` — `waitForMergeWork` + `MergeWorkWaitDeps`; poll interval and per-task phases are named constants.
+- `postMergeHookWait.ts` — `waitForPostMergeHookIdle` + `PostMergeHookWaitDeps`.
+- `waitPrimitives.ts` — import-cycle-free leaf: `isRunEndedEvent`, `createWaitSettler` (settle-once finish/fail + cleanup), `createUnrefTimer` (re-armable no-progress timer).
+
 `waitForMergeWork(project, run, onProgress, maxWaitMs, deps?)` resolves with a
 task snapshot when ready work exists **or** no admitted/running task remains.
 It considers `in_progress`, persisted `runQueued`, and live `task-run:<id>`
@@ -140,8 +147,12 @@ path), emitting one `workflow-task-spawned` terminal tab per task.
   the second setup's reconcile kill the first run's pty and force-remove its
   worktree, or (first agent already committed) take a `-r2` path with two live
   agents on one task. A task with `runQueued` or a live `task-run:<id>` queue
-  request (`hasSpawnRequest`, checked after the admission-hold await) is skipped
-  and counted as deferred. Covered by `__tests__/workflowStartStepCap.test.ts`.
+  request (`hasSpawnRequest`, checked after the admission-hold await), or a
+  `startTaskById` already in flight (`isTaskStartInFlight`), is skipped and
+  counted as deferred. Covered by `__tests__/workflowStartStepCap.test.ts`.
+  The reverse race — a `/run` admitted while this step's own start waits on
+  the checkout gate — is serialized inside `startTaskById` (the later start
+  waits, then withdraws; see `routes/tasks/CLAUDE.md`).
 
 ## `merge.ts` — `runMergeStep`
 

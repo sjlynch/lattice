@@ -14,6 +14,8 @@ type LaneRunAllActions = {
 };
 
 type UseLaneBulkActionsArgs = LaneRunAllActions & {
+  // The strips reset on a project switch (see `useBulkRunStrips`).
+  activeFolder: string;
   tasks: Task[];
   // Bridges `useBulkRunStrips`' `noteBulkSpawned` back to the task-spawned
   // handler (declared earlier, before the task list this hook needs). Resume has
@@ -26,6 +28,7 @@ type UseLaneBulkActionsArgs = LaneRunAllActions & {
 // run-all-vs-merge-all assembly out of the launcher so it stays panel/layout
 // composition.
 export function useLaneBulkActions({
+  activeFolder,
   tasks,
   setBulkSpawnNotifier,
   runAllOpen,
@@ -34,7 +37,7 @@ export function useLaneBulkActions({
   markAllQaDone,
 }: UseLaneBulkActionsArgs) {
   const { bulkStrips, beginBulk, noteBulkSpawned, dismissBulk } =
-    useBulkRunStrips(tasks);
+    useBulkRunStrips(activeFolder, tasks);
 
   // Hand the spawn handler the resume strip's notifier once it exists.
   useEffect(() => {

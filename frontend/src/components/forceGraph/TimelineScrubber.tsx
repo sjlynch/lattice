@@ -8,6 +8,7 @@ import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import type { GitCommit } from '../../api';
 import {
   formatTimelineTickLabel,
+  formatTimelineTickTooltip,
   lastTickIndex,
   tickPositionsForCount,
 } from './timelineRange';
@@ -51,6 +52,10 @@ export const TimelineScrubber = memo(function TimelineScrubber({
     (idx: number): string => formatTimelineTickLabel(idx, commits, hasUncommitted),
     [commits, hasUncommitted],
   );
+  const tooltipFor = useCallback(
+    (idx: number): string => formatTimelineTickTooltip(idx, commits, hasUncommitted),
+    [commits, hasUncommitted],
+  );
 
   if (commits.length === 0) {
     // A repo with no commits yet (a freshly created project whose first
@@ -75,9 +80,13 @@ export const TimelineScrubber = memo(function TimelineScrubber({
           {hasUncommitted && <span className="ts-dirty"> · dirty WT</span>}
         </span>
         <span className="ts-range">
-          <span className="ts-range-chip ts-from">{labelFor(left)}</span>
+          <span className="ts-range-chip ts-from" title={tooltipFor(left)}>
+            {labelFor(left)}
+          </span>
           <span className="ts-range-arrow">→</span>
-          <span className="ts-range-chip ts-to">{labelFor(right)}</span>
+          <span className="ts-range-chip ts-to" title={tooltipFor(right)}>
+            {labelFor(right)}
+          </span>
         </span>
       </div>
       <div

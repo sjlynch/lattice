@@ -50,7 +50,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 ### Agents & harness commands
 
 - `harnesses.ts` — the `AgentHarness` vocabulary (`claude`/`pi`/`codex`) + `agentHarnessForCommand`; reuse it instead of open-coding harness unions.
-- `harnessDetect.ts` — memoized PATH probe for installed agent CLIs (`resetHarnessCache()` re-probes); drives `/ws/harnesses`.
+- `harnessDetect.ts` — PATH probe for installed agent CLIs; memoizes only definitive results (a timed-out / failed probe is "unknown": reported unavailable, never cached, re-probed in the background and pushed via `onHarnessAvailabilityChange`). `resetHarnessCache()` re-probes; drives `/ws/harnesses`.
 - `agentCommandBuilder.ts` — shared harness command syntax: permission-bypass flags, Pi `--approve` + validated `--model`, shell quoting.
 - `spawnQueue.ts` / `spawnQueue/` — admission controller in front of every agent spawn (`softCap` = `maxConcurrentAgents`; defers, never drops). See `spawnQueue/CLAUDE.md`.
 - `queuedCreateSession.ts` — spawn-queue-gated `proxyCreateSession` for sites that await their pty (resolvers, post-merge, push, QA, prompt customization).
@@ -86,6 +86,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `terminalConfig.ts` — executor tunables (scrollback replay / flush / on-disk log sizes).
 - `terminalProtocol.ts` — wire protocol version, capability flags, session-request age limits shared by both processes.
 - `terminalServerAuth.ts` — persisted bearer token guarding the executor's mutating HTTP routes (`x-lattice-terminal-token`).
+- `persistedSecretFile.ts` — load-or-create for `~/.lattice` secrets (terminal token, `agentTokenSecret`): regenerates only on ENOENT (exclusive `wx` create, re-read on EEXIST) or an unusable value; any other read error retries, then throws — **never overwrite a secret you couldn't read** (running executors / baked hook tokens still hold it).
 - `terminalFingerprint.ts` — hash of the executor's source bytes; every file the executor imports must be in `FINGERPRINT_FILES`.
 - `terminalServerLifecycle.ts` — spawn / respawn / health probe of the executor (`BASE`, `ensureTerminalServer`).
 - `terminalServerStatus.ts` — read-only `current|stale|absent|unavailable` for the navbar "update pending" chip; never triggers the upgrade itself.

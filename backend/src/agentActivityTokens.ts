@@ -5,9 +5,9 @@
 // agentActivity.ts.
 
 import { createHmac, randomBytes, timingSafeEqual } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, chmodSync } from 'node:fs';
 import path from 'node:path';
 import { latticeHomeDir } from './projectPath.js';
+import { loadOrCreatePersistedSecret } from './persistedSecretFile.js';
 
 export type AgentTokenPayload = {
   agentId: string;
@@ -16,7 +16,7 @@ export type AgentTokenPayload = {
 };
 
 // HMAC secret for the activity token. PERSISTED to `~/.lattice/agentTokenSecret`
-// (chmod 0600) and loaded once at startup — it MUST survive a backend restart,
+// (chmod 0600) and loaded once, on first use — it MUST survive a backend restart,
 // because the token is baked into long-lived hook commands that outlive this
 // process:
 //   - `<project>/.claude/settings.local.json` for project-instrumented sessions
@@ -35,29 +35,39 @@ export type AgentTokenPayload = {
 // authenticity check against a forged browser payload. Anyone who can read this
 // file already has local filesystem access (and could do far worse) — the same
 // trust boundary as `~/.lattice/mcpSecrets.json`.
-function loadOrCreateTokenSecret(): Buffer {
-  const file = path.join(latticeHomeDir(), 'agentTokenSecret');
+//
+// A transiently unreadable file (EBUSY/EPERM from AV/backup/indexer) must NOT
+// be replaced — that would invalidate every baked token for good. Instead this
+// process runs on an in-memory secret that is never written: its own tokens
+// work until the next boot, which reads the untouched real secret again.
+let tokenSecret: Buffer | null = null;
+
+function getTokenSecret(): Buffer {
+  if (tokenSecret) return tokenSecret;
   try {
-    const existing = readFileSync(file);
-    if (existing.length >= 32) return existing;
-  } catch {
-    /* absent or unreadable — fall through and create one */
-  }
-  const secret = randomBytes(32);
-  try {
-    mkdirSync(latticeHomeDir(), { recursive: true });
-    writeFileSync(file, secret, { mode: 0o600 });
-    chmodSync(file, 0o600); // best-effort owner-only (inert on Windows)
+    tokenSecret = loadOrCreatePersistedSecret({
+      file: path.join(latticeHomeDir(), 'agentTokenSecret'),
+      label: '[agent-activity]',
+      parse: (raw) => (raw.length >= 32 ? raw : null),
+      generate: () => {
+        const secret = randomBytes(32);
+        return { value: secret, bytes: secret };
+      },
+    }).value;
   } catch (err) {
-    // Couldn't persist (read-only FS / perms): degrade to a process-lifetime
-    // secret. Tokens then don't survive a restart — the old behaviour — but the
-    // feature still works within a single boot rather than crashing at import.
-    console.warn('[agent-activity] could not persist token secret:', err);
+    console.error(
+      '[agent-activity] token secret unreadable — using a process-lifetime secret ' +
+        '(previously issued activity tokens will not validate until restart):',
+      err,
+    );
+    tokenSecret = randomBytes(32);
   }
-  return secret;
+  return tokenSecret;
 }
 
-const TOKEN_SECRET = loadOrCreateTokenSecret();
+export function resetAgentTokenSecretForTests(): void {
+  tokenSecret = null;
+}
 
 // Separator between the base64url payload and its signature. `.` is outside
 // the base64url alphabet (so it can't appear inside either half) yet is still
@@ -66,7 +76,7 @@ const TOKEN_SECRET = loadOrCreateTokenSecret();
 const TOKEN_SEP = '.';
 
 function signPayload(payloadB64: string): string {
-  return createHmac('sha256', TOKEN_SECRET).update(payloadB64).digest('base64url');
+  return createHmac('sha256', getTokenSecret()).update(payloadB64).digest('base64url');
 }
 
 // Constant-time signature check. timingSafeEqual throws on a length mismatch,

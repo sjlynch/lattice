@@ -3,7 +3,7 @@
 // `backend/src/opengrep/` (see its CLAUDE.md). Every project-scoped path goes
 // through `readProjectParam`, like the rest of the router.
 
-import { Router } from 'express';
+import { Router, type Response } from 'express';
 import { canonicalProjectPath } from '../projectPath.js';
 import {
   OpengrepBadTargetError,
@@ -80,6 +80,46 @@ function scanEnvelope(r: ScanWithDigestResult, includeMarkdown: boolean) {
   };
 }
 
+// Drill-down hints appended to a digest: the one a fresh scan carries (points
+// at the stored-scan route) and the default for a stored-scan read (points at
+// the query parameters of the same URL).
+const SCAN_DRILL_DOWN_HINT =
+  'Drill down with GET /api/opengrep/scans/<id>?project=&format=md&rule=<ruleId> (or the ' +
+  '`opengrep_findings` MCP tool) — rule=, file= and severity= narrow the digest.';
+const STORED_SCAN_DRILL_DOWN_HINT =
+  'Narrow this digest with rule=<ruleId>, file=<path>, severity=INFO|WARNING|ERROR or budgetKb=<n> on the same URL.';
+
+// The `POST /api/opengrep/scan` body: `targets` keeps only non-blank strings
+// (absent when not an array); `includeMarkdown` and `async` are strict `true`.
+function parseScanBody(raw: unknown): { targets: string[] | undefined; includeMarkdown: boolean; async: boolean } {
+  const body = (raw ?? {}) as { targets?: unknown; includeMarkdown?: unknown; async?: unknown };
+  const targets = Array.isArray(body.targets)
+    ? body.targets.filter((t): t is string => typeof t === 'string' && !!t.trim())
+    : undefined;
+  return { targets, includeMarkdown: body.includeMarkdown === true, async: body.async === true };
+}
+
+// Settle-or-timeout for an async scan: its outcome if it settles within
+// `windowMs`, else null. `done` is always observed here, so a scan that fails
+// after the 202 is never an unhandled rejection; the poll reports it.
+async function awaitScanWithinWindow(
+  started: { done: Promise<ScanWithDigestResult> },
+  windowMs: number,
+): Promise<{ result: ScanWithDigestResult } | { error: unknown } | null> {
+  let timer: NodeJS.Timeout | undefined;
+  const settled = await Promise.race([
+    started.done.then(
+      (result) => ({ result }),
+      (error: unknown) => ({ error }),
+    ),
+    new Promise<null>((resolve) => {
+      timer = setTimeout(() => resolve(null), windowMs);
+    }),
+  ]);
+  clearTimeout(timer);
+  return settled;
+}
+
 function statusFor(err: unknown): { status: number; code: string } | null {
   if (err instanceof OpengrepBadTargetError) return { status: 400, code: 'bad-target' };
   if (err instanceof OpengrepScanBusyError) return { status: 409, code: 'busy' };
@@ -90,6 +130,14 @@ function statusFor(err: unknown): { status: number; code: string } | null {
   if (err instanceof OpengrepInstallError) return { status: 409, code: 'install-failed' };
   if (err instanceof RulePackError) return { status: 500, code: 'rule-pack-failed' };
   return null;
+}
+
+// Answer a mapped Opengrep error as `{error, code}` with its status; rethrow
+// anything statusFor doesn't know (Express turns that into its 500).
+function sendMappedError(res: Response, err: unknown): void {
+  const m = statusFor(err);
+  if (!m) throw err;
+  res.status(m.status).json({ error: (err as Error).message, code: m.code });
 }
 
 export function buildOpengrepRouter(): Router {
@@ -107,9 +155,7 @@ export function buildOpengrepRouter(): Router {
     try {
       res.status(202).json({ job: await startOpengrepInstall() });
     } catch (err) {
-      const m = statusFor(err);
-      if (!m) throw err;
-      res.status(m.status).json({ error: (err as Error).message, code: m.code });
+      sendMappedError(res, err);
     }
   });
 
@@ -152,9 +198,7 @@ export function buildOpengrepRouter(): Router {
     try {
       await removeRulePack(packId);
     } catch (err) {
-      const m = statusFor(err);
-      if (!m) throw err;
-      return res.status(m.status).json({ error: (err as Error).message, code: m.code });
+      return sendMappedError(res, err);
     }
     res.json({ packs: await listRulePacks() });
   });
@@ -173,51 +217,23 @@ export function buildOpengrepRouter(): Router {
   r.post('/api/opengrep/scan', async (req, res) => {
     const project = readProjectParam(req, res);
     if (project === null) return;
-    const body = (req.body ?? {}) as { targets?: unknown; includeMarkdown?: unknown; async?: unknown };
-    const targets = Array.isArray(body.targets)
-      ? body.targets.filter((t): t is string => typeof t === 'string' && !!t.trim())
-      : undefined;
-    const includeMarkdown = body.includeMarkdown === true;
-    const opts = {
-      targets,
-      render: {
-        drillDownHint:
-          'Drill down with GET /api/opengrep/scans/<id>?project=&format=md&rule=<ruleId> (or the ' +
-          '`opengrep_findings` MCP tool) — rule=, file= and severity= narrow the digest.',
-      },
-    };
-    const fail = (err: unknown) => {
-      const m = statusFor(err);
-      if (!m) throw err;
-      res.status(m.status).json({ error: (err as Error).message, code: m.code });
-    };
-    if (body.async !== true) {
+    const { targets, includeMarkdown, async: acceptWithin } = parseScanBody(req.body);
+    const opts = { targets, render: { drillDownHint: SCAN_DRILL_DOWN_HINT } };
+    if (!acceptWithin) {
       try {
         res.json(scanEnvelope(await scanProjectWithDigest(project, opts), includeMarkdown));
       } catch (err) {
-        fail(err);
+        sendMappedError(res, err);
       }
       return;
     }
 
     const started = await startProjectScanWithDigest(project, opts).catch((err: unknown) => {
-      fail(err);
+      sendMappedError(res, err);
       return null;
     });
     if (!started) return;
-    // Settle-or-timeout. `done` is always observed here, so a scan that fails
-    // after the 202 is never an unhandled rejection; the poll reports it.
-    let timer: NodeJS.Timeout | undefined;
-    const settled = await Promise.race([
-      started.done.then(
-        (result) => ({ result }),
-        (error: unknown) => ({ error }),
-      ),
-      new Promise<null>((resolve) => {
-        timer = setTimeout(() => resolve(null), ASYNC_SCAN_ACCEPT_WINDOW_MS);
-      }),
-    ]);
-    clearTimeout(timer);
+    const settled = await awaitScanWithinWindow(started, ASYNC_SCAN_ACCEPT_WINDOW_MS);
     if (settled === null) {
       return res.status(202).json({
         canonicalProject: canonicalProjectPath(project),
@@ -226,7 +242,7 @@ export function buildOpengrepRouter(): Router {
         poll: `/api/opengrep/scans/${started.id}`,
       });
     }
-    if ('error' in settled) return fail(settled.error);
+    if ('error' in settled) return sendMappedError(res, settled.error);
     res.json(scanEnvelope(settled.result, includeMarkdown));
   });
 
@@ -263,8 +279,7 @@ export function buildOpengrepRouter(): Router {
       return res.status(m.status).json({ error: run.error.message, code: m.code, scanId: id });
     }
     const ctx = renderContextFromQuery(req.query as Record<string, unknown>);
-    ctx.drillDownHint ??=
-      'Narrow this digest with rule=<ruleId>, file=<path>, severity=INFO|WARNING|ERROR or budgetKb=<n> on the same URL.';
+    ctx.drillDownHint ??= STORED_SCAN_DRILL_DOWN_HINT;
     const result = await digestOfStoredScan(project, id === 'latest' ? undefined : id, ctx);
     if (!result) return res.status(404).json({ error: `no Opengrep scan ${id} for this project` });
     const format = str((req.query as Record<string, unknown>).format);
