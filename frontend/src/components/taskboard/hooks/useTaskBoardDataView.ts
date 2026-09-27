@@ -5,6 +5,7 @@ import { sortTasksForLane } from '../laneSort';
 import { useLaneSort } from './useLaneSort';
 import { useTaskBoardState } from './useTaskBoardState';
 import { useTaskSearch } from './useTaskSearch';
+import { useTaskSelection } from './useTaskSelection';
 import { useVisibleLanes } from './useVisibleLanes';
 
 // Data/view state for the board: task sync, lane visibility, filtering/search,
@@ -21,29 +22,15 @@ export function useTaskBoardDataView(
 
   // Per-lane clock/caret sort. Defaults to newest-arrival-first; dropping a
   // card at an explicit slot switches that lane to 'manual' so the user's
-  // hand-ordering survives until they click the clock to re-sort. Read before
-  // board state so shift-range selection can slice each lane in its visible
-  // (sortTasksForLane) order rather than the raw sortOrder grouping.
+  // hand-ordering survives until they click the clock to re-sort. Selection
+  // uses it to slice each lane in its visible (sortTasksForLane) order rather
+  // than the raw sortOrder grouping.
   const { getMode: getLaneSortMode, toggle: toggleLaneSort, setManual } =
     useLaneSort(activeFolder);
 
-  const boardState = useTaskBoardState(
-    activeFolder,
-    getLaneSortMode,
-    onTaskSpawned,
-  );
-  const {
-    tasks,
-    grouped,
-    activeCount,
-    error,
-    setError,
-    showError,
-    selectedIds,
-    clearSelection,
-    toggleSelect,
-    rangeSelect,
-  } = boardState;
+  const boardState = useTaskBoardState(activeFolder, onTaskSpawned);
+  const { tasks, grouped, activeCount, error, setError, showError } =
+    boardState;
 
   const {
     taskSearch,
@@ -52,6 +39,15 @@ export function useTaskBoardDataView(
     filteredTasks,
     filteredGrouped,
   } = useTaskSearch(tasks);
+
+  // Selection runs over the search-filtered grouping — the cards actually on
+  // screen — so a shift-range never sweeps in cards the search is hiding.
+  const {
+    selectedIds,
+    clearSelection,
+    handleToggleSelect: toggleSelect,
+    handleRangeSelect: rangeSelect,
+  } = useTaskSelection(tasks, filteredGrouped, getLaneSortMode);
 
   const sortedGrouped = useMemo(() => {
     const out = {} as typeof filteredGrouped;

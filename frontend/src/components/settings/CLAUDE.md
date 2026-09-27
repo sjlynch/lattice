@@ -216,7 +216,10 @@ primitive the editors reuse for their compat/header/model/detect edits;
 flow, reporting `{id, contextWindow?}` entries back via an `onDetected`
 callback — a reachable endpoint that lists nothing reports that as an error
 rather than blinking silently — plus `dropEndpoint(id)` to forget a removed
-endpoint's state), and `usePiEndpointEditors(endpoints,
+endpoint's state; a generation counter bumped by `reset()` (every dialog open)
+and on unmount drops a probe from an earlier session, so a slow Detect started
+before a Cancel can't land after reopen and clobber the curated models on the
+next unrelated Save — `piProbeStaleSession.test.ts`), and `usePiEndpointEditors(endpoints,
 probe, providers)` (the per-endpoint field editors — `updateCompat`,
 the header mutators sharing one `mutateHeaderEntries` body, `toggleEndpointModel`,
 `detectModels` — extracted out of `PiTab.tsx`; a probe result is applied to its

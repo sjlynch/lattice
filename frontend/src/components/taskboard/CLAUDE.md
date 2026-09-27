@@ -97,7 +97,9 @@ shim. This file covers the files DIRECTLY here; the taskboard's hooks live in
   createdAt), and `sortTasksForLane()`. Drives the lane header's clock + caret.
 - `reorderMath.ts` — pure drag/drop reorder math against a lane's *visible* order:
   `selectedTasksInVisibleOrder`, `singleDropOrder`, `multiDropOrder`,
-  `appendOrder`. Wired to the API by `hooks/useTaskReorderActions`; unit-tested.
+  `appendOrder`, and `fullLaneDropIndex` (maps a search-filtered slot index onto
+  the full lane: lands above the next visible non-moving card, else after the
+  last visible one). Wired to the API by `hooks/useTaskReorderActions`; unit-tested.
 
 ## Styles
 

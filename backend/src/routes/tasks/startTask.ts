@@ -98,12 +98,54 @@ type WorktreeSetup = Awaited<ReturnType<typeof setupTaskWorktree>>;
 // flip. A withdrawn start tears down its worktree + pty and throws
 // (TaskStartWithdrawnError, or a plain Error when the task was deleted).
 //
+// At most one start per task runs at a time, whatever the entry point (the
+// spawn queue's /run thunk, the workflow Start step's direct call, …): a
+// second concurrent start waits for the first to settle, then re-checks the
+// task — see startTaskExclusive.
+//
 // Throws if the task is missing or not in 'open' status — callers that need
 // HTTP-style 400/404 responses should handle these cases themselves.
-export async function startTaskById(
+export function startTaskById(
   taskId: string,
   backendOrigin: string,
   options: StartTaskByIdOptions = {},
+): Promise<StartTaskByIdResult> {
+  // Registered synchronously, before any await, so two calls in the same
+  // tick are already serialized.
+  const prior = startsInFlight.get(taskId);
+  const start = (async () => {
+    if (prior) await prior;
+    return startTaskExclusive(taskId, backendOrigin, options, prior !== undefined);
+  })();
+  const settled: Promise<void> = start
+    .then(() => undefined, () => undefined)
+    .finally(() => {
+      if (startsInFlight.get(taskId) === settled) startsInFlight.delete(taskId);
+    });
+  startsInFlight.set(taskId, settled);
+  return start;
+}
+
+// Starts in flight, per task: each entry settles when the latest start of that
+// task does (a third start chains behind the second). Without this, the
+// workflow Start step's direct start and a /run (Run All, ▶, MCP run_task)
+// admitted while the first still waited on the checkout gate — the task is
+// `open` until the flip, so it passes isFreshlyRunnable — both set up the same
+// worktree path: the second setup's reconcile killed the first agent's pty
+// and recreated the checkout, and the second then backed out, stranding the
+// task In Progress with no agent.
+const startsInFlight = new Map<string, Promise<void>>();
+
+// Is a start of this task running (or waiting behind another start of it)?
+export function isTaskStartInFlight(taskId: string): boolean {
+  return startsInFlight.has(taskId);
+}
+
+async function startTaskExclusive(
+  taskId: string,
+  backendOrigin: string,
+  options: StartTaskByIdOptions,
+  waitedForConcurrentStart: boolean,
 ): Promise<StartTaskByIdResult> {
   const deps: StartTaskDeps = { ...defaultStartDeps, ...options.deps };
   const { signal } = options;
@@ -111,6 +153,15 @@ export async function startTaskById(
   // and a withdrawn earlier start of this task may still be removing it.
   unparkCheckout(signal);
   await pendingStartTeardown(taskId);
+
+  // The start we waited for claimed the task (or it was re-laned / cancelled
+  // meanwhile): this one is surplus. Withdraw before touching the worktree —
+  // it now belongs to the live agent. A failed or withdrawn earlier start left
+  // the task runnable, so this start carries on as an ordinary retry.
+  if (waitedForConcurrentStart) {
+    const found = await checkWithdrawal(taskId, signal);
+    if (found) throw withdrawnError(taskId, found);
+  }
 
   const task = await getTask(taskId);
   if (!task) throw new Error(`task ${taskId} not found`);

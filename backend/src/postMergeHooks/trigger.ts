@@ -22,6 +22,7 @@ import { registerAgentSession } from '../agentSessions.js';
 import { proxyKillSession } from '../terminalProxy.js';
 import { setupPostMergeHookSession } from './sessionSetup.js';
 import { cleanupPostMergeHookSession } from './cleanup.js';
+import { trackPostMergeHookLaunch } from './launchAbort.js';
 import { clearPostMergeHookOwed, readPostMergeHookOwedSince } from './owed.js';
 import {
   assertSafePostMergeHookPath,
@@ -72,6 +73,9 @@ export type TriggerPostMergeHookDeps = {
   registerAgentSession: typeof registerAgentSession;
   cleanupPostMergeHookSession: (projectPath: string, id: string) => Promise<void>;
   killSession: (serverId: string) => Promise<boolean>;
+  // The hook's launch-window cancellation (launchAbort.ts): aborted by
+  // `endPostMergeHook` while no pty exists yet.
+  trackPostMergeHookLaunch: typeof trackPostMergeHookLaunch;
 };
 
 const defaultTriggerPostMergeHookDeps: TriggerPostMergeHookDeps = {
@@ -86,6 +90,7 @@ const defaultTriggerPostMergeHookDeps: TriggerPostMergeHookDeps = {
   registerAgentSession,
   cleanupPostMergeHookSession,
   killSession: proxyKillSession,
+  trackPostMergeHookLaunch,
 };
 
 // Triggers a post-merge hook and returns immediately with an outcome
@@ -231,6 +236,7 @@ async function spawnAndRegister(
     trigger,
   };
   deps.recordPostMergeHook(run);
+  const launch = deps.trackPostMergeHookLaunch(id);
 
   // The run is recorded before either await below, so `/abort` can land while
   // scratch setup or the queued spawn is still in flight. Re-check after each:
@@ -284,10 +290,17 @@ async function spawnAndRegister(
 
     // `priority` band — the post-merge hook gates merge-run / manual-merge
     // completion, so it must not be starved behind batch task spawns.
+    // Keyed per HOOK, not per project: per-project exclusivity is already the
+    // synchronous `getActiveHookForProject` claim above, and a project key let
+    // a new hook dedupe onto an aborted hook's still-queued request — spawning
+    // with the old hook's cwd/instructions, which that hook's trigger then
+    // killed, leaving the new hook "started" on a dead pty. `signal` lets
+    // Abort cancel the queued spawn (launchAbort.ts).
     const sess = await deps.queuedCreateSession({
       kind: 'post-merge-hook',
       priority: 'priority',
-      dedupeKey: `post-merge-hook:${projectPath}`,
+      dedupeKey: `post-merge-hook:${id}`,
+      signal: launch.signal,
       opts: {
         cwd: session.cwd,
         initialCommand: command,
@@ -329,10 +342,22 @@ async function spawnAndRegister(
     });
     return { kind: 'started', run: updated ?? run, serverId: sess.id };
   } catch (err) {
+    const abortedWhileQueued = launch.signal.aborted ? abortedDuringLaunch() : null;
+    if (abortedWhileQueued) {
+      // Abort cancelled the queued spawn (or reclaimed a pty created in
+      // flight): the run is already terminal — nothing to finish.
+      if (err !== launch.signal.reason) {
+        console.warn(`[post-merge-hook] cancelled spawn for aborted run ${id} did not end cleanly:`, err);
+      }
+      await deps.cleanupPostMergeHookSession(projectPath, id);
+      return { kind: 'skipped', reason: 'aborted', run: abortedWhileQueued };
+    }
     const message = (err as Error).message;
     console.error('[post-merge-hook] trigger failed:', err);
     deps.finishPostMergeHook(id, 'errored', message);
     await deps.cleanupPostMergeHookSession(projectPath, id);
     return { kind: 'error', message };
+  } finally {
+    launch.release();
   }
 }
