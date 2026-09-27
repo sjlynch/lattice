@@ -30,21 +30,11 @@ import type { Request, Response } from 'express';
 import { getTask, type Task } from '../../../tasks.js';
 import { signalConflictWaiter } from '../../../mergeRuns.js';
 import { recoverAbandonedResolverTask } from '../../../mergeRuns/abandonedResolver.js';
-import { release, tryAcquire, type MergeLockToken } from '../../../mergeLocks.js';
+import { acquireBriefly, release } from '../../../mergeLocks.js';
 import { requireTaskInRequestedProject } from '../requestUtils.js';
 
 // How long /merge-aborted polls for a held per-task merge lock before 409ing.
 export const MERGE_ABORT_LOCK_WAIT_MS = 5_000;
-const MERGE_ABORT_LOCK_POLL_MS = 100;
-
-async function acquireMergeLockBriefly(taskId: string, waitMs: number): Promise<MergeLockToken | null> {
-  const deadline = Date.now() + waitMs;
-  for (;;) {
-    const lock = tryAcquire(taskId);
-    if (lock || Date.now() >= deadline) return lock;
-    await new Promise((r) => setTimeout(r, MERGE_ABORT_LOCK_POLL_MS));
-  }
-}
 
 // Injectable seam (production default below), mirroring finalizeResolved.ts: the
 // regression test overrides these to register a real waiter on a throwaway run
@@ -83,7 +73,7 @@ export function handleTaskMergeAborted(
     // (a resolver Claude's give-up curl is one-shot and cannot retry), and
     // only then answer 409, which the Cancel button surfaces for the user to
     // click again.
-    const lock = await acquireMergeLockBriefly(task.id, deps.lockWaitMs ?? MERGE_ABORT_LOCK_WAIT_MS);
+    const lock = await acquireBriefly(task.id, deps.lockWaitMs ?? MERGE_ABORT_LOCK_WAIT_MS);
     if (!lock) {
       console.log(
         `[merge-aborted] task ${task.id}: merge lock held (a merge/finalize is in flight) — refusing`,
