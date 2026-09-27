@@ -71,6 +71,7 @@ export const FINGERPRINT_FILES = [
   'terminal/sessionLifecycle.js',
   'terminal/outputFacts.js',
   'terminal/attach.js',
+  'terminal/ptyDimension.js',
   'terminal/kill.js',
   // Shared tunables/helpers the terminal/* runtime modules import. These
   // define behavior the running server bakes in at boot — terminalConfig

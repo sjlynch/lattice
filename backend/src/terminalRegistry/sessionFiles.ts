@@ -68,7 +68,7 @@ export async function claudeSessionStatus(sessionId: string): Promise<BusyEviden
 //
 // Pure: the conversation the LAST line written by `processId` belongs to.
 export function lastConversationWrittenBy(text: string, processId: string): string | null {
-  const needle = new RegExp(`"session_id"\s*:\s*"${processId.replace(/[^A-Za-z0-9-]/g, '')}"`);
+  const needle = new RegExp(`"session_id"\\s*:\\s*"${processId.replace(/[^A-Za-z0-9-]/g, '')}"`);
   const lines = text.split('\n');
   for (let i = lines.length - 1; i >= 0; i -= 1) {
     const line = lines[i]!;
