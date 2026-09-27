@@ -50,7 +50,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 ### Agents & harness commands
 
 - `harnesses.ts` — the `AgentHarness` vocabulary (`claude`/`pi`/`codex`) + `agentHarnessForCommand`; reuse it instead of open-coding harness unions.
-- `harnessDetect.ts` — memoized PATH probe for installed agent CLIs (`resetHarnessCache()` re-probes); drives `/ws/harnesses`.
+- `harnessDetect.ts` — PATH probe for installed agent CLIs; memoizes only definitive results (a timed-out / failed probe is "unknown": reported unavailable, never cached, re-probed in the background and pushed via `onHarnessAvailabilityChange`). `resetHarnessCache()` re-probes; drives `/ws/harnesses`.
 - `agentCommandBuilder.ts` — shared harness command syntax: permission-bypass flags, Pi `--approve` + validated `--model`, shell quoting.
 - `spawnQueue.ts` / `spawnQueue/` — admission controller in front of every agent spawn (`softCap` = `maxConcurrentAgents`; defers, never drops). See `spawnQueue/CLAUDE.md`.
 - `queuedCreateSession.ts` — spawn-queue-gated `proxyCreateSession` for sites that await their pty (resolvers, post-merge, push, QA, prompt customization).
