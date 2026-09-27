@@ -12,7 +12,8 @@ significant). Run state itself lives in `../../workflowRuns.ts` /
   state.
 - `runs.ts` — run lifecycle: `POST /api/workflows/:id/run` (start, with optional
   harness/Pi-model override; **409** `active-run-exists` while another run is
-  active for the project — one at a time), `POST /api/workflow-runs/:runId/steps/:n/complete`
+  active for the project — one at a time; an optional `?project=` pin 404s
+  another project's workflow before any spawn, as on PATCH/DELETE), `POST /api/workflow-runs/:runId/steps/:n/complete`
   (the Stop-hook callback that **advances** the run — runs are driven by this, not
   by watching task state), `cancel`, and `GET /api/workflow-runs/active`.
 - `promptCustomizations.ts` — tailor a step prompt before running:

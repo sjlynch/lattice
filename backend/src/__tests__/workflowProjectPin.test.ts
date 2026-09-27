@@ -12,7 +12,8 @@ import { createWorkflow, getWorkflow } from '../workflows.js';
 import { buildWorkflowCrudRouter } from '../routes/workflows/crud.js';
 import { buildWorkflowRunsRouter } from '../routes/workflows/runs.js';
 
-// `PATCH`/`DELETE /api/workflows/:id` and `POST /api/workflow-runs/:runId/cancel`
+// `PATCH`/`DELETE /api/workflows/:id`, `POST /api/workflows/:id/run` and
+// `POST /api/workflow-runs/:runId/cancel`
 // look their record up GLOBALLY. When `?project=` is sent it must own the
 // record (404 otherwise, nothing written); when it is absent the routes behave
 // as before (Stop-hook callbacks and agents may not send it).
@@ -103,6 +104,37 @@ test('POST /api/workflow-runs/:runId/cancel honours the ?project= pin', async ()
   } finally {
     runs.delete(r1.id);
     runs.delete(r2.id);
+    await h.close();
+  }
+});
+
+test('POST /api/workflows/:id/run honours the ?project= pin', async () => {
+  const h = await harness();
+  // An active run already in project A: a start that passes the pin reaches
+  // startWorkflowRun and is refused 409 by the one-run-per-project guard —
+  // proof it was admitted, without spawning a step agent.
+  const wf = await createWorkflow(h.a, 'Runnable', [
+    { id: 's1', title: 'Step 1', prompt: 'do it', harness: 'claude' },
+  ]);
+  const active: WorkflowRun = {
+    id: `wfrun_pin_${Date.now()}_start`, workflowId: wf.id, workflowName: wf.name, projectPath: wf.projectPath,
+    status: 'running', startedAt: Date.now(), currentStepIndex: 0, totalSteps: 1, stepPhase: 'running',
+  };
+  runs.set(active.id, active);
+  const runCount = () => [...runs.values()].filter((r) => r.workflowId === wf.id).length;
+  try {
+    const foreign = await h.call('POST', `/api/workflows/${wf.id}/run`, h.b, {});
+    assert.equal(foreign.status, 404);
+    assert.match((await foreign.json()).hint, /different board/);
+    assert.equal(runCount(), 1, 'a foreign-project start starts nothing');
+
+    const own = await h.call('POST', `/api/workflows/${wf.id}/run`, h.a, {});
+    assert.equal(own.status, 409, 'own project → admitted to startWorkflowRun');
+    assert.equal((await own.json()).code, 'active-run-exists');
+    assert.equal((await h.call('POST', `/api/workflows/${wf.id}/run`, undefined, {})).status, 409, 'unpinned, as before');
+    assert.equal(runCount(), 1);
+  } finally {
+    runs.delete(active.id);
     await h.close();
   }
 });

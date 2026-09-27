@@ -8,6 +8,7 @@
 // resolve-on-exit-0 / reject-otherwise).
 
 import { spawn, type ChildProcess } from 'node:child_process';
+import { killChildTree } from './processTree.js';
 
 export type SpawnWithTimeoutResult = {
   // Process exit code, or null if it was killed (timeout) or never spawned.
@@ -45,13 +46,25 @@ export function spawnWithTimeout(
 ): Promise<SpawnWithTimeoutResult> {
   return new Promise((resolve) => {
     let settled = false;
-    if (opts.signal?.aborted) {
-      resolve({ code: null, stdout: '', stderr: '', combined: '', timedOut: false, aborted: true, error: null });
-      return;
-    }
     let stdout = '';
     let stderr = '';
     let combined = '';
+    // Every outcome shares this shape; only the differing fields are passed.
+    const result = (
+      partial: Partial<SpawnWithTimeoutResult> = {},
+    ): SpawnWithTimeoutResult => ({
+      code: null,
+      stdout,
+      stderr,
+      combined,
+      timedOut: false,
+      error: null,
+      ...partial,
+    });
+    if (opts.signal?.aborted) {
+      resolve(result({ aborted: true }));
+      return;
+    }
     const finish = (r: SpawnWithTimeoutResult): void => {
       if (settled) return;
       settled = true;
@@ -72,14 +85,7 @@ export function spawnWithTimeout(
         ...(opts.env ? { env: opts.env } : {}),
       });
     } catch (err) {
-      finish({
-        code: null,
-        stdout: '',
-        stderr: '',
-        combined: '',
-        timedOut: false,
-        error: err as Error,
-      });
+      finish(result({ error: err as Error }));
       return;
     }
 
@@ -98,50 +104,21 @@ export function spawnWithTimeout(
       combined += s;
     });
 
-    // Kill the child — and, for a `shell: true` spawn, everything under it.
-    // `child.kill()` only reaches the process we spawned; behind a shell that is
-    // cmd.exe / sh, and the real work (`pi`, `npm install`) is its grandchild,
-    // which used to survive the timeout holding our stdio pipes. win32: taskkill
-    // walks the tree (fire-and-forget; falls back to child.kill() if taskkill
-    // itself can't start). POSIX: the shell child is its own process group
-    // (`detached` above), so one negative-pid signal takes the whole tree.
-    // A non-shell spawn keeps the plain child.kill() (opengrep relies on it).
-    const killChild = (): void => {
-      try {
-        if (!useShell || child.pid === undefined) {
-          child.kill();
-          return;
-        }
-        if (process.platform === 'win32') {
-          const tk = spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
-            windowsHide: true,
-            stdio: 'ignore',
-          });
-          tk.on('error', () => {
-            try {
-              child.kill();
-            } catch {
-              /* already exited */
-            }
-          });
-          tk.unref();
-        } else {
-          process.kill(-child.pid, 'SIGKILL');
-        }
-      } catch {
-        /* already exited */
-      }
-    };
+    // Kill the child — and, for a `shell: true` spawn, everything under it
+    // (the real work, `pi` / `npm install`, is the shell's grandchild). See
+    // killChildTree. A non-shell spawn keeps the plain child.kill() (opengrep
+    // relies on it).
+    const killChild = (): void => killChildTree(child, { shell: useShell });
 
     const timer = setTimeout(() => {
       killChild();
-      finish({ code: null, stdout, stderr, combined, timedOut: true, error: null });
+      finish(result({ timedOut: true }));
     }, opts.timeoutMs);
 
     const onAbort = () => {
       clearTimeout(timer);
       killChild();
-      finish({ code: null, stdout, stderr, combined, timedOut: false, aborted: true, error: null });
+      finish(result({ aborted: true }));
     };
     opts.signal?.addEventListener('abort', onAbort, { once: true });
     const detach = () => opts.signal?.removeEventListener('abort', onAbort);
@@ -149,12 +126,12 @@ export function spawnWithTimeout(
     child.on('error', (err) => {
       clearTimeout(timer);
       detach();
-      finish({ code: null, stdout, stderr, combined, timedOut: false, error: err });
+      finish(result({ error: err }));
     });
     child.on('close', (code) => {
       clearTimeout(timer);
       detach();
-      finish({ code, stdout, stderr, combined, timedOut: false, error: null });
+      finish(result({ code }));
     });
   });
 }
