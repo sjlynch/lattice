@@ -113,15 +113,19 @@ export function startTaskById(
   // Registered synchronously, before any await, so two calls in the same
   // tick are already serialized.
   const prior = startsInFlight.get(taskId);
+  // Assigned below before the body's first await can finish, so the finally
+  // always sees it. Clearing there (not in a chained .finally) means a caller
+  // resuming from `await startTaskById(...)` already sees the start as over.
+  let settled: Promise<void> | undefined;
   const start = (async () => {
-    if (prior) await prior;
-    return startTaskExclusive(taskId, backendOrigin, options, prior !== undefined);
-  })();
-  const settled: Promise<void> = start
-    .then(() => undefined, () => undefined)
-    .finally(() => {
+    try {
+      if (prior) await prior;
+      return await startTaskExclusive(taskId, backendOrigin, options, prior !== undefined);
+    } finally {
       if (startsInFlight.get(taskId) === settled) startsInFlight.delete(taskId);
-    });
+    }
+  })();
+  settled = start.then(() => undefined, () => undefined);
   startsInFlight.set(taskId, settled);
   return start;
 }
