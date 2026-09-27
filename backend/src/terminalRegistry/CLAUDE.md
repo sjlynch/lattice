@@ -93,6 +93,9 @@ from.
 - `harnessPaths.ts` — where each harness keeps transcripts (verified on
   Windows): Claude `~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl`, Pi
   `~/.pi/agent/sessions/--<cwd, [/\:] → '-'>--/<ts>_<id>.jsonl`, Codex rollouts.
+- `sessionFiles.ts` — the IO over those paths (`readTail`, Claude status /
+  conversation scan, Pi/Codex file finders, `listCodexDayDirs`), shared by
+  `interruption.ts` (which re-exports it) and `codexDiscovery.ts`.
 
 ## Relaunch
 
