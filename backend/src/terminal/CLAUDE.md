@@ -161,6 +161,7 @@ owns the node-pty processes.
   unknown id sends `session_lost` and does **not** silently respawn (that would
   be a reconnect loop). A client disconnect drops the subscriber but leaves the
   pty alive (refresh-recovery).
+- `ptyDimension.ts` — dependency-free `isPtyDimension` / `MAX_PTY_DIMENSION` (re-exported by `attach.ts`), so the main backend's `routes/terminals.ts` can share it without loading node-pty.
 - `kill.ts` — `killSession` (idempotent via the `killing` flag; `pty.kill` +
   Windows process-tree kill + a deferred `ensureClaudeConfigValid`) and
   `killSessionsByCwd` (used by worktree teardown). Its `cwdIsAtOrUnder`
