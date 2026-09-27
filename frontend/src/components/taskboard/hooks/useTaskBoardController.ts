@@ -100,12 +100,18 @@ export function useTaskBoardController(activeFolder: string) {
     activeFolder,
     tasks,
     grouped,
+    visibleGrouped: filteredGrouped,
     getLaneSortMode,
     mergeRun,
     addTerminal,
     clearSelection,
     pickRunHarness,
     showError,
+    // The conflict pill / Merge focuses a still-running resolver's tab
+    // instead of spawning a second one.
+    terminals,
+    focusTerminal: setActiveId,
+    closeTerminalsForTask,
   });
   const {
     addTask,
@@ -132,6 +138,7 @@ export function useTaskBoardController(activeFolder: string) {
   // action map. Owns the strip state and bridges the resume notifier back to
   // the spawn handler via `setBulkSpawnNotifier`.
   const { runAllActionByLane, bulkStrips, dismissBulk } = useLaneBulkActions({
+    activeFolder,
     tasks,
     setBulkSpawnNotifier,
     runAllOpen,

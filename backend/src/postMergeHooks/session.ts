@@ -11,6 +11,7 @@ import {
 import { postMergeHookAgentId } from './stopHook.js';
 import { cancelPostMergeHookStopGate } from './stopHookGate.js';
 import { cleanupPostMergeHookSession } from './cleanup.js';
+import { abortPostMergeHookLaunch } from './launchAbort.js';
 import { isPostMergeHookOwed } from './owed.js';
 import { unregisterAgentSession } from '../agentSessions.js';
 import { forgetAgentQuiescence } from '../agentQuiescence.js';
@@ -29,10 +30,11 @@ export const POST_MERGE_HOOK_MAX_WAIT_MS = 30 * 60 * 1000;
 // Abort button, a sidebar tab close on its pty, or the wait above expiring.
 // One place for the teardown the /complete route otherwise does — drop the
 // stale Stop-hook gate, the graph node and the quiescence state, kill the pty
-// (unless the caller already did), finish the run so every waiter unblocks,
-// then remove the scratch dir off the caller's path. Idempotent: `finish` is a
-// no-op on a hook that already reached a terminal status, and the pty kill /
-// scratch removal are safe to repeat.
+// (unless the caller already did) or cancel its still-queued spawn, finish
+// the run so every waiter unblocks, then remove the scratch dir off the
+// caller's path. Idempotent: `finish` is a no-op on a hook that already
+// reached a terminal status, and the pty kill / launch cancel / scratch
+// removal are safe to repeat.
 export async function endPostMergeHook(
   id: string,
   status: Exclude<PostMergeHookStatus, 'running'>,
@@ -53,6 +55,12 @@ export async function endPostMergeHook(
     }
   }
   const finished = finishPostMergeHook(id, status, reason);
+  // No pty yet: the hook is still in its launch window (scratch setup or a
+  // queued spawn). Cancel that launch so the trigger — and the merge run /
+  // manual merge awaiting it — is released now rather than when the queue
+  // finally admits a spawn nobody wants. Finished first, so the trigger's
+  // cancellation handler sees the terminal status.
+  if (!existing.serverId) abortPostMergeHookLaunch(id, reason);
   void cleanupPostMergeHookSession(existing.projectPath, existing.id);
   return finished;
 }

@@ -12,6 +12,8 @@ import {
   type ProjectRunLockHandle,
 } from '../../projectRunLock.js';
 import { getActiveRunForProject } from '../../mergeRuns.js';
+import { findExistingResolverSession } from '../../mergeRuns/resolverSpawn/existingResolver.js';
+import { proxyListSessionsOrNull } from '../../terminalServerClient.js';
 import { runPostMergeHookGate } from '../../postMergeHooks.js';
 import { logTaskRouteError } from './_shared.js';
 import {
@@ -21,6 +23,7 @@ import {
 import type { MergeReadyTask } from './manualMergeTypes.js';
 import {
   respondExistingConflictInstructions,
+  respondLiveResolver,
   respondMergeOutcome,
 } from './mergeResponses.js';
 
@@ -49,12 +52,18 @@ async function awaitPostMergeHookIfFinalized(
   }
 }
 
-async function handleAlreadyConflictedMerge(
+export async function handleAlreadyConflictedMerge(
   task: MergeReadyTask,
   backendOrigin: string,
   res: Response,
+  deps = {
+    isMidMerge,
+    listSessions: proxyListSessionsOrNull,
+    respondExistingConflictInstructions,
+    respondLiveResolver,
+  },
 ): Promise<Response> {
-  if (!(await isMidMerge(task.worktreePath))) {
+  if (!(await deps.isMidMerge(task.worktreePath))) {
     const outcome = await resyncWithMainAndFinalize(task, backendOrigin);
     // A re-sync error here falls back to returning the existing resolver
     // instructions, matching the old manual /merge behavior.
@@ -63,7 +72,18 @@ async function handleAlreadyConflictedMerge(
       return respondMergeOutcome(res, task, outcome);
     }
   }
-  return respondExistingConflictInstructions(res, task, backendOrigin);
+  // Still mid-merge (or the re-sync failed): a resolver may be working on it
+  // right now (the conflict pill / Merge re-clicked). The `mm-resolver:`
+  // spawn-queue dedupe only covers a request still queued, so without this a
+  // second resolver would start in the same worktree. An unreachable terminal-server (null) proves
+  // nothing either way; the spawn below then fails on its own.
+  const sessions = await deps.listSessions();
+  const live = sessions ? findExistingResolverSession(sessions, task.worktreePath) : undefined;
+  if (live) {
+    console.log(`[merge] task ${task.id}: resolver ${live.id} already running; reusing it`);
+    return deps.respondLiveResolver(res, task, live.id);
+  }
+  return deps.respondExistingConflictInstructions(res, task, backendOrigin);
 }
 
 async function runFreshMerge(

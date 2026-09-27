@@ -123,6 +123,10 @@ here instead of bloating the parent file.
     (set for merge-conflict resolvers, never stash ones) passes `taskId` +
     `mcpScope: 'task-worktree'`, so a worktree resolver gets the task's
     reduced Lattice toolset and only the Lattice MCP (`mcp/CLAUDE.md`).
+  - `resolverSpawn/existingResolver.ts` — `findExistingResolverSession`: the
+    live resolver pty in a worktree (agent harness + `MERGE_INSTRUCTIONS.md`
+    prompt + exact cwd). Shared by `respawnResolverForFlaggedConflict` and the
+    manual `/merge` already-conflicted path, so neither starts a second writer.
   - `resolverSpawn/handleOutcome.ts` — `handleResyncOutcome`: the higher-level
     policy deciding, per `ResyncOutcome`, whether to finalize (push
     `run.merged`), park on a resolver, cancel the run after a stash conflict,

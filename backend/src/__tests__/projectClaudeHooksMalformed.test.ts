@@ -2,7 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import os from 'node:os';
 import path from 'node:path';
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
+import fs, { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import {
   installProjectClaudeHooks,
   removeProjectClaudeHooks,
@@ -105,4 +105,41 @@ test('concurrent hook install and auto-memory reconcile both land', async () => 
     assert.equal(settings.autoMemoryEnabled, false, 'the memory opt-out survived');
     assert.deepEqual(settings.permissions, { allow: [] });
   });
+});
+
+// A file that exists but can't be read right now (Windows: antivirus, an editor
+// or a sync tool briefly holding it → EBUSY/EPERM) is not ABSENT. Every read
+// error used to count as "absent", so the writer built settings from `{}` and
+// renamed that over the user's file.
+test('a transient read error (EBUSY/EPERM) never overwrites settings.local.json', async (t) => {
+  for (const code of ['EBUSY', 'EPERM', 'EACCES']) {
+    await withProject(async (root, file) => {
+      const body = JSON.stringify(
+        {
+          permissions: { allow: ['Bash(npm test)'] },
+          env: { FOO: 'bar' },
+          hooks: { PreToolUse: [{ matcher: 'Bash', hooks: [{ type: 'command', command: 'echo mine' }] }] },
+        },
+        null,
+        2,
+      );
+      await writeFile(file, body, 'utf8');
+      const realReadFile = fs.readFile;
+      const mocked = t.mock.method(fs, 'readFile', ((p: Parameters<typeof fs.readFile>[0], ...rest: unknown[]) => {
+        if (path.resolve(String(p)) === path.resolve(file)) {
+          return Promise.reject(Object.assign(new Error(`${code}: resource busy or locked`), { code }));
+        }
+        return (realReadFile as (...a: unknown[]) => Promise<unknown>)(p, ...rest);
+      }) as typeof fs.readFile);
+      try {
+        await installProjectClaudeHooks(root, 'http://127.0.0.1:5184');
+        await setProjectClaudeMemoryDisabled(root, true);
+        await removeProjectClaudeHooks(root);
+      } finally {
+        mocked.mock.restore();
+      }
+      assert.equal(await readFile(file, 'utf8'), body, `${code}: the user's bytes are unchanged`);
+      assert.deepEqual(await readdir(path.join(root, '.claude')), ['settings.local.json']);
+    });
+  }
 });

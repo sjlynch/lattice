@@ -7,6 +7,7 @@ import {
 } from '../../worktree.js';
 import type { MergeReadyTask } from './manualMergeTypes.js';
 import { mergeTerminalLabel } from '../../terminalRegistry/labels.js';
+import { terminalRegistry } from '../../terminalRegistry/store.js';
 
 type ResolverSessionPayload = {
   stashConflict?: true;
@@ -129,5 +130,30 @@ export async function respondExistingConflictInstructions(
   return respondResolverSession(res, task, {
     command: buildConflictResolveCommand(relativePath),
     cwd: task.worktreePath,
+  });
+}
+
+// A resolver is already working in this task's worktree (the user clicked the
+// conflict pill / Merge again while it runs): hand back THAT pty instead of
+// spawning a second agent into the same merge. MERGE_INSTRUCTIONS.md is left
+// as the live resolver is reading it. `terminalId` is its durable tab, when the
+// registry knows it, so the UI focuses that tab rather than adding one.
+export async function respondLiveResolver(
+  res: Response,
+  task: MergeReadyTask,
+  serverId: string,
+): Promise<Response> {
+  const terminalId = await terminalRegistry
+    .list(task.projectPath)
+    .then((records) => records.find((r) => r.serverId === serverId)?.id)
+    .catch(() => undefined);
+  return res.json({
+    merged: false,
+    conflict: true,
+    command: buildConflictResolveCommand('MERGE_INSTRUCTIONS.md'),
+    cwd: task.worktreePath,
+    serverId,
+    terminalId,
+    existingResolver: true,
   });
 }

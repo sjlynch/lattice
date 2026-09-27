@@ -75,7 +75,15 @@ the implementations live in focused modules:
   the only copy of that work — survives; the response then adds
   `keptBranch: {name, unmergedCommits, hint}` (`keptBranchPayload`), otherwise
   it stays `{ok: true}`. The MCP `delete_task` tool leads its result with the
-  hint.
+  hint. Delete takes the **per-task `mergeLocks` lock** (after the project-pin
+  check, before any side effect) and holds it across worktree teardown +
+  record removal, so it can't pull a worktree out from under a live
+  `git merge` or erase the record mid-finalize (which used to land the deleted
+  work on main plus a "qa state could not be saved" run error). A held lock is
+  waited for up to `TASK_DELETE_LOCK_WAIT_MS` (5 s, `mergeLocks.acquireBriefly`,
+  shared with `/merge-aborted`), then answered **409** `{error, merging: true}`
+  — the board toasts it. Deps seam `createTaskDeleteHandler({cleanupWorktree,
+  lockWaitMs})` for the regression test.
 - `crudTypes.ts` — shared `TaskIdRequest` type.
 
 Keep the markdown/`text/plain` body handling intact — those routes use the
@@ -98,8 +106,8 @@ no-op; a `limit`-capped listing carries `truncated=N/M` in its frontmatter.
 - `colorSlot.ts` — `assignColorSlot` / `reserveColorSlot`: stable palette slot, reserved until the flip lands.
 - `harnessFactory.ts` — `selectHarnessCommand`: harness → run/resume command + pty `createSession`.
 - `mergeRoute.ts` — `POST /:id/merge`: 409 while a merge run / manual merge / post-merge hook is active.
-- `manualMergeService.ts` — `runManualMerge`: project `run.lock`, fresh vs. already-conflicted, hook gate.
-- `mergeResponses.ts` — outcome → `{merged:true}`, a queued resolver pty, or re-written `MERGE_INSTRUCTIONS.md`.
+- `manualMergeService.ts` — `runManualMerge`: project `run.lock`, fresh vs. already-conflicted, hook gate. Already-conflicted and still mid-merge: a live resolver pty in the worktree (`findExistingResolverSession`) is handed back (`respondLiveResolver`, `existingResolver: true`) instead of spawning a second one; an unreachable terminal-server falls through to the spawn.
+- `mergeResponses.ts` — outcome → `{merged:true}`, a queued resolver pty, re-written `MERGE_INSTRUCTIONS.md`, or the already-running resolver (`respondLiveResolver`, instructions left untouched).
 - `manualMergeGuards.ts` / `manualMergeLocks.ts` — per-project in-flight set; per-task `mergeLocks` wrapper.
 - `manualMergeTypes.ts` — `MergeReadyTask` (a task with `branch` + `worktreePath`).
 - `_shared.ts` — `requireTaskStatus` (400 on the wrong lane) + `logTaskRouteError`.
@@ -150,6 +158,15 @@ undoes that bump, and any other failure clears the run-queue state:
   still reclaims its checkout. The palette slot is picked inside that same
   flip: the stored `colorIndex` is kept only while no other active task or
   reservation holds it (`colorSlot.ts` `reserveColorSlot(…, preferred)`).
+  **At most one start per task at a time, whatever the entry point (do not
+  regress)**: a task stays `open` until the flip, so the workflow Start step's
+  direct start and a `/run` admitted during its minutes-long checkout both
+  passed `isFreshlyRunnable` — the second setup's reconcile killed the first
+  agent and stranded the task In Progress with no pty. An in-process
+  per-task chain (`startsInFlight`, `isTaskStartInFlight`) makes a concurrent
+  second start wait for the first, then withdraw (`checkWithdrawal`) if the
+  task was claimed, or run as an ordinary retry if the first failed. Covered
+  by `__tests__/startTaskConcurrent.test.ts`.
 
 ## Worktree lifecycle hooks (`hooks/`)
 

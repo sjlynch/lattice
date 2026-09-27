@@ -23,8 +23,9 @@ export function rangeSelectedIds(
 // Multi-selection on task cards: tracks the selected ids, the anchor card
 // for shift-range selection, and which lane the selection is anchored in
 // (selecting a card in a different lane resets the selection so cross-lane
-// shift-ranges aren't allowed). `getLaneSortMode` supplies each lane's display
-// sort so shift-ranges are computed over the on-screen order.
+// shift-ranges aren't allowed). `grouped` must be the grouping the lanes
+// actually render (search-filtered), and `getLaneSortMode` supplies each lane's
+// display sort, so shift-ranges are computed over exactly the on-screen cards.
 export function useTaskSelection(
   tasks: Task[],
   grouped: Record<TaskStatus, Task[]>,
@@ -72,6 +73,7 @@ export function useTaskSelection(
       // raw sortOrder grouping. Those orders diverge in every non-open lane
       // (arrival ≠ createdAt), so slicing the grouped array would select a
       // different contiguous block than the one shown between anchor and target.
+      // `grouped` is search-filtered, so cards the search hides are skipped.
       const laneTasks = sortTasksForLane(
         grouped[laneId],
         laneId,

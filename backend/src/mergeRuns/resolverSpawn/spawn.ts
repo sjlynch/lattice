@@ -3,10 +3,9 @@ import { listConflictedFiles } from '../../worktree/state.js';
 import { type Task } from '../../tasks.js';
 import { queuedCreateSession } from '../../queuedCreateSession.js';
 import { proxyListSessionsOrNull } from '../../terminalServerClient.js';
-import { agentHarnessForCommand } from '../../harnesses.js';
 import { mergeTerminalLabel } from '../../terminalRegistry/labels.js';
 import { terminalRegistry } from '../../terminalRegistry/store.js';
-import path from 'node:path';
+import { findExistingResolverSession } from './existingResolver.js';
 import { notify, type MergeRun } from '../state.js';
 import type { ProcessTargetContext } from '../processTarget.js';
 import { mergeRunCancellation } from '../cancellation.js';
@@ -127,17 +126,7 @@ export async function respawnResolverForFlaggedConflict(
   // An unavailable probe is not proof that it died: fail this attempt safely.
   const sessions = await deps.listSessions();
   if (!sessions) return { kind: 'spawn-error', error: 'Cannot verify whether the previous resolver is still running' };
-  const normalizeCwd = (cwd: string) => {
-    const normalized = path.resolve(cwd);
-    return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
-  };
-  const existing = sessions.find((candidate) => {
-    const session = candidate as { id?: unknown; cwd?: unknown; initialCommand?: unknown } | null;
-    return session && typeof session.id === 'string' && typeof session.cwd === 'string'
-      && typeof session.initialCommand === 'string' && agentHarnessForCommand(session.initialCommand)
-      && /\bMERGE_INSTRUCTIONS\.md\b/i.test(session.initialCommand)
-      && normalizeCwd(session.cwd) === normalizeCwd(task.worktreePath!);
-  }) as { id: string } | undefined;
+  const existing = findExistingResolverSession(sessions, task.worktreePath!);
   const conflictedFiles = await deps.listConflictedFiles(task.worktreePath!);
   // markConflict:false — this task is already conflict-flagged (that's why we
   // re-spawn), so re-flagging would needlessly reset conflictStartedAt.

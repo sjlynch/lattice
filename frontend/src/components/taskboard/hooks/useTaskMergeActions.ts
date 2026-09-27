@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 import {
   abortTaskMerge as apiAbortTaskMerge,
   cancelMergeRun as apiCancelMergeRun,
@@ -11,10 +11,29 @@ import {
   type Task,
   type TaskStatus,
 } from '../../../api';
-import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
+import type { AddTerminalSpec, TerminalSpec } from '../../../terminal/terminalTypes';
 import { shortLabel } from '../lanes';
 
 type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
+type CloseTerminalsForTask = (taskId: string, keep?: { id?: string; serverId?: string }) => void;
+
+// A merge-kind tab for the task whose pty may still be running. A tab that was
+// never activated has no status yet (panes lazy-mount), so only an explicit
+// exit / loss / failed restore counts as dead.
+export function findLiveResolverTab(
+  terminals: readonly TerminalSpec[],
+  taskId: string,
+): TerminalSpec | undefined {
+  return terminals.find(
+    (t) =>
+      t.taskId === taskId &&
+      t.kind === 'merge' &&
+      !!t.serverId &&
+      t.status !== 'exited' &&
+      t.status !== 'dead' &&
+      t.restore !== 'failed',
+  );
+}
 
 type UseTaskMergeActionsArgs = {
   activeFolder: string;
@@ -23,6 +42,11 @@ type UseTaskMergeActionsArgs = {
   addTerminal: AddTerminal;
   moveTask: (id: string, status: TaskStatus) => Promise<void>;
   showError: (message: string) => void;
+  // The open tabs, to find a task's resolver that is still running, plus the
+  // means to focus it and to drop a task's stale tabs before adding a new one.
+  terminals?: readonly TerminalSpec[];
+  focusTerminal?: (id: string) => void;
+  closeTerminalsForTask?: CloseTerminalsForTask;
 };
 
 // Merge actions: per-task merge (with resolver-Claude spawn on conflict),
@@ -36,9 +60,35 @@ export function useTaskMergeActions({
   addTerminal,
   moveTask,
   showError,
+  terminals,
+  focusTerminal,
+  closeTerminalsForTask,
 }: UseTaskMergeActionsArgs) {
+  // Read through a ref so mergeTaskAction stays stable across every tab
+  // status change (it is handed to every card).
+  const terminalsRef = useRef(terminals);
+  terminalsRef.current = terminals;
+  // Tasks with a merge request in flight: a double-click is one request, not a
+  // second that 409s ("Another merge is already in progress") into a toast.
+  const mergingRef = useRef<Set<string>>(new Set());
+
   const mergeTaskAction = useCallback(
     async (task: Task): Promise<boolean> => {
+      if (mergingRef.current.has(task.id)) return false;
+      // The conflict pill / Merge on a task whose resolver is still working:
+      // show that resolver. POSTing would spawn a second one into the same
+      // worktree, both editing and committing the same merge. Only while the
+      // task is conflict-flagged: a resolver that gave up (/merge-aborted
+      // clears the flag) can leave its idle session open, and Merge must then
+      // retry, not just show it again.
+      const live = task.conflict
+        ? findLiveResolverTab(terminalsRef.current ?? [], task.id)
+        : undefined;
+      if (live) {
+        focusTerminal?.(live.id);
+        return false;
+      }
+      mergingRef.current.add(task.id);
       try {
         // Waits out a backend restart (a 503 drain, or the backend down) —
         // but only failures the backend never acted on: a retried merge whose
@@ -59,6 +109,14 @@ export function useTaskMergeActions({
           );
           return false;
         }
+        // One resolver tab per task: drop any stale one (an ended resolver
+        // from an earlier attempt) — never the pty just delivered, whose
+        // registry `upsert` may have mounted its tab already (as
+        // useMergeRunSync does).
+        closeTerminalsForTask?.(task.id, { id: res.terminalId, serverId: res.serverId });
+        // The backend handed back a resolver that was already running (this
+        // tab didn't know it): the user asked to see it, so focus it.
+        const existing = 'existingResolver' in res && res.existingResolver === true;
         addTerminal({
           id: res.terminalId,
           label: `merge:${shortLabel(task.title)}`,
@@ -68,14 +126,16 @@ export function useTaskMergeActions({
           kind: 'merge',
           projectPath: task.projectPath,
           serverId: res.serverId,
-        }, false);
+        }, existing);
         return false;
       } catch (err) {
         showError(`Merge failed: ${(err as Error).message}`);
         return false;
+      } finally {
+        mergingRef.current.delete(task.id);
       }
     },
-    [activeFolder, addTerminal, showError],
+    [activeFolder, addTerminal, showError, focusTerminal, closeTerminalsForTask],
   );
 
   const mergeAllReady = useCallback(async () => {

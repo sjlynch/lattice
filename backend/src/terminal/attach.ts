@@ -4,15 +4,11 @@ import { getSession } from './sessionStore.js';
 import { createSession } from './createSession.js';
 import { killSession } from './kill.js';
 import { holdSubscriber, releaseSubscriber } from './broadcast.js';
+import { isPtyDimension } from './ptyDimension.js';
 
-// A pty size is a positive integer; anything else (NaN, 0, a float, a huge
-// negative from a mangled query) is ignored rather than handed to node-pty.
-// Same predicate the backend's POST /api/terminals applies to its body. Capped
-// at ConPTY's signed 16-bit COORD limit — a larger size misbehaves on Windows.
-export const MAX_PTY_DIMENSION = 32767;
-export function isPtyDimension(n: unknown): n is number {
-  return Number.isInteger(n) && (n as number) > 0 && (n as number) <= MAX_PTY_DIMENSION;
-}
+// Re-exported so existing importers (terminalServer/websocket.ts, tests) keep
+// their path; the predicate itself lives in the dependency-free leaf.
+export { MAX_PTY_DIMENSION, isPtyDimension } from './ptyDimension.js';
 
 type AttachResult = {
   session: Session;

@@ -5,7 +5,7 @@
 // user can watch / intervene.
 
 import { listTasks, type Task } from '../../tasks.js';
-import { startTaskById } from '../../routes/tasks/startTask.js';
+import { isTaskStartInFlight, startTaskById } from '../../routes/tasks/startTask.js';
 import { enqueueTaskRun, taskRunDedupeKey } from '../../routes/tasks/queuedSpawn.js';
 import {
   batchAdmissionHold,
@@ -40,6 +40,9 @@ export type StartStepDeps = {
   // Does the spawn queue hold a run for this task (pending or in flight)?
   // Optional so hand-built test deps keep compiling.
   hasQueuedRun?: (taskId: string) => boolean;
+  // Is a startTaskById of this task running right now (whatever started it)?
+  // Optional so hand-built test deps keep compiling.
+  hasStartInFlight?: (taskId: string) => boolean;
 };
 
 const productionDeps: StartStepDeps = {
@@ -48,6 +51,7 @@ const productionDeps: StartStepDeps = {
   enqueueRun: enqueueTaskRun,
   admissionHold: batchAdmissionHold,
   hasQueuedRun: (taskId) => hasSpawnRequest(taskRunDedupeKey(taskId)),
+  hasStartInFlight: isTaskStartInFlight,
 };
 
 // A task whose run is already queued or being started (Run All, a manual ▶, a
@@ -58,9 +62,16 @@ const productionDeps: StartStepDeps = {
 // force-remove its worktree (or, once the first agent had committed, leave two
 // live agents on one task). `runQueued` covers the persisted flag (incl. the
 // boot window before queuedRunResume re-enqueues it); the live queue lookup
-// covers a run enqueued after this step listed the tasks.
+// covers a run enqueued after this step listed the tasks, and the in-flight
+// start lookup any other direct start. (The reverse — a /run admitted while
+// THIS step's start waits on the checkout gate — is serialized inside
+// startTaskById itself: the later start waits, then withdraws.)
 function runAlreadyQueued(task: Task, deps: StartStepDeps): boolean {
-  return task.runQueued === true || deps.hasQueuedRun?.(task.id) === true;
+  return (
+    task.runQueued === true ||
+    deps.hasQueuedRun?.(task.id) === true ||
+    deps.hasStartInFlight?.(task.id) === true
+  );
 }
 
 // Task titles are clipped to this many characters in the step's log lines.

@@ -14,12 +14,16 @@ type UseTaskActionsArgs = {
   activeFolder: string;
   tasks: Task[];
   grouped: GroupedTasks;
+  visibleGrouped: GroupedTasks;
   getLaneSortMode: (status: TaskStatus) => LaneSortMode;
   mergeRun: MergeRun | null;
   addTerminal: AddTerminal;
   clearSelection: () => void;
   pickRunHarness: () => RunHarnessSelection;
   showError: (message: string) => void;
+  terminals?: readonly TerminalSpec[];
+  focusTerminal?: (id: string) => void;
+  closeTerminalsForTask?: (taskId: string, keep?: { id?: string; serverId?: string }) => void;
 };
 
 // Composes per-concern action hooks (CRUD, reorder, lifecycle, merge)
@@ -30,18 +34,23 @@ export function useTaskActions({
   activeFolder,
   tasks,
   grouped,
+  visibleGrouped,
   getLaneSortMode,
   mergeRun,
   addTerminal,
   clearSelection,
   pickRunHarness,
   showError,
+  terminals,
+  focusTerminal,
+  closeTerminalsForTask,
 }: UseTaskActionsArgs) {
   const crud = useTaskCrudActions({ activeFolder, showError });
   const reorder = useTaskReorderActions({
     activeFolder,
     tasks,
     grouped,
+    visibleGrouped,
     getLaneSortMode,
     clearSelection,
     showError,
@@ -59,6 +68,9 @@ export function useTaskActions({
     addTerminal,
     moveTask: crud.moveTask,
     showError,
+    terminals,
+    focusTerminal,
+    closeTerminalsForTask,
   });
 
   return {

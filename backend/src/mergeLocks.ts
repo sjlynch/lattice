@@ -31,3 +31,17 @@ export function release(token: MergeLockToken): boolean {
 export function isLocked(taskId: string): boolean {
   return inFlight.has(taskId);
 }
+
+const ACQUIRE_BRIEFLY_POLL_MS = 100;
+
+// Poll `tryAcquire` until it succeeds or `waitMs` elapses (null on timeout).
+// For callers that must not race a merge/finalize but can afford to wait out
+// one — the lock is only ever held for the seconds that git work takes.
+export async function acquireBriefly(taskId: string, waitMs: number): Promise<MergeLockToken | null> {
+  const deadline = Date.now() + waitMs;
+  for (;;) {
+    const lock = tryAcquire(taskId);
+    if (lock || Date.now() >= deadline) return lock;
+    await new Promise((r) => setTimeout(r, ACQUIRE_BRIEFLY_POLL_MS));
+  }
+}

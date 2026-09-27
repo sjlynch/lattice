@@ -2,7 +2,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { gitLogFormat, parseGitLogNameStatus } from '../gitHistory/parseLog.js';
 import { parseGitStatusPorcelain } from '../gitHistory/parseStatus.js';
-import { GIT_LOG_COMMIT_HEADER, GIT_LOG_FIELD_SEPARATOR, unquoteGitPath } from '../gitHistory/parserShared.js';
+import {
+  GIT_LOG_COMMIT_HEADER,
+  GIT_LOG_FIELD_SEPARATOR,
+  GIT_LOG_MESSAGE_END,
+  unquoteGitPath,
+} from '../gitHistory/parserShared.js';
 
 function commitHeader(
   sha: string,
@@ -23,8 +28,36 @@ function commitHeader(
 test('gitLogFormat emits the shared parser sentinels', () => {
   assert.equal(
     gitLogFormat(),
-    [`${GIT_LOG_COMMIT_HEADER}%H`, '%h', '%an', '%at', '%s'].join(GIT_LOG_FIELD_SEPARATOR),
+    [`${GIT_LOG_COMMIT_HEADER}%H`, '%h', '%an', '%at', '%s', `%b${GIT_LOG_MESSAGE_END}`].join(
+      GIT_LOG_FIELD_SEPARATOR,
+    ),
   );
+});
+
+test('parseGitLogNameStatus reads a multi-line body ended by the message marker', () => {
+  // Real `git log` output: the body (`%b`) spans lines and ends with a
+  // newline before the marker; the name-status block follows a blank line.
+  const header = (sha: string, subject: string, body: string) =>
+    [`${GIT_LOG_COMMIT_HEADER}${sha}`, sha.slice(0, 7), 'Dana', '1700000010', subject, body].join(
+      GIT_LOG_FIELD_SEPARATOR,
+    ) + GIT_LOG_MESSAGE_END;
+  const out =
+    `${header('6666666666666666666666666666666666666666', 'with body', 'First para.\r\n\r\nM\tnot-a-change.ts\n')}\n` +
+    `\n` +
+    `M\tsrc/real.ts\n` +
+    `${header('7777777777777777777777777777777777777777', 'no body', '')}\n` +
+    `\n` +
+    `A\tsrc/added.ts\n`;
+
+  const commits = parseGitLogNameStatus(out);
+
+  assert.equal(commits.length, 2);
+  assert.equal(commits[0].subject, 'no body');
+  assert.equal(commits[0].body, '');
+  assert.deepEqual(commits[0].changes, [{ path: 'src/added.ts', status: 'A' }]);
+  assert.equal(commits[1].subject, 'with body');
+  assert.equal(commits[1].body, 'First para.\n\nM\tnot-a-change.ts');
+  assert.deepEqual(commits[1].changes, [{ path: 'src/real.ts', status: 'M' }]);
 });
 
 test('parseGitLogNameStatus parses A/M/D records, blank lines, and oldest-to-newest order', () => {

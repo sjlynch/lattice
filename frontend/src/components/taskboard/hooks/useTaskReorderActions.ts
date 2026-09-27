@@ -7,6 +7,7 @@ import {
 import { sortTasksForLane, type LaneSortMode } from '../laneSort';
 import {
   appendOrder,
+  fullLaneDropIndex,
   multiDropOrder,
   selectedTasksInVisibleOrder,
   singleDropOrder,
@@ -17,6 +18,10 @@ type UseTaskReorderActionsArgs = {
   activeFolder: string;
   tasks: Task[];
   grouped: GroupedTasks;
+  // The search-filtered grouping the lanes actually render. Drop slot indices
+  // count only these cards, so they are mapped back onto `grouped` before any
+  // reorder math runs. Equal to `grouped` when no search is active.
+  visibleGrouped: GroupedTasks;
   getLaneSortMode: (status: TaskStatus) => LaneSortMode;
   clearSelection: () => void;
   showError: (message: string) => void;
@@ -29,6 +34,7 @@ export function useTaskReorderActions({
   activeFolder,
   tasks,
   grouped,
+  visibleGrouped,
   getLaneSortMode,
   clearSelection,
   showError,
@@ -44,6 +50,13 @@ export function useTaskReorderActions({
     (status: TaskStatus): Task[] =>
       sortTasksForLane(grouped[status], status, getLaneSortMode(status)),
     [grouped, getLaneSortMode],
+  );
+  // The destination lane exactly as rendered (search filter applied) — the
+  // array the Lane's slot indices were measured against.
+  const visibleLane = useCallback(
+    (status: TaskStatus): Task[] =>
+      sortTasksForLane(visibleGrouped[status], status, getLaneSortMode(status)),
+    [visibleGrouped, getLaneSortMode],
   );
   // The dragged cards in the order the user actually sees them in their source
   // lane. Selection is anchored to a single lane, so all ids share a status;
@@ -80,11 +93,12 @@ export function useTaskReorderActions({
       if (!activeFolder) return;
       const srcTasks = srcTasksInVisibleOrder(ids);
       if (!srcTasks.length) return;
+      const lane = displayedLane(targetStatus);
       const order = multiDropOrder(
-        displayedLane(targetStatus),
+        lane,
         srcTasks,
         ids,
-        targetIndex,
+        fullLaneDropIndex(lane, visibleLane(targetStatus), targetIndex, ids),
       );
       try {
         await apiReorderTasks(activeFolder, targetStatus, order);
@@ -93,21 +107,34 @@ export function useTaskReorderActions({
         showError((err as Error).message);
       }
     },
-    [activeFolder, clearSelection, displayedLane, showError, srcTasksInVisibleOrder],
+    [
+      activeFolder,
+      clearSelection,
+      displayedLane,
+      showError,
+      srcTasksInVisibleOrder,
+      visibleLane,
+    ],
   );
 
   // Drop handler used by lane drop slots. `targetIndex` is the position in
-  // the destination lane's visible order where the task should land.
+  // the destination lane's visible (search-filtered) order where the task
+  // should land; it is mapped onto the full lane before splicing.
   const dropAt = useCallback(
     async (id: string, targetStatus: TaskStatus, targetIndex: number) => {
       if (!activeFolder) return;
       const task = tasks.find((candidate) => candidate.id === id);
       if (!task) return;
+      const shown = visibleLane(targetStatus);
+      // No-op on screen (dropped onto its own visible slot): don't shuffle it
+      // past hidden cards just because a search is filtering the lane.
+      if (!singleDropOrder(shown, task, targetStatus, targetIndex)) return;
+      const lane = displayedLane(targetStatus);
       const order = singleDropOrder(
-        displayedLane(targetStatus),
+        lane,
         task,
         targetStatus,
-        targetIndex,
+        fullLaneDropIndex(lane, shown, targetIndex, [id]),
       );
       if (!order) return; // no-op: dropped onto its own current slot
       try {
@@ -116,7 +143,7 @@ export function useTaskReorderActions({
         showError((err as Error).message);
       }
     },
-    [activeFolder, displayedLane, showError, tasks],
+    [activeFolder, displayedLane, showError, tasks, visibleLane],
   );
 
   return { moveMulti, dropAtMulti, dropAt };
