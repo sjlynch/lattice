@@ -158,31 +158,14 @@ the MCP tab's custom-server defs (`mcpCustomServers`, written immediately on
 add/remove — not via the footer), and `ToolsTab`'s rule-pack enables
 (`opengrep.packs`).
 
-**`ToolsTab`** (Opengrep, SAST) is the one tab that spans both files: the engine
-install / rule-pack install-update-remove buttons act **immediately** through
-`/api/opengrep/*` (a 50 MB download and a git fetch are not "Save" material;
-the tab polls `/api/opengrep/status` every 1.5 s while a job or scan runs), the
-pack enable checkboxes are machine-global (`getOpengrepGlobalPatch`), and the
-"Scan filter (this project)" section — severity floor, ignored rule ids /
-fingerprints, extra rule paths, exclude globs, digest budget — is per-project
-`userSettings.opengrep` (`getOpengrepProjectPatch`), both with the usual
-`undefined`-until-touched clobber-guard. Both patches are WHOLE objects, so
-the guard's other half matters as much: each `*Loaded` flag flips only on a
-SUCCESSFUL fetch (`fetchUserSettingsStrict`, which throws where
-`fetchUserSettings` returns `{}`); a failed load shows an error and leaves the
-controls disabled, because "empty draft, then Save" would erase the project's
-ignore lists — including every fingerprint agents appended through
-`opengrep_ignore`. A status reply for a folder that is no longer the active one
-is dropped (`folderRef`). "Run scan" runs against the active
-project and shows the record + digest counts with a link to the markdown.
-`ToolsTab.tsx` is just the orchestrator (the `ToolsTabHandle` + `!active`
-gate); `tools/` holds `useOpengrepToolsState` (all state, the load/poll effects
-and the stale-folder guards), `toolsTabUtils.ts` (pure draft/format helpers,
-tested in `__tests__/toolsTabUtils.test.ts`) and one presentational component
-per section (`OpengrepEngineSection` / `OpengrepPacksSection` /
-`OpengrepScanFilterSection` / `OpengrepScanNowSection`). Styles
-in `styles/settings/tools.css`. Backend: `backend/src/opengrep/`. (These tabs read/write the global file
-directly, not `userSettings` — don't assume "a tab ⇒ per-project".) `PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /
+(These tabs read/write the global file
+directly, not `userSettings` — don't assume "a tab ⇒ per-project".)
+
+**`ToolsTab`** (Opengrep, SAST) spans immediate engine/rule-pack operations,
+machine-global pack enables and per-project scan settings. Its module map,
+save guards and async lifetime rules live in [tools/CLAUDE.md](tools/CLAUDE.md).
+
+`PiTab` manages OpenAI-compatible Pi endpoints (id / baseUrl /
 apiKey / models, with a "Detect models" probe via `POST /api/pi-endpoints/probe`
 that also captures each model's advertised context window and shows it as a
 "262K ctx" badge), plus a per-endpoint **Advanced** section (the provider `api`
