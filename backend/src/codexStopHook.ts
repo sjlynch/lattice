@@ -186,8 +186,16 @@ export async function installCodexStopHook(
           `another task's completion URL)`,
       );
     }
-  } catch {
-    /* absent — fall through to write */
+  } catch (err) {
+    // Only ENOENT means absent. Any other read error (EBUSY/EPERM/EACCES — on
+    // Windows an antivirus scan or an editor briefly holding the file) means a
+    // file we can't see is there: under 'if-absent' it may be the repo's own
+    // hooks.json, so don't write over it.
+    const code = (err as NodeJS.ErrnoException | null)?.code;
+    if (code !== 'ENOENT' && policy === 'if-absent') {
+      console.warn(`[codex-hook] could not read ${file} (${code ?? err}); not overwriting it`);
+      return false;
+    }
   }
   await fs.mkdir(path.dirname(file), { recursive: true });
   await atomicWriteFile(file, expected);

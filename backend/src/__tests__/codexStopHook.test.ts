@@ -82,6 +82,38 @@ test("installCodexStopHook('if-absent') skips (returns false) when a DIFFERENT f
   assert.equal(await fs.readFile(file, 'utf8'), repoOwned, 'the existing file is preserved verbatim');
 });
 
+// Only ENOENT means absent: a repo-owned hooks.json that is briefly unreadable
+// (Windows: antivirus / an editor holding it → EBUSY/EPERM) must not be taken
+// for a missing file and written over.
+test("installCodexStopHook('if-absent') skips (returns false) when the existing file can't be read", async (t) => {
+  const dir = await tmpDir();
+  t.after(() => fs.rm(dir, { recursive: true, force: true }));
+
+  const file = codexHooksJsonPath(dir);
+  await fs.mkdir(path.dirname(file), { recursive: true });
+  const repoOwned = '{
+  "hooks": { "Stop": [] }
+}
+';
+  await fs.writeFile(file, repoOwned, 'utf8');
+
+  const realReadFile = fs.readFile;
+  const mocked = t.mock.method(fs, 'readFile', ((p: Parameters<typeof fs.readFile>[0], ...rest: unknown[]) => {
+    if (path.resolve(String(p)) === path.resolve(file)) {
+      return Promise.reject(Object.assign(new Error('EBUSY: resource busy or locked'), { code: 'EBUSY' }));
+    }
+    return (realReadFile as (...a: unknown[]) => Promise<unknown>)(p, ...rest);
+  }) as typeof fs.readFile);
+  let wrote: boolean;
+  try {
+    wrote = await installCodexStopHook(dir, URL, 'if-absent');
+  } finally {
+    mocked.mock.restore();
+  }
+  assert.equal(wrote, false, 'an unreadable file is not an absent one');
+  assert.equal(await fs.readFile(file, 'utf8'), repoOwned, 'the repo-owned file is preserved verbatim');
+});
+
 test("installCodexStopHook('if-absent') writes when no file exists yet", async (t) => {
   const dir = await tmpDir();
   t.after(() => fs.rm(dir, { recursive: true, force: true }));

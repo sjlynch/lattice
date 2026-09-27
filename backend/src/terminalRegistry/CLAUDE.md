@@ -27,6 +27,7 @@ from.
   marker) for `cwd-missing` / `restore-failed` so the UI can show why.
   `endWhere()` is what the kill paths (`terminalProxy.ts` wrappers, the
   `/api/terminals/:id` DELETE) and the exit watcher use.
+- `recordCodec.ts` — the untrusted-file codec: `deserializeTerminalRecord(s)` (per-field parsers, retention prune), re-exported from `store.ts`.
 - `startupSupersede.ts` — `endSupersededStartupRecords`: when
   `recordSpawnedTerminal` creates a new `startup` record, every older record of
   the same `startupId` whose pty is definitely dead (no `serverId`, or a
@@ -93,6 +94,9 @@ from.
 - `harnessPaths.ts` — where each harness keeps transcripts (verified on
   Windows): Claude `~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl`, Pi
   `~/.pi/agent/sessions/--<cwd, [/\:] → '-'>--/<ts>_<id>.jsonl`, Codex rollouts.
+- `sessionFiles.ts` — the IO over those paths (`readTail`, Claude status /
+  conversation scan, Pi/Codex file finders, `listCodexDayDirs`), shared by
+  `interruption.ts` (which re-exports it) and `codexDiscovery.ts`.
 
 ## Relaunch
 
