@@ -8,6 +8,7 @@ function commit(changes: GitCommitChange[], shortSha = 'abc1234'): GitCommit {
     sha: shortSha.padEnd(40, '0'),
     shortSha,
     subject: 'change',
+    body: '',
     authorName: 'me',
     date: 0,
     changes,

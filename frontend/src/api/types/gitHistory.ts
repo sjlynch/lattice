@@ -10,6 +10,8 @@ export type GitCommit = {
   sha: string;
   shortSha: string;
   subject: string;
+  // Message body after the subject; optional so an older backend still types.
+  body?: string;
   authorName: string;
   date: number;
   changes: GitCommitChange[];

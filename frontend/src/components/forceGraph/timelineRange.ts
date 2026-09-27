@@ -69,6 +69,31 @@ export function formatTimelineTickLabel(
   return `${commit.shortSha} · ${commit.subject} · ${fmtAge(commit.date, now)}`;
 }
 
+export type TimelineCommitTooltipInput = TimelineCommitLabelInput & {
+  body?: string;
+  authorName?: string;
+};
+
+// Hover text for a range chip: the chip truncates to one line, so this carries
+// the full commit message (subject + body) under a sha · author · age line.
+export function formatTimelineTickTooltip(
+  idx: number,
+  commits: readonly TimelineCommitTooltipInput[],
+  hasUncommitted: boolean,
+  now = Date.now(),
+): string {
+  if (idx === commits.length) {
+    return formatWorkingTreeLabel(hasUncommitted);
+  }
+  const commit = commits[idx];
+  if (!commit) return '';
+  const meta = [commit.shortSha, commit.authorName, fmtAge(commit.date, now)]
+    .filter(Boolean)
+    .join(' · ');
+  const message = commit.body ? `${commit.subject}\n\n${commit.body}` : commit.subject;
+  return `${meta}\n\n${message}`;
+}
+
 // After a background git-history refresh (a commit made / undone, or the tree
 // going dirty/clean while the tab is open) the working-tree tick can shift index
 // because commits.length changed. Map the user's current [left,right] range onto
