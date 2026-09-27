@@ -287,6 +287,24 @@ test('runSpawnThunk(run): a successful spawn delivers the pty via task-spawned a
   assert.equal(spawned[0].taskId, 't1');
 });
 
+test('runSpawnThunk: a fulfilled producer without a PTY is a failure, never silent success', async () => {
+  const store = makeStore(makeTask());
+  const { events, stop } = captureFailed();
+  const spawned: TaskSpawnedEvent[] = [];
+  const stopSpawned = subscribeTaskSpawned((event) => spawned.push(event));
+  try {
+    await assert.rejects(runSpawnThunk('t1', 'run', async () => ({
+      task: makeTask(), worktreePath: '/wt', command: 'claude',
+    }), store.deps), /terminal allocation returned no session id/);
+  } finally {
+    stop();
+    stopSpawned();
+  }
+  assert.equal(events.length, 1);
+  assert.deepEqual(spawned, []);
+  assert.equal(store.current()?.runQueued, undefined);
+});
+
 test('reportSpawnFailure: tolerates a missing task (emits with empty routing fields, no throw)', async () => {
   const store = makeStore(null);
   const { events, stop } = captureFailed();

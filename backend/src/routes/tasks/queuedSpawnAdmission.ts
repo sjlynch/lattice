@@ -53,21 +53,26 @@ export const CLEARED_RUN_QUEUE_STATE = {
   runWaitingForDisk: undefined,
 } as const;
 
-// Thrown by startTaskById when the start was withdrawn while it ran: its
+// Thrown by startTaskById/resumeTaskById when withdrawn while they ran: the
 // queued run was cancelled (`cancel-queued-run` / delete aborted the spawn's
 // signal) or the task left the runnable lanes (dragged to Backlog, …). The
-// worktree + pty it had made are already torn down and the user's change
-// stands. Not a failure: runSpawnThunk neither toasts it nor touches the
-// run-queue state (a re-run may already have re-queued the task).
+// resources they own are already torn down (a resume owns only its new PTY)
+// and the user's change stands. A resume also withdraws if its task was
+// deleted or changed worktrees. Not a failure: runSpawnThunk neither toasts
+// it nor touches the run-queue state (a re-run may already have re-queued it).
 export class TaskStartWithdrawnError extends Error {
   readonly isTaskStartWithdrawn = true;
   constructor(
     taskId: string,
-    readonly reason: 'cancelled' | 'relaned',
+    readonly reason: 'cancelled' | 'relaned' | 'deleted' | 'worktree-changed',
     status?: string,
   ) {
     super(
-      reason === 'cancelled'
+      reason === 'deleted'
+        ? `task ${taskId}: deleted while its resume was being started`
+        : reason === 'worktree-changed'
+        ? `task ${taskId}: worktree changed while its resume was being started`
+        : reason === 'cancelled'
         ? `task ${taskId}: run was cancelled while it was being started`
         : `task ${taskId}: moved to "${status ?? 'another lane'}" while its run was being started`,
     );

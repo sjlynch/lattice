@@ -175,11 +175,9 @@ async function startOneTask(
     return requeue('queue task', `queued instead of started — ${hold}`);
   }
   try {
-    // throwOnCapacity: a terminal-server hard-cap rejection must throw
-    // (SpawnCapacityError) instead of being swallowed. Without it startTaskById
-    // still flips the task open → in_progress with NO pty/agent (and we'd count
-    // it as started) — the excess tasks then sit in_progress forever with no
-    // commit, which is exactly what later hangs the Merge control step.
+    // startTaskById only succeeds after a terminal allocation. CAP rejects
+    // with SpawnCapacityError for deferral below; all other allocation errors
+    // become failed outcomes. Keep the legacy option explicit for callers.
     const spawned = await deps.startTask(task.id, backendOrigin, {
       requestedHarness: harness,
       requestedPiModel: piModel,

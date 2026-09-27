@@ -79,17 +79,18 @@ export async function enqueueTaskResume(
   taskId: string,
   requestedHarness: unknown,
   requestedPiModel?: unknown,
+  deps = { resumeTaskById },
 ): Promise<EnqueueTaskResult> {
   const { queued, done } = enqueueSpawn<void>({
     kind: 'task-resume',
     priority: 'batch',
     dedupeKey: taskResumeDedupeKey(taskId),
-    thunk: () =>
+    thunk: (signal) =>
       runSpawnThunk(taskId, 'resume', () =>
-        resumeTaskById(
+        deps.resumeTaskById(
           taskId,
           requestedHarness,
-          { throwOnCapacity: true },
+          { throwOnCapacity: true, signal },
           requestedPiModel,
         ),
       ),
@@ -100,8 +101,8 @@ export async function enqueueTaskResume(
 
 // Cancel any queued run/resume spawn for a task — called when the task is
 // deleted. A pending spawn is dropped; an in-flight one has its signal
-// aborted, so a run backs out (tearing down its worktree + pty) instead of
-// finishing for a task that no longer exists.
+// aborted, so a run or resume backs out instead of publishing a late agent.
+// Resume reclaims only its new PTY; its existing worktree is never discarded.
 export function cancelQueuedTaskSpawns(taskId: string): void {
   cancelSpawn(taskRunDedupeKey(taskId));
   cancelSpawn(taskResumeDedupeKey(taskId));

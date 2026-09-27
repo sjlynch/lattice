@@ -42,9 +42,8 @@ export type CreateSessionOutcome = {
   terminalId?: string;
   agentSession?: AgentSessionRef;
   // True when the spawn was rejected by the terminal-server's hard cap.
-  // The queue path turns this into a SpawnCapacityError so the spawn is
-  // re-queued; the un-queued workflow control-step path ignores it and
-  // proceeds without a terminal (today's behaviour).
+  // Callers turn this into a SpawnCapacityError so the spawn can be deferred.
+  // Every other allocation error rejects createSession with its exact message.
   capHit?: boolean;
 };
 
@@ -77,6 +76,7 @@ function getCommandBuilder(
 export function selectHarnessCommand(
   task: Task,
   options: SelectHarnessCommandOptions,
+  deps = { proxyCreateSession },
 ): SelectedHarnessCommand {
   const harness = normalizeAgentHarness(options.requestedHarness);
   const commandBuilder = getCommandBuilder(
@@ -91,7 +91,7 @@ export function selectHarnessCommand(
     commandBuilder,
     async createSession({ taskFile, cwd }) {
       const command = options.commandOverride ?? commandBuilder(taskFile);
-      const sess = await proxyCreateSession({
+      const sess = await deps.proxyCreateSession({
         cwd,
         initialCommand: command,
         projectPath: task.projectPath,
@@ -113,7 +113,10 @@ export function selectHarnessCommand(
         console.warn(
           `[${options.mode}] task ${task.id}: pre-spawn failed: ${sess.error}`,
         );
-        return { command, capHit: sess.code === 'CAP' };
+        if (sess.code === 'CAP') return { command, capHit: true };
+        // In particular, preserve an uncertain outcome verbatim. Retrying it
+        // here or treating it as capacity could launch a duplicate agent.
+        throw new Error(sess.error);
       }
       return {
         command,

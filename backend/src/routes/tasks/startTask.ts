@@ -67,10 +67,8 @@ export type StartTaskByIdOptions = {
   // Explicit Pi model from the run request body. Falls back to the per-project
   // default (UserSettings.piModel) when absent. Ignored unless harness is `pi`.
   requestedPiModel?: unknown;
-  // When true, a terminal-server hard-cap rejection throws SpawnCapacityError
-  // and the task is left 'open' (so the spawn-queue thunk is re-runnable).
-  // When false/omitted, a cap rejection is swallowed: the task still flips to
-  // in_progress with no pre-spawned pty (the un-queued control-step path).
+  // Retained for callers' compatibility. Capacity always throws
+  // SpawnCapacityError and leaves the task runnable; a start requires a PTY.
   throwOnCapacity?: boolean;
   // The spawn-queue request's signal (queued runs only). Aborted when the
   // user cancels the queued run or deletes the task while this start is
@@ -86,9 +84,9 @@ type WorktreeSetup = Awaited<ReturnType<typeof setupTaskWorktree>>;
 // it (HTTP route → UI terminal) or discard it (control step → terminal is
 // pre-warmed for when the user clicks into the task card).
 //
-// The status flip happens AFTER the pty spawn so a CAP-rejected spawn (with
-// throwOnCapacity) leaves the task 'open': the spawn-queue re-runs this whole
-// function, and setupTaskWorktree's reconcileStaleState makes the second pass
+// The status flip happens AFTER a successful pty spawn. A CAP rejection
+// leaves the task 'open': the queue re-runs this whole function, and
+// setupTaskWorktree's reconcileStaleState makes the second pass
 // idempotent against the worktree the first pass already created.
 //
 // The checkout can take minutes (checkout gate, disk estimate), and meanwhile
@@ -206,11 +204,15 @@ async function startTaskExclusive(
   const beforeSpawn = await checkWithdrawal(taskId, signal);
   if (beforeSpawn) return backOut(beforeSpawn, undefined);
 
+  // An allocation failure leaves this checkout intact. It may contain work,
+  // and an uncertain outcome may even have a live agent. Propagate the exact
+  // error without teardown or automatic retry; explicit re-runs use setup's
+  // existing reconciliation policy.
   const spawn = await selectedHarness.createSession({
     taskFile: result.taskFile,
     cwd: result.worktreePath,
   });
-  if (spawn.capHit && options.throwOnCapacity) {
+  if (spawn.capHit) {
     // No pty was created. A withdrawn start must not be re-queued with its
     // checkout still on disk; otherwise park the checkout for the retry.
     const beforeRequeue = await checkWithdrawal(taskId, signal);
@@ -220,6 +222,8 @@ async function startTaskExclusive(
       `task ${taskId}: no terminal slot (terminal-server hard cap)`,
     );
   }
+
+  if (!spawn.serverId) throw new Error(`task ${taskId}: terminal allocation returned no session id`);
 
   const outcome = await flipToInProgress(taskId, signal, result, spawn, selectedHarness, piModel);
   if (!outcome) return backOut({ withdrawal: 'deleted', current: null }, spawn.serverId);

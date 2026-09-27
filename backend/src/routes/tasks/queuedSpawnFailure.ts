@@ -155,17 +155,18 @@ export async function runSpawnThunk(
   }
   try {
     const result = await spawn();
-    if (result.serverId) {
-      notifyTaskSpawned({
-        projectPath: result.task.projectPath,
-        taskId,
-        title: result.task.title,
-        command: result.command,
-        worktreePath: result.worktreePath,
-        serverId: result.serverId,
-        terminalId: result.terminalId,
-      });
+    if (!result.serverId) {
+      throw new Error(`task ${taskId}: terminal allocation returned no session id`);
     }
+    notifyTaskSpawned({
+      projectPath: result.task.projectPath,
+      taskId,
+      title: result.task.title,
+      command: result.command,
+      worktreePath: result.worktreePath,
+      serverId: result.serverId,
+      terminalId: result.terminalId,
+    });
   } catch (err) {
     // A CAP or disk-space deferral is re-queued and retried — undo the attempt
     // bump (a run) and leave all other state alone. A start withdrawn by the

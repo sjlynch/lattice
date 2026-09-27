@@ -104,7 +104,7 @@ no-op; a `limit`-capped listing carries `truncated=N/M` in its frontmatter.
 - `startTask.ts` — `startTaskById` (worktree → pty → in_progress flip), shared with the workflow Start step.
 - `startWithdrawal.ts` — `startTaskById`'s withdrawal checks, withdrawn-start teardown (`discardOrphanedSpawn`) and CAP-parked checkouts.
 - `colorSlot.ts` — `assignColorSlot` / `reserveColorSlot`: stable palette slot, reserved until the flip lands.
-- `harnessFactory.ts` — `selectHarnessCommand`: harness → run/resume command + pty `createSession`.
+- `harnessFactory.ts` — `selectHarnessCommand`: harness → run/resume command + pty `createSession`. Returned non-CAP executor errors reject with the original diagnostic (including uncertain outcomes, which must not be retried). The injectable `proxyCreateSession` boundary covers returned errors, not just thrown spawn stubs.
 - `mergeRoute.ts` — `POST /:id/merge`: 409 while a merge run / manual merge / post-merge hook is active.
 - `manualMergeService.ts` — `runManualMerge`: project `run.lock`, fresh vs. already-conflicted, hook gate. Already-conflicted and still mid-merge: a live resolver pty in the worktree (`findExistingResolverSession`) is handed back (`respondLiveResolver`, `existingResolver: true`) instead of spawning a second one; an unreachable terminal-server falls through to the spawn.
 - `mergeResponses.ts` — outcome → `{merged:true}`, a queued resolver pty, re-written `MERGE_INSTRUCTIONS.md`, or the already-running resolver (`respondLiveResolver`, instructions left untouched).
@@ -141,6 +141,15 @@ undoes that bump, and any other failure clears the run-queue state:
   body still wins, and the harness/model a resume actually spawned is written
   back onto the task so the switch sticks. (It used to default every
   body-less resume to Claude, silently moving Pi/Codex tasks onto Claude.)
+  **Withdrawal**: observes the queue's AbortSignal and re-reads task status,
+  worktree/branch identity and start time after preparation and at allocation
+  settlement. Conversation/harness metadata is committed only after a final
+  eligibility check under `updateTaskWith`. A withdrawn late allocation is
+  killed by its own serverId through `terminalProxy` (also ends its registry
+  tab); resume cleanup never discards the existing checkout or older PTYs.
+  Intentional withdrawal uses `TaskStartWithdrawnError`, with no success event
+  or failure toast. `ResumeTaskDeps` keeps the producer testable with deferred
+  preparation/allocation and real task-store checks.
 - `queuedSpawnEnqueue.ts` — the run/resume enqueue wrappers (`enqueueTaskRun` /
   `enqueueTaskResume`) plus cancellation (`cancelQueuedTaskSpawns` /
   `dequeueTaskRun`). Cancellation also reaches a run the queue already
@@ -167,6 +176,14 @@ undoes that bump, and any other failure clears the run-queue state:
   second start wait for the first, then withdraw (`checkWithdrawal`) if the
   task was claimed, or run as an ordinary retry if the first failed. Covered
   by `__tests__/startTaskConcurrent.test.ts`.
+  Only a successful terminal allocation may flip a task to In Progress:
+  CAP always defers, regardless of the legacy `throwOnCapacity` option.
+  Other allocation errors leave the prepared checkout intact and propagate
+  without retry or cleanup; an uncertain outcome may have a live agent.
+  An explicit retry follows setup's existing reconciliation policy.
+  `__tests__/taskTerminalAllocation.test.ts` covers the returned-error boundary
+  through run/resume, queued reporting and workflow Start; resume races and
+  registry settlement live in `__tests__/taskResumeWithdrawal.test.ts`.
 
 ## Worktree lifecycle hooks (`hooks/`)
 

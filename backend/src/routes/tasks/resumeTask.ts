@@ -15,7 +15,7 @@
 //     "continue this task, check git log first" prompt.
 
 import path from 'node:path';
-import { getTask, updateTask, type Task, type TaskUpdates } from '../../tasks.js';
+import { getTask, updateTaskWith, type Task, type TaskUpdates } from '../../tasks.js';
 import { worktreeExists } from '../../worktree.js';
 import { SpawnCapacityError } from '../../spawnQueue.js';
 import { isAgentHarness, normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
@@ -27,6 +27,8 @@ import { fileExists } from '../../terminalRegistry/interruption.js';
 import { terminalRegistry } from '../../terminalRegistry/store.js';
 import type { AgentSessionRef, TerminalRecord } from '../../terminalRegistry/types.js';
 import { selectHarnessCommand } from './harnessFactory.js';
+import { proxyKillSession } from '../../terminalProxy.js';
+import { TaskStartWithdrawnError } from './queuedSpawnAdmission.js';
 
 export type ResumeTaskByIdResult = {
   task: Task;
@@ -39,6 +41,25 @@ export type ResumeTaskByIdResult = {
 export type ResumeTaskByIdOptions = {
   // See StartTaskByIdOptions.throwOnCapacity — same contract.
   throwOnCapacity?: boolean;
+  signal?: AbortSignal;
+  deps?: Partial<ResumeTaskDeps>;
+};
+
+// Keep allocation and preparation injectable without replacing the real
+// eligibility checks or task-store compare-and-set in regression tests.
+export type ResumeTaskDeps = {
+  worktreeExists: typeof worktreeExists;
+  buildTaskResumeCommand: typeof buildTaskResumeCommand;
+  selectHarnessCommand: typeof selectHarnessCommand;
+  // The terminalProxy wrapper also ends the new PTY's registry record.
+  killSession: typeof proxyKillSession;
+};
+
+const defaultResumeDeps: ResumeTaskDeps = {
+  worktreeExists,
+  buildTaskResumeCommand,
+  selectHarnessCommand,
+  killSession: proxyKillSession,
 };
 
 const RESUME_PROMPT =
@@ -116,7 +137,10 @@ export async function resumeTaskById(
   options: ResumeTaskByIdOptions = {},
   requestedPiModel?: unknown,
 ): Promise<ResumeTaskByIdResult> {
+  const deps: ResumeTaskDeps = { ...defaultResumeDeps, ...options.deps };
+  const { signal } = options;
   const task = await getTask(taskId);
+  if (signal?.aborted) throw new TaskStartWithdrawnError(taskId, 'cancelled');
   if (!task) throw new Error(`task ${taskId} not found`);
   if (task.status !== 'in_progress') {
     throw new Error(`task ${taskId} is "${task.status}", expected "in_progress"`);
@@ -124,7 +148,9 @@ export async function resumeTaskById(
   if (!task.worktreePath) {
     throw new Error(`task ${taskId} has no worktree path on record`);
   }
-  if (!(await worktreeExists(task.worktreePath))) {
+  const exists = await deps.worktreeExists(task.worktreePath);
+  assertResumeEligible(task, await getTask(taskId), signal);
+  if (!exists) {
     throw new Error(
       `Worktree directory not found at ${task.worktreePath}. ` +
         `The worktree may have been removed manually.`,
@@ -145,44 +171,82 @@ export async function resumeTaskById(
   // Resolve the Codex `--yolo` toggle only for a Codex resume (default ON).
   const codexYolo =
     harness === 'codex' ? await isCodexYoloEnabled(task.projectPath) : undefined;
-  const commandOverride = (await buildTaskResumeCommand(task, harness)) ?? undefined;
-  const selectedHarness = selectHarnessCommand(task, {
+  const commandOverride = (await deps.buildTaskResumeCommand(task, harness)) ?? undefined;
+  const selectedHarness = deps.selectHarnessCommand(task, {
     requestedHarness: harness,
     mode: 'resume',
     piModel,
     codexYolo,
     commandOverride,
   });
+  // Settings and conversation lookup can take long enough for deletion or a
+  // lane/worktree change. Re-read immediately before creating any resource.
+  assertResumeEligible(task, await getTask(taskId), signal);
   const spawn = await selectedHarness.createSession({
     taskFile,
     cwd: task.worktreePath,
   });
-  if (spawn.capHit && options.throwOnCapacity) {
-    throw new SpawnCapacityError(
-      `task ${taskId}: no terminal slot (terminal-server hard cap)`,
-    );
-  }
-  // A fresh resume pins a NEW conversation; remember it for the next one.
-  // Likewise record the harness (+ Pi model) this resume actually ran, so an
-  // explicit harness switch sticks for the next body-less resume.
-  const patch: TaskUpdates = {};
-  if (spawn.agentSession && spawn.agentSession.id !== task.agentSession?.id) {
-    patch.agentSession = { harness: spawn.agentSession.harness, id: spawn.agentSession.id };
-  }
-  if (
-    spawn.serverId &&
-    (task.harness !== harness || (harness === 'pi' && task.piModel !== piModel))
-  ) {
-    patch.harness = harness;
-    patch.piModel = harness === 'pi' ? piModel : undefined;
-  }
-  if (Object.keys(patch).length > 0) await updateTask(task.id, patch);
+  try {
+    if (spawn.capHit) {
+      // A withdrawn resume must not return to the queue even when the
+      // allocation happened to hit the cap at the same time.
+      assertResumeEligible(task, await getTask(taskId), signal);
+      throw new SpawnCapacityError(
+        `task ${taskId}: no terminal slot (terminal-server hard cap)`,
+      );
+    }
+    if (!spawn.serverId) throw new Error(`task ${taskId}: terminal allocation returned no session id`);
 
-  return {
-    task,
-    worktreePath: task.worktreePath,
-    command: spawn.command,
-    serverId: spawn.serverId,
-    terminalId: spawn.terminalId,
-  };
+    // Check and publish under the task lock, including when the conversation
+    // hasn't changed. A withdrawn resume must never overwrite newer metadata.
+    const outcome = await updateTaskWith(taskId, (current) => {
+      assertResumeEligible(task, current, signal);
+      const patch: TaskUpdates = {};
+      if (spawn.agentSession && (
+        spawn.agentSession.id !== current.agentSession?.id ||
+        spawn.agentSession.harness !== current.agentSession?.harness
+      )) {
+        patch.agentSession = { harness: spawn.agentSession.harness, id: spawn.agentSession.id };
+      }
+      if (current.harness !== harness || (harness === 'pi' && current.piModel !== piModel)) {
+        patch.harness = harness;
+        patch.piModel = harness === 'pi' ? piModel : undefined;
+      }
+      return { updates: Object.keys(patch).length > 0 ? patch : undefined, result: undefined };
+    });
+    if (!outcome) throw new TaskStartWithdrawnError(taskId, 'deleted');
+
+    return {
+      task: outcome.task,
+      worktreePath: task.worktreePath,
+      command: spawn.command,
+      serverId: spawn.serverId,
+      terminalId: spawn.terminalId,
+    };
+  } catch (err) {
+    // Reclaim ONLY this allocation. The existing checkout (and any older PTY)
+    // belongs to the task or its next lifecycle operation, never this cleanup.
+    if (spawn.serverId) {
+      try {
+        if (!(await deps.killSession(spawn.serverId))) {
+          console.warn(`[task-resume] task ${taskId}: PTY ${spawn.serverId} kill unconfirmed`);
+        }
+      } catch (killError) {
+        console.warn(`[task-resume] task ${taskId}: PTY ${spawn.serverId} kill failed:`, killError);
+      }
+    }
+    throw err;
+  }
+}
+
+function assertResumeEligible(task: Task, current: Task | null, signal?: AbortSignal): void {
+  if (signal?.aborted) throw new TaskStartWithdrawnError(task.id, 'cancelled');
+  if (!current) throw new TaskStartWithdrawnError(task.id, 'deleted');
+  if (current.status !== 'in_progress') {
+    throw new TaskStartWithdrawnError(task.id, 'relaned', current.status);
+  }
+  if (current.worktreePath !== task.worktreePath || current.branch !== task.branch ||
+      current.projectPath !== task.projectPath || current.startedAt !== task.startedAt) {
+    throw new TaskStartWithdrawnError(task.id, 'worktree-changed');
+  }
 }
