@@ -98,8 +98,8 @@ no-op; a `limit`-capped listing carries `truncated=N/M` in its frontmatter.
 - `colorSlot.ts` — `assignColorSlot` / `reserveColorSlot`: stable palette slot, reserved until the flip lands.
 - `harnessFactory.ts` — `selectHarnessCommand`: harness → run/resume command + pty `createSession`.
 - `mergeRoute.ts` — `POST /:id/merge`: 409 while a merge run / manual merge / post-merge hook is active.
-- `manualMergeService.ts` — `runManualMerge`: project `run.lock`, fresh vs. already-conflicted, hook gate.
-- `mergeResponses.ts` — outcome → `{merged:true}`, a queued resolver pty, or re-written `MERGE_INSTRUCTIONS.md`.
+- `manualMergeService.ts` — `runManualMerge`: project `run.lock`, fresh vs. already-conflicted, hook gate. Already-conflicted and still mid-merge: a live resolver pty in the worktree (`findExistingResolverSession`) is handed back (`respondLiveResolver`, `existingResolver: true`) instead of spawning a second one; an unreachable terminal-server falls through to the spawn.
+- `mergeResponses.ts` — outcome → `{merged:true}`, a queued resolver pty, re-written `MERGE_INSTRUCTIONS.md`, or the already-running resolver (`respondLiveResolver`, instructions left untouched).
 - `manualMergeGuards.ts` / `manualMergeLocks.ts` — per-project in-flight set; per-task `mergeLocks` wrapper.
 - `manualMergeTypes.ts` — `MergeReadyTask` (a task with `branch` + `worktreePath`).
 - `_shared.ts` — `requireTaskStatus` (400 on the wrong lane) + `logTaskRouteError`.

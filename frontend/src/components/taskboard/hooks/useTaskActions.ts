@@ -20,6 +20,9 @@ type UseTaskActionsArgs = {
   clearSelection: () => void;
   pickRunHarness: () => RunHarnessSelection;
   showError: (message: string) => void;
+  terminals?: readonly TerminalSpec[];
+  focusTerminal?: (id: string) => void;
+  closeTerminalsForTask?: (taskId: string, keep?: { id?: string; serverId?: string }) => void;
 };
 
 // Composes per-concern action hooks (CRUD, reorder, lifecycle, merge)
@@ -36,6 +39,9 @@ export function useTaskActions({
   clearSelection,
   pickRunHarness,
   showError,
+  terminals,
+  focusTerminal,
+  closeTerminalsForTask,
 }: UseTaskActionsArgs) {
   const crud = useTaskCrudActions({ activeFolder, showError });
   const reorder = useTaskReorderActions({
@@ -59,6 +65,9 @@ export function useTaskActions({
     addTerminal,
     moveTask: crud.moveTask,
     showError,
+    terminals,
+    focusTerminal,
+    closeTerminalsForTask,
   });
 
   return {

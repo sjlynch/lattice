@@ -176,6 +176,9 @@ export type MergeTaskResult =
       // Set when the backend could not pre-spawn the resolver pty (no
       // `serverId`). The UI toasts it instead of opening a terminal itself.
       resolverError?: string;
+      // The resolver already running in the worktree was handed back instead
+      // of a fresh spawn (the conflict pill / Merge re-clicked mid-resolve).
+      existingResolver?: true;
     }
   | {
       merged: false;

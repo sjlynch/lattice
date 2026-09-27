@@ -106,6 +106,11 @@ export function useTaskBoardController(activeFolder: string) {
     clearSelection,
     pickRunHarness,
     showError,
+    // The conflict pill / Merge focuses a still-running resolver's tab
+    // instead of spawning a second one.
+    terminals,
+    focusTerminal: setActiveId,
+    closeTerminalsForTask,
   });
   const {
     addTask,
