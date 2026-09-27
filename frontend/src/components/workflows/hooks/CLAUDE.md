@@ -8,9 +8,12 @@ there.
   state, harness overrides, prompt-customization state/actions, and intent-level
   actions for the panels. The derived run views and the queue/actions object
   assembly are split out (`useWorkflowRunViews` + the local `buildQueueView` /
-  `buildActions` helpers) so the body reads as plain wiring. Reselect is a no-op;
-  blank/select/template replacement all use the Save/Discard/Cancel gate and
-  recheck the editor lifetime before continuing after confirmation or Save.
+  `buildActions` helpers) so the body reads as plain wiring. Editor replacement
+  actions come from `useWorkflowEditorNavigation`.
+- `useWorkflowEditorNavigation.ts` — select/blank/template replacement callbacks
+  over a narrow editor slice. Owns `useConfirm` wiring to `guardUnsavedSwitch`;
+  reselect is a no-op, live dirty checks preserve mid-save edits, and discard
+  waits until the final editor/project lifetime check before replacement.
 - `useWorkflowHarnessOverrides.ts` — harness availability (`useHarnessAvailability`)
   + the curated Pi menu (`usePiModelMenu`, threaded to each step's harness select,
   so both refetch when Settings → Pi saves) plus the per-workflow run-override map.
