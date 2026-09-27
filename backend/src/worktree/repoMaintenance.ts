@@ -39,6 +39,12 @@ export const PACK_DEBRIS_MIN_AGE_MS = 6 * 60 * 60_000;
 // git treats a gc.pid older than 12 h as stale.
 const GC_PID_STALE_MS = 12 * 60 * 60_000;
 const GC_TIMEOUT_MS = 60 * 60_000;
+// rev-parse answers instantly; the bound only stops a wedged git from stalling
+// maintenance.
+const GIT_PROBE_TIMEOUT_MS = 15_000;
+// count-objects walks the whole object store, which is slow on a large repo
+// with many loose objects — well under the gc bound, well above a probe.
+const COUNT_OBJECTS_TIMEOUT_MS = 60_000;
 // Upper bound for a waiter: the gc's own timeout plus slack for the sweep /
 // count-objects around it. The in-flight promise always settles before this.
 export const REPO_MAINTENANCE_MAX_WAIT_MS = GC_TIMEOUT_MS + 5 * 60_000;
@@ -63,7 +69,7 @@ const defaultDeps: RepoMaintenanceDeps = {
 };
 
 async function commonGitDir(repoRoot: string): Promise<string | null> {
-  const r = await projectGit(repoRoot, ['rev-parse', '--git-common-dir'], { timeoutMs: 15_000 });
+  const r = await projectGit(repoRoot, ['rev-parse', '--git-common-dir'], { timeoutMs: GIT_PROBE_TIMEOUT_MS });
   const dir = r.code === 0 ? r.stdout.trim() : '';
   return dir ? path.resolve(repoRoot, dir) : null;
 }
@@ -130,7 +136,7 @@ export async function sweepPackDebris(
 
 // Packed size in bytes (`git count-objects -v` size-pack is KiB), or null.
 async function packedBytes(repoRoot: string): Promise<number | null> {
-  const r = await projectGit(repoRoot, ['count-objects', '-v'], { timeoutMs: 60_000 });
+  const r = await projectGit(repoRoot, ['count-objects', '-v'], { timeoutMs: COUNT_OBJECTS_TIMEOUT_MS });
   if (r.code !== 0) return null;
   const m = /^size-pack:\s*(\d+)/m.exec(r.stdout);
   return m ? Number(m[1]) * 1024 : null;

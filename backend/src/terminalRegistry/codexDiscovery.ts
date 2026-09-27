@@ -9,7 +9,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { codexSessionsDir, normalizeCwd } from './harnessPaths.js';
-import { listCodexDayDirs } from './interruption.js';
+import { listCodexDayDirs } from './sessionFiles.js';
 import { terminalRegistry } from './store.js';
 import type { TerminalRecord } from './types.js';
 
