@@ -16,9 +16,12 @@ label physics in `labelPhysics/CLAUDE.md`.
 - **Agent Presence Layer (APL)** (`agentOverlay*.ts` + `hooks/useAgentOverlay`)
   — where live agents (Claude, Codex, Pi) work: per agent a free-floating
   **presence node**, fading **focus beams** to files it touches, a file
-  **label**, and a **satellite** per subagent (with its own file label). Lives
-  in `graph.scene()` (NOT `graphData`), so an agent appearing/finishing never
-  reheats the sim. Worktree (`task-activity`) + non-worktree (`agent-activity`)
+  **label**, and a **satellite** per subagent (with its own file label).
+  `graphSettings.ts` defaults `showSubagentLabels` to `false`: it controls the
+  subagent type prefix (or bare type before a file exists), not satellite
+  presence or current-file labels. APL lives in `graph.scene()` (NOT
+  `graphData`), so an agent appearing/finishing never reheats the sim.
+  Worktree (`task-activity`) + non-worktree (`agent-activity`)
   sessions alike — the latter orange, or white / blue for a terminal or workflow-step
   Codex / Pi (`taskColors.sessionColor`). Activity for an agent whose node hasn't arrived
   yet (its presence rides a different socket) is held in
@@ -93,9 +96,15 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `spriteDecision.ts` — `decideSpriteState`: the pure ghost/health/loc/dead/base
   decision tree (recolor precedence health > loc > dead > base) returning a
   plain, THREE-free `SpriteDecision` (baseKind + hide-when-batched + which
-  ring/label/halo to attach). While a metric view (health/loc/dead) is active it
-  suppresses the change-ring + label (they obscure the coloring); ghosts +
-  metrics-ignored files are hidden by `useGraphFilter` instead.
+  ring/label/halo to attach). While a metric view (health/LOC/dead-code) is active
+  it suppresses the change-ring + label (they obscure the coloring); ghosts +
+  metrics-ignored files are hidden by `hooks/useGraphFilter.ts` instead.
+  This is rendering visibility, separate from scanner exclusions and the user's
+  ordinary hidden-extension controls.
+  `frontend/src/api/types/settings.ts` owns `DEFAULT_METRICS_IGNORED_EXTS` and
+  `effectiveMetricsIgnoredExts`; `frontend/src/hooks/useMetricsIgnoredExts.ts`
+  supplies the effective per-project list. Absent `metricsIgnoredExts` uses
+  defaults; explicit `[]` opts those files back into metric views.
 - `sprites` / `spriteShapes` / `spriteTextures` / `spritePicking` — per-(ext,
   shape,color) `SpriteMaterial` cache, shape geometry, canvas→`CanvasTexture`
   (sets `colorSpace = SRGBColorSpace`), sprite-quad pick bounds.
@@ -156,11 +165,14 @@ label physics in `labelPhysics/CLAUDE.md`.
   `addSubagent*`/`tick`/`setSizes`/`isActive`/`destroy`) delegating to siblings
   `agentOverlay{Context,Constants,Types,PathIndex,Reconcile,Activity,Satellites,
   Beams,BeamMath,Tick,Labels,LabelLayout,Placement}.ts` (pure math tested in
-  `src/__tests__`). `agentOverlayLabelLayout.ts` is the **label spreader**: at
-  the end of each tick it projects every agent + satellite label onto the
-  camera's image plane (depth-normalised), de-overlaps them with the pure
-  `spreadLabelRects` (labels only slide along their node's side; satellites
-  label outward from the parent), maps back to world space, and draws a faint
+  `src/__tests__`). `hooks/useAgentOverlay.ts` supplies `showSubagentLabels` to
+  `agentOverlay.ts`'s `setSizes`, which updates it each frame;
+  `agentOverlayLabels.ts` formats the text.
+  `agentOverlayLabelLayout.ts` is the **label spreader**: at the end of each tick
+  it projects every agent + satellite label onto the camera's image plane
+  (depth-normalised), de-overlaps them with the pure `spreadLabelRects` (labels
+  only slide along their node's side; satellites label outward from the parent),
+  maps back to world space, and draws a faint
   leader to any label it displaced. It's a snap, not an animation, so it holds
   no idle reason — an orbit already renders on `interact`. It sizes labels with
   `floatingLabelHeight` (shared with the sprite's own onBeforeRender, which runs
@@ -309,3 +321,8 @@ render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
 (position + orbit target — `up` is locked so those two fully determine it) is
 persisted per project and restored across refresh/project switch by
 `hooks/useCameraPersistence` (load/save/read in `cameraState.ts`).
+
+## Commands
+
+From `frontend/`: `npm run build` (build), `npm test` (tests), `npx tsc -b`
+(type-check). See [test conventions](../../__tests__/CLAUDE.md).
