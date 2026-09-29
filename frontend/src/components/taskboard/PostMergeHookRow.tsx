@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import { ChevronDown, ChevronRight, Webhook, X } from 'lucide-react';
 import {
   buildHarnessOptions,
@@ -11,6 +11,7 @@ import {
   type HarnessAvailability,
 } from '../../harnesses';
 import type { PiMenuEntry, PostMergeHookRun } from '../../api';
+import { usePostMergePromptDraft } from './hooks/usePostMergePromptDraft';
 import { isPostMergeHookConfigured, postMergeHookStatusLabel } from './postMergeHookStatus';
 
 type Props = {
@@ -52,29 +53,7 @@ export function PostMergeHookRow({
   onFocusActiveTerminal,
 }: Props) {
   const [expanded, setExpanded] = useState(false);
-  const [draftPrompt, setDraftPrompt] = useState(prompt);
-  const draftRef = useRef(prompt);
-
-  // Keep local draft in sync with persisted value when it changes externally
-  // (folder switch, another tab updating settings, etc.).
-  useEffect(() => {
-    if (prompt !== draftRef.current) {
-      setDraftPrompt(prompt);
-      draftRef.current = prompt;
-    }
-  }, [prompt]);
-
-  // Debounced persist on prompt edits — same pattern as other settings
-  // controls in the codebase (250 ms balances "feels live" with not
-  // hammering the file-write side of /api/settings).
-  useEffect(() => {
-    if (draftPrompt === prompt) return;
-    const handle = window.setTimeout(() => {
-      draftRef.current = draftPrompt;
-      onSavePrompt(draftPrompt);
-    }, 250);
-    return () => window.clearTimeout(handle);
-  }, [draftPrompt, prompt, onSavePrompt]);
+  const { draftPrompt, setDraftPrompt } = usePostMergePromptDraft(prompt, onSavePrompt);
 
   const configured = isPostMergeHookConfigured(prompt);
   // A live/recent run is known independently of the form; only the
@@ -89,11 +68,6 @@ export function PostMergeHookRow({
     selected: { harness, piModel },
     includeInterleave: false,
   });
-
-  const onPromptChange = useCallback(
-    (e: React.ChangeEvent<HTMLTextAreaElement>) => setDraftPrompt(e.target.value),
-    [],
-  );
 
   return (
     <div
@@ -177,7 +151,7 @@ export function PostMergeHookRow({
               'e.g. Run the test suite, and if anything is broken, commit a one-line fix.\n\nLeave blank to disable.'
             }
             value={draftPrompt}
-            onChange={onPromptChange}
+            onChange={(e) => setDraftPrompt(e.target.value)}
             disabled={!loaded}
             rows={4}
             spellCheck={false}
