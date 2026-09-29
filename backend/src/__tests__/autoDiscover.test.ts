@@ -1,6 +1,8 @@
 // Pi endpoint auto-discovery, end to end against a real local HTTP endpoint:
 //   - a Settings save that lands WHILE a thinking-level probe is in flight
 //     survives the sweep's write (the lost-update the re-read exists to stop);
+//   - removing, repointing or disabling that provider discards its late probe,
+//     while a valid result preserves freshly saved model metadata and levels;
 //   - probeThinkingLevels is tri-state — a real enumeration, `[]` for a 2xx
 //     "validates nothing", and `null` for every kind of no-answer — and a
 //     `null` never becomes the `thinkingLevels: []` "asked and answered" marker.
@@ -34,6 +36,28 @@ const NINFER_ERROR =
   '"type":"invalid_request_error"}}';
 
 type ChatReply = { status: number; body: string };
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+const HAND_WRITTEN_PROVIDER = {
+  baseUrl: 'http://127.0.0.1:9/v1',
+  apiKey: 'hand-written-key',
+  headers: { 'X-Hand-Written': 'keep' },
+  models: [{ id: 'hand-written', customMetadata: 'keep' }],
+};
+
+async function seedHandWrittenProvider(): Promise<string> {
+  const modelsFile = path.join(os.homedir(), '.pi', 'agent', 'models.json');
+  await fs.mkdir(path.dirname(modelsFile), { recursive: true });
+  await fs.writeFile(modelsFile, JSON.stringify({
+    providers: { manual: HAND_WRITTEN_PROVIDER },
+  }), 'utf8');
+  return modelsFile;
+}
 
 // A minimal OpenAI-compatible endpoint: `/v1/models` lists one model and
 // `/v1/chat/completions` answers whatever `onChat` decides (asynchronously, so
@@ -110,6 +134,161 @@ test('a settings save landing during the thinking-level probe survives the sweep
     },
   );
 });
+
+const SAVED_MANUAL_MODELS: PiProvider['models'] = [
+  { id: 'm1', name: 'Saved model', contextWindow: 8192, maxTokens: 512 },
+  { id: 'manual-only', name: 'Manual model', contextWindow: 16384, maxTokens: 1024 },
+];
+
+const invalidations: Array<{
+  name: string;
+  edit: (provider: PiProvider) => PiProvider | undefined;
+}> = [
+  { name: 'removed', edit: () => undefined },
+  {
+    name: 'pointed at a different URL',
+    edit: (p) => ({ ...p, baseUrl: `${p.baseUrl}/replacement`, models: SAVED_MANUAL_MODELS }),
+  },
+  {
+    name: 'opted out of discovery',
+    edit: (p) => ({ ...p, autoDiscover: false, models: SAVED_MANUAL_MODELS }),
+  },
+];
+
+for (const { name, edit } of invalidations) {
+  test(`a late discovery result is discarded when the probed provider is ${name}`, async () => {
+    const probeStarted = deferred<void>();
+    const reply = deferred<ChatReply>();
+    await withEndpoint(
+      () => {
+        probeStarted.resolve();
+        return reply.promise;
+      },
+      async (baseUrl) => {
+        const boxA: PiProvider = {
+          id: 'box-a', baseUrl, autoDiscover: true,
+          models: [{ id: 'm1', contextWindow: 1024 }],
+        };
+        const modelsFile = await seedHandWrittenProvider();
+        await updateGlobalSettings({ piProviders: [boxA] });
+        // Register A as managed first, so removal must also delete it from Pi.
+        await reconcilePiModelsJson();
+        const before = JSON.parse(await fs.readFile(modelsFile, 'utf8'));
+        assert.equal(before.providers['box-a'].baseUrl, baseUrl);
+        assert.deepEqual(before.providers.manual, HAND_WRITTEN_PROVIDER);
+
+        const savedA = edit(boxA);
+        const savedProviders = savedA ? [savedA] : [];
+        const refresh = refreshEndpointDiscovery({ force: true });
+        let changed = false;
+        try {
+          // Reaching chat proves the model listing (4096) has already arrived.
+          await Promise.race([
+            probeStarted.promise,
+            refresh.then(() => assert.fail('sweep settled before its capability probe arrived')),
+          ]);
+          await updateGlobalSettings({ piProviders: savedProviders });
+        } finally {
+          // Always release and settle this sweep, including on a save failure.
+          reply.resolve({ status: 400, body: NINFER_ERROR });
+          changed = await refresh;
+        }
+
+        assert.equal(changed, false, 'discarding a stale result is not a discovery change');
+        assert.deepEqual((await getGlobalSettings()).piProviders, savedProviders,
+          'the saved provider list must survive without stale models, windows or levels');
+        // Do not reconcile explicitly after the edit: even an unchanged sweep
+        // must repair models.json from the current settings, preserving manual.
+        const after = JSON.parse(await fs.readFile(modelsFile, 'utf8'));
+        assert.deepEqual(after.providers, {
+          manual: HAND_WRITTEN_PROVIDER,
+          ...(savedA ? {
+            'box-a': {
+              baseUrl: savedA.baseUrl,
+              api: 'openai-completions',
+              apiKey: 'local',
+              models: SAVED_MANUAL_MODELS.map((m) => ({
+                ...m,
+                input: ['text'],
+                cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              })),
+            },
+          } : {}),
+        });
+      },
+    );
+  });
+}
+
+for (const { name, thinkingLevels } of [
+  { name: 'explicit effort levels', thinkingLevels: ['low', 'max'] },
+  { name: 'the ordinary [] marker', thinkingLevels: [] },
+]) {
+  test(`an in-flight capability probe preserves saved metadata and ${name}`, async () => {
+    const probeStarted = deferred<void>();
+    const reply = deferred<ChatReply>();
+    await withEndpoint(
+      () => {
+        probeStarted.resolve();
+        return reply.promise;
+      },
+      async (baseUrl) => {
+        const boxA: PiProvider = {
+          id: 'box-a', baseUrl, autoDiscover: true,
+          models: [{ id: 'm1', name: 'Old name', contextWindow: 1024, maxTokens: 128 }],
+        };
+        const modelsFile = await seedHandWrittenProvider();
+        await updateGlobalSettings({ piProviders: [boxA] });
+        await reconcilePiModelsJson();
+
+        const savedModel = {
+          id: 'm1', name: 'Fresh friendly name', contextWindow: 8192, maxTokens: 512,
+          thinkingLevels,
+        };
+        const savedA = { ...boxA, models: [savedModel] };
+        const refresh = refreshEndpointDiscovery({ force: true });
+        let changed = false;
+        try {
+          await Promise.race([
+            probeStarted.promise,
+            refresh.then(() => assert.fail('sweep settled before its capability probe arrived')),
+          ]);
+          await updateGlobalSettings({ piProviders: [savedA] });
+        } finally {
+          reply.resolve({ status: 400, body: NINFER_ERROR });
+          changed = await refresh;
+        }
+
+        assert.equal(changed, true, 'the valid listing supplies an authoritative context window');
+        assert.deepEqual((await getGlobalSettings()).piProviders, [{
+          ...savedA,
+          models: [{ ...savedModel, contextWindow: 4096 }],
+        }], 'fresh name, maxTokens and thinkingLevels must win over the probe snapshot');
+        const after = JSON.parse(await fs.readFile(modelsFile, 'utf8'));
+        assert.deepEqual(after.providers, {
+          manual: HAND_WRITTEN_PROVIDER,
+          'box-a': {
+            baseUrl,
+            api: 'openai-completions',
+            apiKey: 'local',
+            models: [{
+              id: 'm1', name: 'Fresh friendly name', contextWindow: 4096, maxTokens: 512,
+              input: ['text'],
+              cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+              ...(thinkingLevels.length ? {
+                reasoning: true,
+                thinkingLevelMap: {
+                  off: null, minimal: null, low: 'low', medium: null,
+                  high: null, xhigh: null, max: 'max',
+                },
+              } : {}),
+            }],
+          },
+        });
+      },
+    );
+  });
+}
 
 test('a probe with no answer leaves the model unprobed (no `thinkingLevels: []` marker)', async () => {
   await withEndpoint(
