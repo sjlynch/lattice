@@ -68,43 +68,23 @@ import { renderRecentTasksBlock, selectRecentlyMergedTasks } from './recentTasks
 import { renderRunTestsBrief } from './brief.js';
 import { readUserWipFile, wipCovers, writeUserWipFile } from './userWip.js';
 import { composeStepSummary, readTestSummaryFile, renderPostCheck } from './summary.js';
+import {
+  beginEntry,
+  entryFor,
+  entryForRun,
+  hasEntry,
+  stopEntryWatchers,
+  teardownEntry,
+  type ActiveRunTestsStep,
+  type CompleteStepCallback,
+  type RunTestsOutcome,
+} from './runTestsLifecycle.js';
 
-export type CompleteStepCallback = (
-  runId: string,
-  stepIndex: number,
-  backendOrigin: string,
-) => Promise<void>;
+export type { CompleteStepCallback, RunTestsOutcome } from './runTestsLifecycle.js';
 
 export function runTestsLockLabel(runId: string): string {
   return `${RUN_TESTS_LOCK_LABEL_PREFIX}${runId}`;
 }
-
-// How the step ended, as far as the summary / run-tests.json care:
-//   agent    — the agent's own completion (the default when nothing else set it)
-//   skipped  — never needed to run (HEAD unchanged, detached HEAD, lock busy)
-//   not-run  — could not start (setup threw, the spawn failed)
-//   timeout  — the session was killed after `timeoutMinutes`
-//   lost     — the terminal did not survive a backend restart
-// Only `agent` records run-tests.json: a run that didn't finish verified nothing,
-// so the next Run tests must not skip on its account.
-export type RunTestsOutcome = 'agent' | 'skipped' | 'not-run' | 'timeout' | 'lost';
-
-type ActiveRunTestsStep = {
-  run: WorkflowRun;
-  stepIndex: number;
-  backendOrigin: string;
-  completeStep: CompleteStepCallback | null;
-  lock: ProjectRunLockHandle | null;
-  timeoutMs: number;
-  timer?: ReturnType<typeof setTimeout>;
-  unsubscribe?: () => void;
-  notes: string[];
-  outcome: RunTestsOutcome;
-  finalized: boolean;
-};
-
-// One Run tests step in flight per run (a run has one current step).
-const activeSteps = new Map<string, ActiveRunTestsStep>();
 
 export type RunTestsDeps = {
   acquireLock: typeof acquireProjectRunLock;
@@ -174,51 +154,6 @@ function stepTimeoutMinutes(wf: Workflow | undefined, stepIndex: number): number
 
 function progress(run: WorkflowRun, stepIndex: number, message: string): void {
   emitControlProgress(run, stepIndex, 'test', 0, 0, message);
-}
-
-function beginEntry(
-  run: WorkflowRun,
-  stepIndex: number,
-  backendOrigin: string,
-  completeStep: CompleteStepCallback | null,
-  timeoutMs: number,
-): ActiveRunTestsStep {
-  const previous = activeSteps.get(run.id);
-  if (previous) void teardownEntry(previous);
-  const entry: ActiveRunTestsStep = {
-    run,
-    stepIndex,
-    backendOrigin,
-    completeStep,
-    lock: null,
-    timeoutMs,
-    notes: [],
-    outcome: 'agent',
-    finalized: false,
-  };
-  activeSteps.set(run.id, entry);
-  return entry;
-}
-
-function entryFor(runId: string, stepIndex: number): ActiveRunTestsStep | undefined {
-  const entry = activeSteps.get(runId);
-  return entry && entry.stepIndex === stepIndex ? entry : undefined;
-}
-
-// Stop the timer + subscription and release the lock. Idempotent.
-async function teardownEntry(entry: ActiveRunTestsStep): Promise<void> {
-  if (entry.timer) clearTimeout(entry.timer);
-  entry.timer = undefined;
-  entry.unsubscribe?.();
-  entry.unsubscribe = undefined;
-  const lock = entry.lock;
-  entry.lock = null;
-  if (activeSteps.get(entry.run.id) === entry) activeSteps.delete(entry.run.id);
-  if (lock) {
-    await lock.release().catch((err) => {
-      console.warn(`[workflow-run] ${entry.run.id} Run tests step ${entry.stepIndex}: releasing the project run lock failed:`, err);
-    });
-  }
 }
 
 // Advance past the step (the note, if any, is already on the entry). The
@@ -547,10 +482,7 @@ export async function finalizeRunTestsStep(run: WorkflowRun, stepIndex: number):
   const entry = entryFor(run.id, stepIndex);
   if (entry) {
     entry.finalized = true;
-    if (entry.timer) clearTimeout(entry.timer);
-    entry.timer = undefined;
-    entry.unsubscribe?.();
-    entry.unsubscribe = undefined;
+    stopEntryWatchers(entry);
   }
   const agentId = workflowStepAgentId(run.id, stepIndex);
   unregisterAgentSession(agentId);
@@ -589,7 +521,7 @@ export async function finalizeRunTestsStep(run: WorkflowRun, stepIndex: number):
 // The run was cancelled or errored: stop the timer, drop the subscription and
 // release the lock. Idempotent; a no-op when no Run tests step is tracked.
 export async function abortRunTestsStep(runId: string): Promise<void> {
-  const entry = activeSteps.get(runId);
+  const entry = entryForRun(runId);
   if (!entry) return;
   entry.finalized = true;
   await teardownEntry(entry);
@@ -602,5 +534,5 @@ export function isRunTestsStep(run: Pick<WorkflowRun, 'definition'>, stepIndex: 
 
 // Test/debug: is a Run tests step tracked (lock/timer) for this run?
 export function hasActiveRunTestsStep(runId: string): boolean {
-  return activeSteps.has(runId);
+  return hasEntry(runId);
 }
