@@ -70,9 +70,9 @@ export type StartTaskByIdOptions = {
   // Retained for callers' compatibility. Capacity always throws
   // SpawnCapacityError and leaves the task runnable; a start requires a PTY.
   throwOnCapacity?: boolean;
-  // The spawn-queue request's signal (queued runs only). Aborted when the
-  // user cancels the queued run or deletes the task while this start is
-  // already in flight; the start then backs out instead of flipping the task.
+  // The launch owner's signal (a queued run or workflow Start step). Aborted
+  // when that pending launch is cancelled while this start is in flight;
+  // the start then backs out instead of flipping the task.
   signal?: AbortSignal;
   deps?: Partial<StartTaskDeps>;
 };

@@ -140,6 +140,15 @@ path), emitting one `workflow-task-spawned` terminal tab per task.
   for the all-failed guard. Later tasks still get their chance; partial success
   advances, but zero started/queued tasks rejects. A known queued run remains
   deferred without another enqueue, including while admission is held.
+- **Cancellation owns only pending direct launches.** Start re-checks the run
+  status and current step after task reads, harness selection and admission
+  polls, before enqueue/requeue, and before publishing spawn/progress events.
+  Each direct `startTaskById` gets an AbortSignal subscribed to workflow end or
+  advance; its existing withdrawal checkpoints reclaim an unestablished
+  checkout/PTY. The subscription and CAP checkout parking are released in
+  `finally`. Established agents and accepted queue requests keep their task
+  lifecycle; never cancel a shared `task-run:` key to stop the workflow.
+  Deferred-promise coverage: `__tests__/workflowStartStepCancel.test.ts`.
 - **Never start a task the queue is already starting (do not regress)**: a
   queued run (Run All, a manual ▶, boot re-enqueue) keeps its task `open` until
   the pty spawns — minutes on a big repo waiting on the checkout gate — so it

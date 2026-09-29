@@ -5,7 +5,12 @@
 // user can watch / intervene.
 
 import { listTasks, type Task } from '../../tasks.js';
-import { isTaskStartInFlight, startTaskById } from '../../routes/tasks/startTask.js';
+import {
+  isTaskStartInFlight,
+  startTaskById,
+  type StartTaskByIdResult,
+} from '../../routes/tasks/startTask.js';
+import { unparkCheckout } from '../../routes/tasks/startWithdrawal.js';
 import { enqueueTaskRun, taskRunDedupeKey } from '../../routes/tasks/queuedSpawn.js';
 import {
   batchAdmissionHold,
@@ -15,7 +20,7 @@ import {
 } from '../../spawnQueue.js';
 import type { AgentHarness } from '../../harnesses.js';
 import type { Workflow } from '../../workflows.js';
-import { notify, type WorkflowRun } from '../state.js';
+import { notify, subscribe, type WorkflowRun } from '../state.js';
 import { emitControlProgress } from './shared.js';
 import { resolveStartStepHarnessPicker } from './startHarness.js';
 
@@ -43,6 +48,8 @@ export type StartStepDeps = {
   // Is a startTaskById of this task running right now (whatever started it)?
   // Optional so hand-built test deps keep compiling.
   hasStartInFlight?: (taskId: string) => boolean;
+  // Observe workflow end/advance while a direct launch is still in flight.
+  subscribeRun?: typeof subscribe;
 };
 
 const productionDeps: StartStepDeps = {
@@ -124,7 +131,52 @@ type StartOneTaskContext = {
 type StartOneTaskResult =
   | { outcome: 'started' }
   | { outcome: 'deferred' }
+  | { outcome: 'withdrawn' }
   | { outcome: 'failed'; error: string };
+
+function isCurrentStartStep(run: WorkflowRun, stepIndex: number): boolean {
+  return run.status === 'running' && run.currentStepIndex === stepIndex;
+}
+
+// Own only this direct launch, until startTaskById establishes it or rejects.
+// Never cancel by task-run dedupe key: that request may belong to another
+// caller. Accepted queue admissions and established agents have their own
+// lifecycle after this Start step ends.
+async function startTaskForStep(
+  task: Task,
+  harness: AgentHarness,
+  piModel: string | undefined,
+  ctx: StartOneTaskContext,
+): Promise<StartTaskByIdResult | null> {
+  const { run, stepIndex, backendOrigin, deps } = ctx;
+  const controller = new AbortController();
+  const unsubscribe = (deps.subscribeRun ?? subscribe)((ev) => {
+    if ('run' in ev && ev.run.id === run.id && !isCurrentStartStep(ev.run, stepIndex)) {
+      controller.abort();
+    }
+  });
+  try {
+    if (!isCurrentStartStep(run, stepIndex)) controller.abort();
+    if (controller.signal.aborted) return null;
+    const spawned = await deps.startTask(task.id, backendOrigin, {
+      requestedHarness: harness,
+      requestedPiModel: piModel,
+      throwOnCapacity: true,
+      signal: controller.signal,
+    });
+    return controller.signal.aborted || !isCurrentStartStep(run, stepIndex) ? null : spawned;
+  } catch (err) {
+    if (controller.signal.aborted || !isCurrentStartStep(run, stepIndex)) return null;
+    throw err;
+  } finally {
+    if (!isCurrentStartStep(run, stepIndex)) controller.abort();
+    unsubscribe();
+    // A CAP-rejected direct start parks its checkout on this signal. Handing
+    // it to enqueueTaskRun transfers retry ownership to the queue's signal;
+    // our old signal must not reclaim a checkout its retry is now using.
+    unparkCheckout(controller.signal);
+  }
+}
 
 // One task of the Start step: admission hold → already-queued → startTask →
 // `workflow-task-spawned` notify, classified as started, deferred (left to the
@@ -139,15 +191,19 @@ async function startOneTask(
   // Hand the task to the spawn queue, then warn why. `queueFailure` names the
   // enqueue in its error line; `reason` finishes the warning.
   const requeue = async (queueFailure: string, reason: string): Promise<StartOneTaskResult> => {
+    if (!isCurrentStartStep(run, stepIndex)) return { outcome: 'withdrawn' };
+    if (runAlreadyQueued(task, deps)) return { outcome: 'deferred' };
     try {
       await deps.enqueueRun(task.id, backendOrigin, harness, piModel);
     } catch (enqErr) {
+      if (!isCurrentStartStep(run, stepIndex)) return { outcome: 'withdrawn' };
       console.error(
         `[workflow-run] ${run.id} start step: failed to ${queueFailure} ${task.id}:`,
         enqErr,
       );
       return { outcome: 'failed', error: enqErr instanceof Error ? enqErr.message : String(enqErr) };
     }
+    if (!isCurrentStartStep(run, stepIndex)) return { outcome: 'withdrawn' };
     console.warn(
       `[workflow-run] ${run.id} start step: task ${task.id} ("${logTitle(task)}") ${reason}`,
     );
@@ -160,6 +216,7 @@ async function startOneTask(
   // spawn right now, hand the task to it instead (the same deferral a cap
   // rejection takes below) — it starts as soon as capacity returns.
   const hold = await deps.admissionHold?.();
+  if (!isCurrentStartStep(run, stepIndex)) return { outcome: 'withdrawn' };
   // Already being started by the spawn queue: leave it to that run. Counted
   // as deferred — it is queued forward progress, not a failure. Checked after
   // the admission-hold await, which polls the terminal-server, so a run
@@ -178,11 +235,8 @@ async function startOneTask(
     // startTaskById only succeeds after a terminal allocation. CAP rejects
     // with SpawnCapacityError for deferral below; all other allocation errors
     // become failed outcomes. Keep the legacy option explicit for callers.
-    const spawned = await deps.startTask(task.id, backendOrigin, {
-      requestedHarness: harness,
-      requestedPiModel: piModel,
-      throwOnCapacity: true,
-    });
+    const spawned = await startTaskForStep(task, harness, piModel, ctx);
+    if (!spawned || !isCurrentStartStep(run, stepIndex)) return { outcome: 'withdrawn' };
     // Surface the spawned task agent as a terminal tab. Without this,
     // the pty is pre-warmed but no UI tab is ever attached, so the
     // user can't watch the agent run or intervene if it stalls.
@@ -205,6 +259,7 @@ async function startOneTask(
     );
     return { outcome: 'started' };
   } catch (err) {
+    if (!isCurrentStartStep(run, stepIndex)) return { outcome: 'withdrawn' };
     if (isSpawnDeferral(err)) {
       // Hard cap: startTaskById threw BEFORE flipping status, so the task is
       // still Open (no phantom in_progress, no orphan pty). Re-enqueue it on
@@ -237,7 +292,9 @@ export async function runStartStep(
   backendOrigin: string,
   deps: StartStepDeps = productionDeps,
 ): Promise<void> {
+  if (!isCurrentStartStep(run, stepIndex)) return;
   const tasks = await deps.listTasks(wf.projectPath);
+  if (!isCurrentStartStep(run, stepIndex)) return;
   const open = tasks
     .filter((t) => t.status === 'open')
     .sort((a, b) => a.createdAt - b.createdAt);
@@ -258,6 +315,7 @@ export async function runStartStep(
   // default harness applies (interleave expands to a claude/pi mix). Resolved
   // once here, applied per task below.
   const pickHarness = await resolveStartStepHarnessPicker(run, wf.projectPath);
+  if (!isCurrentStartStep(run, stepIndex)) return;
   const tally: StartTally = { started: 0, failed: 0, deferred: 0, firstError: null };
   emitControlProgress(
     run,
@@ -270,9 +328,10 @@ export async function runStartStep(
 
   const ctx: StartOneTaskContext = { wf, run, stepIndex, backendOrigin, deps };
   for (const [index, task] of open.entries()) {
-    if (run.status !== 'running') return;
+    if (!isCurrentStartStep(run, stepIndex)) return;
     const { harness, piModel } = pickHarness(index);
     const result = await startOneTask(task, harness, piModel, ctx);
+    if (result.outcome === 'withdrawn' || !isCurrentStartStep(run, stepIndex)) return;
     if (result.outcome === 'started') {
       tally.started += 1;
     } else if (result.outcome === 'deferred') {
@@ -283,6 +342,7 @@ export async function runStartStep(
     }
     emitStartProgress(run, stepIndex, tally, open.length);
   }
+  if (!isCurrentStartStep(run, stepIndex)) return;
   const { started, failed, deferred, firstError } = tally;
 
   // If the step had open tasks but moved NONE of them forward — neither started
