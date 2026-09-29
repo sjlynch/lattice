@@ -145,6 +145,9 @@ export function useTerminalActions({
       console.warn('[lattice] closeTerminal called with unknown id', id);
       return;
     }
+    // The first command already owns confirmation/removal. Repeated commands
+    // must not accumulate continuations on the same pending request.
+    if (closesInFlightRef.current.has(id)) return;
     console.log('[lattice] closeTerminal', {
       localId: target.id,
       serverId: target.serverId ?? '(none)',
@@ -160,7 +163,11 @@ export function useTerminalActions({
     // in there would fire twice).
     const next = removeTerminalFromList(prev, id);
     const remove = () => {
-      setTerminals((current) => removeTerminalFromList(current, id));
+      if (terminalsRef.current.some((t) => t.id === id)) {
+        setTerminals((current) => removeTerminalFromList(current, id));
+      }
+      // A registry event may already have removed the tab; confirmation still
+      // needs to move selection away from its id.
       setActiveIdState((current) => pickActiveAfterClose(prev, next, id, current));
     };
     if (closing) void closing.then((confirmed) => { if (confirmed) remove(); });
@@ -205,30 +212,35 @@ export function useTerminalActions({
 
   const closeTerminals = useCallback((ids: string[]) => {
     const idSet = new Set(ids);
+    if (idSet.size === 0) return;
     const prev = terminalsRef.current;
     // Deduplicate before IO. Keep the pre-update snapshot for fallback,
     // and remove functionally so concurrent task finalizations compose.
     const seen = new Set<string>();
-    const immediate = new Set(ids);
+    const immediate = new Set<string>();
     const pending: Promise<string | null>[] = [];
     for (const t of prev) {
       if (!idSet.has(t.id) || seen.has(t.id)) continue;
       seen.add(t.id);
+      if (closesInFlightRef.current.has(t.id)) continue;
       const closing = closeBackend(t);
       if (closing) {
-        immediate.delete(t.id);
         pending.push(closing.then((confirmed) => confirmed ? t.id : null));
-      }
+      } else immediate.add(t.id);
     }
     const remove = (closed: Set<string>) => {
+      if (closed.size === 0) return;
       const { next } = planCloseTerminals(prev, closed);
-      setTerminals((current) => removeTerminalsFromList(current, closed));
+      if (terminalsRef.current.some((t) => closed.has(t.id))) {
+        setTerminals((current) => removeTerminalsFromList(current, closed));
+      }
       setActiveIdState((current) => pickActiveAfterCloseMany(prev, next, closed, current));
     };
     remove(immediate);
     if (pending.length > 0) {
       void Promise.all(pending).then((confirmed) => {
-        remove(new Set([...immediate, ...confirmed.filter((id): id is string => id !== null)]));
+        const confirmedIds = confirmed.filter((id): id is string => id !== null);
+        if (confirmedIds.length > 0) remove(new Set([...immediate, ...confirmedIds]));
       });
     }
   }, [closeBackend]);

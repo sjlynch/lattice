@@ -8,9 +8,11 @@ import TestRenderer, { act } from 'react-test-renderer';
 import { TerminalsProvider, useTerminals } from '../TerminalsContext.tsx';
 import type { Ctx, TerminalSpec } from '../terminal/terminalTypes';
 import type { TerminalRecord } from '../api/types/terminalTabs';
+import type { Task } from '../api/types/tasks';
 import { applyTerminalTabsEvent, recordToSpec, restorableCount } from '../terminal/terminalRegistrySync.ts';
 import { SidebarTab } from '../components/sidebar/SidebarTab.tsx';
 import { useTerminalActions } from '../terminal/useTerminalActions.ts';
+import { useTaskTerminalCleanup } from '../components/taskboard/hooks/useTaskTerminalCleanup.ts';
 import { installGlobal, installManualTimers } from './domDoubles.ts';
 
 const project = 'C:/terminal-close-test';
@@ -24,8 +26,12 @@ function deferred<T>() {
 
 async function withProvider(
   fetcher: typeof fetch,
-  run: (ctx: () => Ctx) => Promise<void>,
+  run: (ctx: () => Ctx, cleanup: {
+    setTasks: (tasks: Task[]) => void;
+    renderCount: () => number;
+  }) => Promise<void>,
   cached?: TerminalSpec[],
+  initialTasks: Task[] = [],
 ) {
   const storage = new Map<string, string>();
   if (cached) storage.set('lattice.terminals', JSON.stringify({ terminals: cached, activeId: cached[0]?.id }));
@@ -39,14 +45,24 @@ async function withProvider(
     installGlobal('fetch', fetcher),
   ];
   let current!: Ctx;
-  function Capture() { current = useTerminals(); return null; }
+  let setTasks!: (tasks: Task[]) => void;
+  let renders = 0;
+  function Capture() {
+    current = useTerminals();
+    const [tasks, updateTasks] = React.useState(initialTasks);
+    setTasks = updateTasks;
+    // Bound a regression's render storm so a held DELETE cannot hang the test.
+    assert.ok(++renders <= 100, 'terminal cleanup must settle without a render loop');
+    useTaskTerminalCleanup(tasks, current.terminals, current.closeTerminals);
+    return null;
+  }
   let renderer!: ReturnType<typeof TestRenderer.create>;
   try {
     await act(async () => {
       renderer = TestRenderer.create(React.createElement(React.StrictMode, null,
         React.createElement(TerminalsProvider, { activeFolder: '', restoreMode: null, children: React.createElement(Capture) })));
     });
-    await run(() => current);
+    await run(() => current, { setTasks: (tasks) => setTasks(tasks), renderCount: () => renders });
   } finally {
     if (renderer) await act(async () => renderer.unmount());
     for (const restore of restores.reverse()) restore();
@@ -56,6 +72,146 @@ async function withProvider(
 function add(ctx: Ctx, id: string, taskId = 'task') {
   ctx.addTerminal({ id, label: id, cwd: project, projectPath: project, serverId: `pty_${id}`, taskId });
 }
+
+function task(status: Task['status'], id = 'task'): Task {
+  return { id, status, title: id, projectPath: project, createdAt: 1 };
+}
+
+for (const failure of ['rejected', '503'] as const) {
+  test(`task cleanup ${failure}: stays idle while pending/failed and permits explicit retry`, async () => {
+    const first = deferred<Response>();
+    const retry = deferred<Response>();
+    const calls: string[] = [];
+    await withProvider((async (url, init) => {
+      assert.equal(init?.method, 'DELETE');
+      calls.push(String(url));
+      assert.ok(calls.length <= 2, 'automatic cleanup must never retry a failed DELETE');
+      return calls.length === 1 ? first.promise : retry.promise;
+    }) as typeof fetch, async (ctx, cleanup) => {
+      await act(async () => { add(ctx(), 'a'); });
+      const beforeClose = cleanup.renderCount();
+      await act(async () => { cleanup.setTasks([task('ready_to_merge')]); });
+      assert.equal(calls.length, 1);
+      assert.equal(ctx().terminals[0]!.closeState, 'closing');
+      assert.equal(ctx().activeId, 'a');
+      assert.ok(cleanup.renderCount() <= beforeClose + 4, 'only the task and close-state changes render');
+
+      const pendingList = ctx().terminals;
+      const pendingRenders = cleanup.renderCount();
+      await act(async () => {
+        ctx().closeTerminals([]);
+        ctx().closeTerminals(['missing']);
+        ctx().closeTerminals(['a', 'a']);
+        ctx().closeTerminal('a');
+        ctx().closeTerminalsForTask('task');
+        await Promise.resolve();
+      });
+      assert.equal(calls.length, 1, 'overlapping commands reuse the original close');
+      assert.equal(ctx().terminals, pendingList);
+      assert.equal(cleanup.renderCount(), pendingRenders, 'pending/no-op closes schedule no renders');
+
+      await act(async () => {
+        if (failure === 'rejected') first.reject(new TypeError('Failed to fetch'));
+        else first.resolve(Response.json({ error: 'kill unconfirmed' }, { status: 503 }));
+      });
+      const failed = ctx().terminals[0]!;
+      assert.equal(failed.id, 'a');
+      assert.equal(failed.registered, true);
+      assert.equal(failed.serverId, 'pty_a', 'failed close retains PTY ownership');
+      assert.equal(failed.closeState, 'failed');
+      assert.match(failed.closeError!, /Failed to fetch|kill unconfirmed/);
+      assert.equal(ctx().activeId, 'a');
+      assert.equal(calls.length, 1);
+
+      const failedRenders = cleanup.renderCount();
+      await act(async () => { await Promise.resolve(); });
+      assert.equal(cleanup.renderCount(), failedRenders, 'failed close remains visibly retryable without rendering');
+      assert.equal(ctx().terminals[0], failed);
+      // Fresh task snapshots and later finalization must not retry themselves.
+      for (const status of ['ready_to_merge', 'qa', 'done', 'deleted'] as const) {
+        await act(async () => { cleanup.setTasks([task(status)]); });
+        assert.equal(calls.length, 1);
+        assert.equal(ctx().terminals[0], failed);
+      }
+
+      await act(async () => { ctx().closeTerminal('a'); });
+      assert.equal(calls.length, 2, 'explicit retry issues exactly one new DELETE');
+      assert.equal(ctx().terminals[0]!.closeState, 'closing');
+      const retryRenders = cleanup.renderCount();
+      await act(async () => { await Promise.resolve(); });
+      assert.equal(cleanup.renderCount(), retryRenders);
+      await act(async () => { retry.resolve(Response.json({ ok: true })); });
+      assert.deepEqual(ctx().terminals, []);
+      assert.equal(ctx().activeId, null);
+      assert.equal(calls.length, 2);
+    }, undefined, [task('in_progress')]);
+  });
+}
+
+test('real task cleanup composes mixed closes, spares ready resolvers, and handles later tabs', async () => {
+  const replies = new Map(['a', 'b'].map((id) => [id, deferred<Response>()]));
+  const calls: string[] = [];
+  await withProvider((async (url, init) => {
+    assert.equal(init?.method, 'DELETE');
+    calls.push(String(url));
+    const id = /terminal-tabs\/([^?]+)/.exec(String(url))?.[1];
+    return id && replies.has(id) ? replies.get(id)!.promise : Response.json({ ok: true });
+  }) as typeof fetch, async (ctx, cleanup) => {
+    await act(async () => {
+      add(ctx(), 'a', 'ready');
+      ctx().addTerminal({ label: 'fallback', cwd: project, taskId: 'ready', serverId: 'legacy' });
+      ctx().addTerminal({ label: 'resolver', cwd: project, taskId: 'ready', kind: 'merge', serverId: 'resolver' });
+      add(ctx(), 'b', 'final');
+      ctx().addTerminal({ label: 'final resolver', cwd: project, taskId: 'final', kind: 'merge', serverId: 'final-resolver' });
+      ctx().addTerminal({ label: 'done', cwd: project, taskId: 'done', serverId: 'done' });
+      ctx().addTerminal({ label: 'deleted', cwd: project, taskId: 'deleted', serverId: 'deleted' });
+      ctx().addTerminal({ id: 'failed', label: 'failed', cwd: project, projectPath: project,
+        taskId: 'final', serverId: 'pty_failed', closeState: 'failed', closeError: 'Retry close' });
+      add(ctx(), 'live', 'live');
+      ctx().setActiveId('a');
+    });
+    const finalTasks = [task('ready_to_merge', 'ready'), task('qa', 'final'),
+      task('done', 'done'), task('deleted', 'deleted'), task('in_progress', 'live')];
+    await act(async () => { cleanup.setTasks(finalTasks); });
+    assert.deepEqual(ctx().terminals.map((t) => t.label), ['a', 'resolver', 'b', 'failed', 'live']);
+    assert.equal(ctx().activeId, 'a', 'registered selection remains until confirmation');
+    assert.equal(calls.length, 6, 'two registered and four fallback PTYs close exactly once');
+    assert.equal(new Set(calls).size, 6);
+    assert.ok(calls.includes('/api/terminals/final-resolver'), 'finalization closes resolvers too');
+    assert.ok(!calls.includes('/api/terminals/resolver'), 'ready-to-merge preserves its resolver');
+    const pendingRenders = cleanup.renderCount();
+    await act(async () => { await Promise.resolve(); });
+    assert.equal(cleanup.renderCount(), pendingRenders);
+
+    // Arrivals while the task is already eligible must use the committed list,
+    // even though the child's cleanup effect runs before parent passive effects.
+    await act(async () => { add(ctx(), 'late', 'final'); });
+    assert.ok(!ctx().terminals.some((t) => t.id === 'late'));
+    assert.equal(calls.length, 7);
+    await act(async () => {
+      ctx().addTerminal({ label: 'late fallback', cwd: project, taskId: 'ready', serverId: 'late-fallback' });
+    });
+    assert.ok(!ctx().terminals.some((t) => t.label === 'late fallback'));
+    assert.equal(calls.length, 8);
+
+    await act(async () => {
+      replies.get('b')!.resolve(Response.json({ ok: true }));
+    });
+    assert.deepEqual(ctx().terminals.map((t) => t.label), ['a', 'resolver', 'failed', 'live']);
+    assert.equal(ctx().terminals[0]!.closeState, 'closing', 'another task confirms without waiting for a');
+    assert.equal(calls.length, 8);
+    await act(async () => {
+      replies.get('a')!.resolve(Response.json({ error: 'kill unconfirmed' }, { status: 503 }));
+    });
+    assert.deepEqual(ctx().terminals.map((t) => t.label), ['a', 'resolver', 'failed', 'live']);
+    assert.equal(ctx().terminals[0]!.closeState, 'failed');
+    assert.equal(calls.length, 8, 'failure does not retry itself');
+
+    await act(async () => { cleanup.setTasks(finalTasks.map((t) => t.id === 'ready' ? { ...t, status: 'qa' as const } : t)); });
+    assert.deepEqual(ctx().terminals.map((t) => t.id), ['a', 'failed', 'live']);
+    assert.equal(calls.length, 9, 'only the resolver becomes a fresh cleanup candidate');
+  });
+});
 
 for (const failure of ['rejected', '502', '503'] as const) {
   test(`registered close ${failure}: retains ownership/feedback and allows a later retry`, async () => {

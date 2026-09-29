@@ -12,7 +12,6 @@ type UseTaskTerminalsArgs = {
   terminals: TerminalSpec[];
   addTerminal: AddTerminal;
   closeTerminals: (ids: string[]) => void;
-  closeTerminalsForTask: (taskId: string) => void;
   setActiveId: (id: string) => void;
 };
 
@@ -27,7 +26,6 @@ export function useTaskTerminals({
   terminals,
   addTerminal,
   closeTerminals,
-  closeTerminalsForTask,
   setActiveId,
 }: UseTaskTerminalsArgs) {
   const { getFocusTerminal, focusTerminalByServerId } = useTaskTerminalFocus(
@@ -39,7 +37,6 @@ export function useTaskTerminals({
   useTaskTerminalCleanup(
     tasks,
     terminals,
-    closeTerminalsForTask,
     closeTerminals,
   );
 

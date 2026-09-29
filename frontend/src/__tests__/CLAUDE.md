@@ -18,6 +18,11 @@ Commands from `frontend/` (reference only): `npm test` (tests), `npx tsc -b`
 
 Selected suites and the contracts they own (not exhaustive):
 
+- `terminalCloseRecovery.test.ts` / `terminalCleanupAtomic.test.ts` — registered
+  close confirmation, retained PTY ownership on failure, explicit retry, and
+  functional bulk removals. Render the provider with the real task-cleanup hook
+  to pin stable renders/one DELETE while pending, failed closes without automatic
+  retry, mixed registered/fallback cleanup, resolver eligibility, and late tabs.
 - `terminalRegistrySync.test.ts` / `useTerminalRegistrySync.test.ts` — pure
   reconciliation and rendered provider/hook coverage for late registry HTTP
   responses. Deferred lists/restores and a controlled WS stream pin newer pty

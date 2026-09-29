@@ -171,7 +171,6 @@ export function useTaskBoardController(activeFolder: string) {
     terminals,
     addTerminal,
     closeTerminals,
-    closeTerminalsForTask,
     setActiveId,
   });
 
