@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { renderStopHookJson } from '../setup.js';
+import { renderStopHookJson } from '../stopHook.js';
 
 // Validate (and repair if needed) the worktree's Stop-hook config.
 //

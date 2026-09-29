@@ -36,7 +36,7 @@ import { canonicalProjectPath, homeWorktreesDir } from './projectPath.js';
 import { getGlobalSettings } from './globalSettings.js';
 import { listTasks } from './tasks.js';
 import { getActiveRunForProject, startMergeRun } from './mergeRuns.js';
-import { getActiveRunsForProject as getActiveWorkflowRuns } from './workflowRuns.js';
+import { getActiveRunsForProject as getActiveWorkflowRuns } from './workflowRuns/state.js';
 import { getActiveHookForProject } from './postMergeHooks.js';
 import { requestWorktreeResidueSweep } from './recovery/worktreeResidueSweepLoop.js';
 import { forEachKnownProjectSafely } from './recovery/projectIteration.js';
