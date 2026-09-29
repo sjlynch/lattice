@@ -63,19 +63,24 @@ async function seedHandWrittenProvider(): Promise<string> {
 // `/v1/chat/completions` answers whatever `onChat` decides (asynchronously, so
 // a test can act while the request is pending).
 async function withEndpoint<T>(
-  onChat: () => Promise<ChatReply> | ChatReply,
+  onChat: (req: http.IncomingMessage) => Promise<ChatReply> | ChatReply,
   fn: (baseUrl: string) => Promise<T>,
+  onModels?: (req: http.IncomingMessage) => Promise<ChatReply> | ChatReply,
 ): Promise<T> {
   const server = http.createServer((req, res) => {
     if (req.method === 'GET' && req.url === '/v1/models') {
-      res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ data: [{ id: 'm1', max_model_len: 4096 }] }));
+      void Promise.resolve(onModels?.(req) ?? {
+        status: 200, body: JSON.stringify({ data: [{ id: 'm1', max_model_len: 4096 }] }),
+      }).then((reply) => {
+        res.writeHead(reply.status, { 'Content-Type': 'application/json' });
+        res.end(reply.body);
+      });
       return;
     }
     if (req.method === 'POST' && req.url === '/v1/chat/completions') {
       req.on('data', () => {});
       req.on('end', () => {
-        void Promise.resolve(onChat()).then((reply) => {
+        void Promise.resolve(onChat(req)).then((reply) => {
           res.writeHead(reply.status, { 'Content-Type': 'application/json' });
           res.end(reply.body);
         });
@@ -153,6 +158,14 @@ const invalidations: Array<{
     name: 'opted out of discovery',
     edit: (p) => ({ ...p, autoDiscover: false, models: SAVED_MANUAL_MODELS }),
   },
+  {
+    name: 'given different request headers',
+    edit: (p) => ({ ...p, headers: { 'X-Tenant': 'replacement' }, models: SAVED_MANUAL_MODELS }),
+  },
+  {
+    name: 'given a different API key',
+    edit: (p) => ({ ...p, apiKey: 'replacement-key', models: SAVED_MANUAL_MODELS }),
+  },
 ];
 
 for (const { name, edit } of invalidations) {
@@ -206,7 +219,8 @@ for (const { name, edit } of invalidations) {
             'box-a': {
               baseUrl: savedA.baseUrl,
               api: 'openai-completions',
-              apiKey: 'local',
+              apiKey: savedA.apiKey || 'local',
+              ...(savedA.headers ? { headers: savedA.headers } : {}),
               models: SAVED_MANUAL_MODELS.map((m) => ({
                 ...m,
                 input: ['text'],
@@ -219,6 +233,75 @@ for (const { name, edit } of invalidations) {
     );
   });
 }
+
+test('automatic listing and thinking discovery use configured literal auth/tenant headers', async () => {
+  const received: Array<{ path: string; headers: http.IncomingHttpHeaders }> = [];
+  const headers = { 'X-Api-Key': 'literal-secret', 'X-Tenant': 'tenant-a', authorization: 'Custom auth' };
+  const authorized = (req: http.IncomingMessage) => {
+    received.push({ path: req.url!, headers: req.headers });
+    return req.headers['x-api-key'] === headers['X-Api-Key'] &&
+      req.headers['x-tenant'] === headers['X-Tenant'] && req.headers.authorization === headers.authorization;
+  };
+  await withEndpoint(
+    (req) => authorized(req) ? { status: 400, body: NINFER_ERROR } : { status: 403, body: 'missing headers' },
+    async (baseUrl) => {
+      const box: PiProvider = { id: 'box-headers', baseUrl, apiKey: 'default-key', headers, models: [] };
+      await updateGlobalSettings({ piProviders: [box] });
+      assert.equal(await refreshEndpointDiscovery({ force: true }), true);
+      const after = (await getGlobalSettings()).piProviders!;
+      assert.deepEqual(after, [{ ...box, models: [{
+        id: 'm1', contextWindow: 4096,
+        thinkingLevels: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
+      }] }]);
+      assert.deepEqual(received.map((r) => r.path), ['/v1/models', '/v1/chat/completions']);
+      assert.equal(received[1].headers['content-type'], 'application/json');
+    },
+    (req) => authorized(req)
+      ? { status: 200, body: '{"data":[{"id":"m1","max_model_len":4096}]}' }
+      : { status: 403, body: 'missing headers' },
+  );
+});
+
+test('a header edit during model listing discards both listing and subsequent capability results', async () => {
+  const started = deferred<void>();
+  const listing = deferred<ChatReply>();
+  const received: http.IncomingHttpHeaders[] = [];
+  await withEndpoint(
+    (req) => {
+      received.push(req.headers);
+      return { status: 400, body: NINFER_ERROR };
+    },
+    async (baseUrl) => {
+      const box: PiProvider = { id: 'box-listing', baseUrl, headers: { 'X-Tenant': 'A' }, models: [] };
+      await updateGlobalSettings({ piProviders: [box] });
+      const refresh = refreshEndpointDiscovery({ force: true });
+      const edited = { ...box, headers: { 'X-Tenant': 'B' }, models: SAVED_MANUAL_MODELS };
+      let changed = false;
+      try {
+        await Promise.race([
+          started.promise,
+          refresh.then(() => assert.fail('sweep settled before the listing arrived')),
+        ]);
+        await updateGlobalSettings({ piProviders: [edited] });
+      } finally {
+        listing.resolve({ status: 200, body: '{"data":[{"id":"m1","max_model_len":4096}]}' });
+        changed = await refresh;
+      }
+      assert.equal(changed, false);
+      assert.deepEqual((await getGlobalSettings()).piProviders, [edited]);
+      assert.equal(received.length, 2);
+      assert.ok(received.every((h) => h['x-tenant'] === 'A'), 'all probes use the starting snapshot');
+      const models = JSON.parse(await fs.readFile(path.join(os.homedir(), '.pi', 'agent', 'models.json'), 'utf8'));
+      assert.deepEqual(models.providers['box-listing'].headers, edited.headers);
+      assert.ok(models.providers['box-listing'].models.every((m: { thinkingLevelMap?: unknown }) => !m.thinkingLevelMap));
+    },
+    (req) => {
+      received.push(req.headers);
+      started.resolve();
+      return listing.promise;
+    },
+  );
+});
 
 for (const { name, thinkingLevels } of [
   { name: 'explicit effort levels', thinkingLevels: ['low', 'max'] },
