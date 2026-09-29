@@ -90,7 +90,8 @@ shared `userSettings.json` fetch:
   `usePersistedToggle` (generic boolean ↔ `localStorage`) · `useActiveFolder`
   (canonical project path, seeded from `sessionStorage`, falls back to the
   backend default — boot retry in `resolveDefaultRoot.ts`) · `useSidebarWidth`
-  (drag-resize + persist) ·
+  (drag-resize + persist; releasing within `sidebar.minGraphWidth` of the right
+  edge snaps to full width — `sidebarMaximized`, graph hidden but kept mounted) ·
   `useSyncedRef` (a ref kept in sync with a value, for stable event handlers) ·
   `useStartupTerminalSync` (per-project startup-terminal list).
 

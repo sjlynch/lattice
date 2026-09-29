@@ -30,7 +30,8 @@
 //                       clears so the loop suspends.
 //
 // Tab visibility is a negative gate: when the tab is hidden the loop is
-// fully paused regardless of held reasons.
+// fully paused regardless of held reasons. So is a collapsed (0×0) container —
+// the graph hidden behind a full-width terminal sidebar.
 //
 // Frame-rate throttle: when the ONLY held reasons are the slow self-animations
 // (`agents`, `labelPhysics`, and/or the selection-halo `halo` pulse) — i.e. no
@@ -85,9 +86,12 @@ export function createIdleController(
 ): IdleController {
   const ledger = createReasonLedger();
 
-  // Tab visibility is a negative gate over the held reasons (see header).
+  // Tab visibility and a collapsed container are negative gates over the held
+  // reasons (see header).
   let hidden = document.visibilityState === 'hidden';
-  const shouldRun = () => !hidden && ledger.anyHeld();
+  const isCollapsed = () => !container.clientWidth || !container.clientHeight;
+  let collapsed = isCollapsed();
+  const shouldRun = () => !hidden && !collapsed && ledger.anyHeld();
   const slowOnly = () => ledger.slowOnly();
 
   const loop = createLoopScheduler(graph, shouldRun, slowOnly);
@@ -152,9 +156,22 @@ export function createIdleController(
   };
   document.addEventListener('visibilitychange', onVisibility);
 
+  // ---- collapsed container (negative gate) ------------------------------
+  const collapseObserver =
+    typeof ResizeObserver === 'undefined'
+      ? null
+      : new ResizeObserver(() => {
+          const next = isCollapsed();
+          if (next === collapsed) return;
+          collapsed = next;
+          sync();
+        });
+  collapseObserver?.observe(container);
+
   function destroy() {
     interact.destroy();
     document.removeEventListener('visibilitychange', onVisibility);
+    collapseObserver?.disconnect();
     if (refreshTimer) clearTimeout(refreshTimer);
     loop.destroy();
     engine.destroy();

@@ -11,6 +11,9 @@ export type TerminalDefaultHarness = AgentHarness | 'terminal';
 
 export type UserSettings = {
   sidebarWidth?: number;
+  // Terminal sidebar dragged to the full page width (graph hidden). While
+  // set, `sidebarWidth` keeps the last non-full width.
+  sidebarMaximized?: boolean;
   harness?: AgentHarness | 'interleave';
   // Per-project default Pi model ("provider/model", optionally `:thinking`),
   // chosen via the "Pi — X" rows in the harness dropdown. Only consulted when

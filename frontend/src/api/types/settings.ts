@@ -19,6 +19,9 @@ export type TerminalLaunchSettings = {
 
 export type UserSettings = {
   sidebarWidth?: number;
+  // Terminal sidebar dragged to the full page width (graph hidden). While
+  // set, `sidebarWidth` keeps the last non-full width.
+  sidebarMaximized?: boolean;
   harness?: HarnessChoice;
   // Per-project default Pi model ("provider/model"), chosen via the "Pi — X"
   // rows in the harness dropdown. Only used when the harness is `pi`.

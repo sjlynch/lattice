@@ -6,8 +6,10 @@ export const APP_CONFIG = {
   sidebar: {
     defaultWidth: 380,
     minWidth: 240,
-    maxWidth: 1200,
-    maxViewportRatio: 0.8,
+    // The graph keeps at least this much width beside the sidebar; dragging
+    // the resizer into that last strip snaps the sidebar to the full page
+    // width and hides the graph (useSidebarWidth `sidebarMaximized`).
+    minGraphWidth: 200,
   },
   scanRetry: {
     initialDelayMs: 300,

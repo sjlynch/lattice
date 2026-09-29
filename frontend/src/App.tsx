@@ -45,6 +45,7 @@ function App() {
   const userSettings = useUserSettings(activeFolder);
   const {
     sidebarWidth,
+    sidebarMaximized,
     sidebarSettingsLoaded,
     onResizerPointerDown,
     onResizerDoubleClick,
@@ -107,7 +108,10 @@ function App() {
         <div className="app-body">
           {sidebarSettingsLoaded && (
             <>
-              <aside className="app-sidebar" style={{ width: sidebarWidth }}>
+              <aside
+                className={`app-sidebar${sidebarMaximized ? ' app-sidebar--full' : ''}`}
+                style={sidebarMaximized ? undefined : { width: sidebarWidth }}
+              >
                 <Sidebar
                   activeFolder={activeFolder}
                   startupTerminals={startupTerminals}
@@ -115,17 +119,26 @@ function App() {
                 />
               </aside>
               <div
-                className="app-resizer"
+                className={`app-resizer${sidebarMaximized ? ' app-resizer--full' : ''}`}
                 role="separator"
                 aria-orientation="vertical"
                 aria-label="Resize sidebar"
                 onPointerDown={onResizerPointerDown}
                 onDoubleClick={onResizerDoubleClick}
-                title="Drag to resize · double-click to reset"
+                title={
+                  sidebarMaximized
+                    ? 'Drag left to show the graph · double-click to reset'
+                    : 'Drag to resize (to the right edge for full width) · double-click to reset'
+                }
               />
             </>
           )}
-          <main className="app-graph">
+          {/* Hidden, not unmounted, while the sidebar is full width: the graph
+              keeps its layout + camera, and its idle controller pauses the
+              render loop while the container is collapsed. */}
+          <main
+            className={`app-graph${sidebarSettingsLoaded && sidebarMaximized ? ' app-graph--hidden' : ''}`}
+          >
             {/* The force graph (3d-force-graph + WebGL) is the most
                 crash-prone subtree; its own boundary keeps a graph fault
                 from blanking the sidebar / task board. */}

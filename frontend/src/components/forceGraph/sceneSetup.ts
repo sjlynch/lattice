@@ -120,6 +120,10 @@ export function createResizeObserver(
   container: HTMLDivElement,
 ): () => void {
   const onResize = () => {
+    // A collapsed container (the graph hidden behind a full-width sidebar) is
+    // 0×0; sizing the camera to that gives it a NaN aspect. Keep the last real
+    // size — the observer fires again when the graph is shown.
+    if (!container.clientWidth || !container.clientHeight) return;
     graph.width(container.clientWidth);
     graph.height(container.clientHeight);
     // Resizing the canvas clears its drawing buffer, and the library's resize

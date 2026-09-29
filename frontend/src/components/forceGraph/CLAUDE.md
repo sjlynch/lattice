@@ -9,7 +9,8 @@ label physics in `labelPhysics/CLAUDE.md`.
 - **Idle controller** (`idleController.ts`) — the render-on-demand gate: a
   reference-counted wrapper around `pauseAnimation`/`resumeAnimation` that
   suspends the RAF loop unless a **reason** is held (`engine`, `interact`,
-  `refresh`, `labelPhysics`, `agents`, `halo`; minus a tab-hidden gate). THE perf
+  `refresh`, `labelPhysics`, `agents`, `halo`; minus a tab-hidden gate and a collapsed-container gate for the
+  graph hidden behind a full-width sidebar). THE perf
   contract: a settled, un-interacted scene reaches 0 frames (see invariants).
   `agents`/`labelPhysics`/`halo` are the *slow-only* reasons — when they're the
   only thing awake the loop duty-cycles to ~30fps.

@@ -6,14 +6,17 @@ import { useSyncedRef } from './useSyncedRef';
 import type { UserSettingsResult } from './useUserSettings';
 
 function clampSidebarWidth(width: number) {
-  const viewportCap = Math.min(
-    APP_CONFIG.sidebar.maxWidth,
-    Math.floor(window.innerWidth * APP_CONFIG.sidebar.maxViewportRatio),
-  );
+  const viewportCap = window.innerWidth - APP_CONFIG.sidebar.minGraphWidth;
   return Math.max(
     APP_CONFIG.sidebar.minWidth,
     Math.min(viewportCap, Math.round(width)),
   );
+}
+
+// A drag released inside the graph's last `minGraphWidth` strip means "give the
+// terminals the whole page": the sidebar goes full width and the graph hides.
+function isFullWidthDrag(x: number) {
+  return x > window.innerWidth - APP_CONFIG.sidebar.minGraphWidth;
 }
 
 export function useSidebarWidth(
@@ -23,6 +26,7 @@ export function useSidebarWidth(
   const [sidebarWidth, setSidebarWidth] = useState<number>(
     APP_CONFIG.sidebar.defaultWidth,
   );
+  const [sidebarMaximized, setSidebarMaximized] = useState(false);
   const [sidebarSettingsLoaded, setSidebarSettingsLoaded] = useState(
     () => !activeFolder,
   );
@@ -60,10 +64,12 @@ export function useSidebarWidth(
           : APP_CONFIG.sidebar.defaultWidth,
       ),
     );
+    setSidebarMaximized(settings.sidebarMaximized === true);
     setSidebarSettingsLoaded(true);
   }, [activeFolder, loaded, settings]);
 
-  // Re-clamp on window resize so the sidebar can't exceed its viewport cap.
+  // Re-clamp on window resize so the sidebar can't exceed its viewport cap
+  // (a full-width sidebar just follows the window).
   useEffect(() => {
     function onResize() {
       setSidebarWidth((width) => clampSidebarWidth(width));
@@ -91,13 +97,19 @@ export function useSidebarWidth(
     // pointer delivers several moves per frame.
     let frame: number | null = null;
     let latestX: number | null = null;
+    const apply = (x: number) => {
+      const full = isFullWidthDrag(x);
+      setSidebarMaximized(full);
+      if (!full) setSidebarWidth(clampSidebarWidth(x));
+      return full;
+    };
     const handleMove = (ev: PointerEvent) => {
       if (!resizingRef.current) return;
       latestX = ev.clientX;
       if (frame !== null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
-        if (resizingRef.current && latestX !== null) setSidebarWidth(clampSidebarWidth(latestX));
+        if (resizingRef.current && latestX !== null) apply(latestX);
       });
     };
     const handleUp = (ev: PointerEvent) => {
@@ -113,8 +125,7 @@ export function useSidebarWidth(
       // minimum — so it settles on the last move instead; with no move at all
       // there is nothing to commit.
       const releaseX = ev.type === 'pointercancel' ? latestX : ev.clientX;
-      const finalWidth = releaseX === null ? null : clampSidebarWidth(releaseX);
-      if (finalWidth !== null) setSidebarWidth(finalWidth);
+      const finalFull = releaseX === null ? null : apply(releaseX);
       document.body.style.userSelect = prevUserSelect;
       document.body.style.cursor = prevCursor;
       try {
@@ -125,10 +136,14 @@ export function useSidebarWidth(
       window.removeEventListener('pointermove', handleMove);
       window.removeEventListener('pointerup', handleUp);
       window.removeEventListener('pointercancel', handleUp);
-      if (activeFolderRef.current && finalWidth !== null) {
-        patchUserSettings(activeFolderRef.current, {
-          sidebarWidth: finalWidth,
-        }).catch(() => {});
+      if (activeFolderRef.current && releaseX !== null) {
+        // A full-width release keeps the stored width as the last non-full one.
+        patchUserSettings(
+          activeFolderRef.current,
+          finalFull
+            ? { sidebarMaximized: true }
+            : { sidebarWidth: clampSidebarWidth(releaseX), sidebarMaximized: false },
+        ).catch(() => {});
       }
     };
     window.addEventListener('pointermove', handleMove);
@@ -139,13 +154,18 @@ export function useSidebarWidth(
   const onResizerDoubleClick = useCallback(() => {
     const width = clampSidebarWidth(APP_CONFIG.sidebar.defaultWidth);
     setSidebarWidth(width);
+    setSidebarMaximized(false);
     if (activeFolderRef.current) {
-      patchUserSettings(activeFolderRef.current, { sidebarWidth: width }).catch(() => {});
+      patchUserSettings(activeFolderRef.current, {
+        sidebarWidth: width,
+        sidebarMaximized: false,
+      }).catch(() => {});
     }
   }, [activeFolderRef]);
 
   return {
     sidebarWidth,
+    sidebarMaximized,
     sidebarSettingsLoaded,
     onResizerPointerDown,
     onResizerDoubleClick,

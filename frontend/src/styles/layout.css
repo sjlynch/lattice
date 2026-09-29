@@ -36,6 +36,22 @@
   user-select: none;
   touch-action: none;
 }
+.app-sidebar--full {
+  flex: 1 1 auto;
+  width: auto;
+  border-right: none;
+}
+
+/* Full-width sidebar: the resizer sits inside the right edge (its usual
+   negative margins would push half of it off-screen) with a faint line so
+   the way back to the graph stays discoverable. */
+.app-resizer--full {
+  margin-left: -5px;
+  margin-right: 0;
+}
+.app-resizer--full::after {
+  background: var(--border);
+}
 .app-resizer::after {
   content: '';
   position: absolute;
@@ -54,4 +70,8 @@
   min-width: 0;
   position: relative;
   background: var(--bg-graph);
+}
+
+.app-graph--hidden {
+  display: none;
 }
