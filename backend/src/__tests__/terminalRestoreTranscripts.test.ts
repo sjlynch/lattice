@@ -11,6 +11,7 @@ import {
   discoverCodexSessionFor,
   discoveryIntervalMs,
   resetCodexDiscoveryCaches,
+  scanRecentCodexRollouts,
 } from '../terminalRegistry/codexDiscovery.js';
 import { buildRestoreCommand } from '../terminalRegistry/restoreCommand.js';
 import { agentSessionFromCommand, assignHarnessSessionId } from '../terminalRegistry/sessionIdentity.js';
@@ -37,7 +38,8 @@ import type { AgentSessionRef, TerminalLaunch, TerminalRecord } from '../termina
 //   - Claude `--resume Y` runs as process Y (its ~/.claude/sessions/<pid>.json
 //     carries sessionId Y), so a re-learned id keeps working after relaunch.
 //   - Codex: `session_meta.timestamp` is the process start; the rollout file
-//     itself appears only on the first turn.
+//     itself appears only on the first turn. An incomplete first line must
+//     be retried on later scans without clearing shared discovery caches.
 //   - Pi: `--session-id X` writes <sessions>/<ts>_X.jsonl and reuses it on the
 //     next launch with the same id (create-or-resume).
 
@@ -330,6 +332,52 @@ async function writeCodexRollout(cwd: string, id: string, startedAt: number): Pr
   const meta = { timestamp: new Date().toISOString(), type: 'session_meta', payload: { id, cwd, timestamp: d.toISOString() } };
   await fs.writeFile(file, JSON.stringify(meta) + '\n');
   return file;
+}
+
+for (const { name, initialBody } of [
+  { name: 'empty', initialBody: '' },
+  { name: 'truncated session_meta', initialBody: '{"type":"session_meta","payload":{"id":"thread-completed","cwd":' },
+]) {
+  test(`codex scan retries ${name} metadata without clearing caches`, async (t) => {
+    resetCodexDiscoveryCaches();
+    t.after(() => { resetCodexDiscoveryCaches(); });
+    const root = await fs.mkdtemp(path.join(harnessHome, 'codex-incomplete-'));
+    t.after(async () => { await fs.rm(root, { recursive: true, force: true }); });
+    const now = Date.parse('2026-09-29T12:00:00.000Z');
+    // Keep both scans inside the listing TTL, even on a slow machine.
+    t.mock.method(Date, 'now', () => now);
+    const dir = path.join(root, '2026', '09', '29');
+    await fs.mkdir(dir, { recursive: true });
+    const valid = {
+      id: 'thread-valid', cwd: root, timestamp: now - 30_000,
+      file: path.join(dir, 'rollout-valid.jsonl'), mtimeMs: now,
+    };
+    const completed = {
+      id: 'thread-completed', cwd: root, timestamp: now - 20_000,
+      file: path.join(dir, 'rollout-completed.jsonl'), mtimeMs: now,
+    };
+    const firstLine = (meta: typeof valid) => JSON.stringify({
+      type: 'session_meta',
+      payload: { id: meta.id, cwd: meta.cwd, timestamp: new Date(meta.timestamp).toISOString() },
+    }) + '\n';
+    const writtenAt = new Date(now);
+    await fs.writeFile(valid.file, firstLine(valid));
+    await fs.writeFile(completed.file, initialBody);
+    await fs.utimes(valid.file, writtenAt, writtenAt);
+    await fs.utimes(completed.file, writtenAt, writtenAt);
+    const createdSince = now - 60_000;
+    const writtenSince = now - 10_000;
+
+    assert.deepEqual(await scanRecentCodexRollouts(createdSince, root, writtenSince), [valid],
+      'incomplete metadata is skipped without discarding the valid sibling');
+
+    // Finish the same file while its listing and the sibling metadata remain
+    // cached. Preserve mtime so only the first-line contents have changed.
+    await fs.writeFile(completed.file, firstLine(completed));
+    await fs.utimes(completed.file, writtenAt, writtenAt);
+    assert.deepEqual(await scanRecentCodexRollouts(createdSince, root, writtenSince), [valid, completed],
+      'a failed metadata read must not be cached after the file is completed');
+  });
 }
 
 for (const command of ['codex --yolo', 'codex resume --last --yolo', 'codex resume --last --yolo continue']) {
