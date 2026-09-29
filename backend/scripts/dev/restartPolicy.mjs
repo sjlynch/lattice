@@ -1,9 +1,9 @@
 import {
   describeDistEvent,
   newestDistMtimeMs,
-  shouldRestartForDist,
 } from './distSignature.mjs';
 import { createParkedProbeCache } from './parkedProbe.mjs';
+import { createRestartOutputState } from './restartOutputState.mjs';
 import {
   describeRunLocks,
   heldRunLocks,
@@ -148,19 +148,14 @@ export function createRestartPolicy({
   let deferPollTimer = null;
   let workflowDeferLoggedAt = 0; // last time we logged an ongoing workflow hold
   let holdLoggedAt = 0; // last time we logged an in-window non-workflow hold
-  // Newest dist/ mtime as of the last APPLIED restart. A watch event whose
-  // tree is no newer than this wrote nothing, so it must not restart.
-  let distBaseline = null;
+  const outputState = createRestartOutputState({ readNewestDistMtime, readDistContentSignature });
   // Newest mtime that justified a currently-deferred restart, so applying it
   // later advances the baseline to the change we actually acted on.
   let deferredDistMtime = null;
   let ignoredSince = 0;
   let ignoredCount = 0;
   let lastEvent = describeDistEvent(null, null);
-  let contentBaseline = null;
   let stopped = false;
-  let completedCompileSequence = 0;
-  let lastCompletedContent = null;
   // Last time a scan saw ANY live run.lock (0 = never) — the settle clock.
   let lastLockSeenAt = 0;
   // A restart handshake is in flight; further triggers coalesce into it (the
@@ -174,15 +169,14 @@ export function createRestartPolicy({
   let spawnGeneration = 0;
 
   function captureDistBaseline() {
-    return { mtime: readNewestDistMtime(), content: readDistContentSignature(), compileSequence: completedCompileSequence };
+    return outputState.captureDistBaseline();
   }
 
   // Snapshot dist/'s current state as the "nothing new since here" mark. Called
   // by dev.mjs right before the watcher is armed (after the initial compile) so
   // the first real emit is still seen, and after every applied restart.
   function resetDistBaseline() {
-    distBaseline = readNewestDistMtime();
-    contentBaseline = readDistContentSignature();
+    outputState.resetDistBaseline();
   }
 
   // Forget any deferred restart and its log throttles (it was applied, or
@@ -208,9 +202,7 @@ export function createRestartPolicy({
     const accepted = restartBackend(reason);
     if (accepted && !deferBaselineUntilSpawn) {
       clearDeferral();
-      distBaseline =
-        typeof newestSeen === 'number' ? newestSeen : readNewestDistMtime();
-      contentBaseline = readDistContentSignature();
+      outputState.commitRestartBaseline(newestSeen);
     }
     return accepted;
   }
@@ -308,13 +300,9 @@ export function createRestartPolicy({
     spawnGeneration += 1;
     if (!candidate && !canRestart()) return;
     const applied = candidate ?? captureDistBaseline();
-    distBaseline = applied.mtime;
-    contentBaseline = applied.content;
+    outputState.commitSpawnBaseline(applied);
     clearDeferral();
-    if (
-      canRestart() && applied.compileSequence < completedCompileSequence &&
-      !(lastCompletedContent !== null && lastCompletedContent === contentBaseline)
-    ) onDistChanged(true);
+    if (canRestart() && outputState.needsCompileCatchUp(applied)) onDistChanged(true);
   }
 
   // A dist/ watch event that corresponds to no actual write. Historically these
@@ -339,7 +327,7 @@ export function createRestartPolicy({
     // Verify a real write BEFORE anything else, so a metadata-only event can
     // neither restart the backend nor arm a deferral that the poll later applies.
     const newest = readNewestDistMtime();
-    if (!force && !needsBackendStart() && !shouldRestartForDist({ newest, baseline: distBaseline })) {
+    if (!force && !needsBackendStart() && !outputState.hasDistChange(newest)) {
       noteIgnoredEvent();
       return;
     }
@@ -513,13 +501,11 @@ export function createRestartPolicy({
 
   function onCompileSucceeded() {
     if (stopped || !canRestart()) return;
-    const current = readDistContentSignature();
-    completedCompileSequence++;
-    lastCompletedContent = current;
-    if (!needsBackendStart() && current !== null && current === contentBaseline) {
+    const current = outputState.recordCompletedCompile();
+    if (!needsBackendStart() && outputState.isUnchangedCompile(current)) {
       // Includes the cold watch-mode re-emit, recovery with unchanged output,
       // and a deferred edit reverted to the currently-running backend's bytes.
-      distBaseline = readNewestDistMtime();
+      outputState.resetMtimeBaseline();
       clearDeferral();
       return;
     }
