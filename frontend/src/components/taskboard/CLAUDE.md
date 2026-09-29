@@ -82,8 +82,9 @@ shim. This file covers the files DIRECTLY here; the taskboard's hooks live in
   targeted task spawned/queued/pending from the live task list; resume rides
   `spawnedIds`).
 - `PostMergeHookRow.tsx` — collapsible post-merge-hook config row (prompt textarea
-  with debounced persist + harness/Pi-model select) and the live active/recent-run
-  banner (open-terminal / abort).
+  + harness/Pi-model select) and the live active/recent-run banner (open-terminal
+  / abort). Unsaved prompt draft/debounce lives in `hooks/usePostMergePromptDraft`;
+  persisted settings stay in `hooks/usePostMergeHookForm`.
 - `postMergeHookStatus.ts` — pure `isPostMergeHookConfigured` + the collapsed-strip
   status-chip derivation for that row.
 
