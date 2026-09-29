@@ -1,4 +1,4 @@
-export const TOOLTIP_WIDTH = 320;
+export const MIN_TOOLTIP_WIDTH = 320;
 export const CURSOR_OFFSET = 16;
 export const VIEWPORT_PAD = 12;
 // Initial estimate before the tooltip's first paint; refined to the

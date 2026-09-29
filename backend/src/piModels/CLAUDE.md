@@ -53,16 +53,24 @@ of Pi config**.
   an unreadable/corrupt `globalSettings.json` aborts the reconcile rather than
   reading as "no providers" and deleting every managed one.
 - `probe.ts` — `probeEndpointModels()` GETs `<baseUrl>/models` (OpenAI-compatible)
-  behind the "Detect models" button, returning `{id, contextWindow?}` per model;
-  probe auth uses literal `apiKey` text: `$VAR` / `${VAR}` is not interpolated,
-  and `!command` supplies no token. Endpoints requiring those resolved secrets
-  may reject probes; endpoints allowing unauthenticated access can succeed.
-  The context window is read from whichever key the server uses
+  behind the "Detect models" button, returning `{id, contextWindow?}` per model.
+  The context window comes from whichever key the server uses
   (`max_model_len` on vLLM/NInfer/SGLang, `context_length` on
-  llama.cpp/LM Studio, …) and carried onto the saved provider model, so
-  models.json gets the endpoint's real window instead of Pi's conservative
-  default — the difference between a 262K-context local server being usable and
-  being quietly capped.
+  llama.cpp/LM Studio, …) and is carried onto the saved provider model, so
+  models.json gets the endpoint's real window instead of Pi's conservative default.
+  This module also implements `probeThinkingLevels()`: POST one deliberately
+  invalid `reasoning_effort` to `/chat/completions` and parse the rejection's
+  accepted levels. Both probes receive the provider's explicitly configured
+  literal `headers`; names/values are validated before requests. Custom headers
+  override defaults case-insensitively, with the last configured spelling winning.
+  Header values and `apiKey` never resolve environment variables or execute
+  command syntax: `$VAR` / `${VAR}` stays literal, and a `!command` apiKey supplies
+  no token. Endpoints requiring resolved secrets may reject probes; endpoints
+  allowing unauthenticated access can succeed. Thinking probes return tokens,
+  `[]` (2xx: no validation, recorded so the model isn't re-asked), or `null` for
+  NO answer (network error / timeout, non-400/422 status such as 5xx/401, or an
+  unparseable rejection). On `null`, keep thinking data untouched and retry next
+  sweep, never mark the model "ordinary". Pinned by `__tests__/piProbeHeaders.test.ts`.
 - `autoDiscover.ts` — `refreshEndpointDiscovery()` keeps each `autoDiscover`
   endpoint's model list matching what it actually serves: probe → merge into
   `globalSettings.piProviders` → reconcile. Discovery sees only currently served
@@ -71,32 +79,29 @@ of Pi config**.
   harness dropdown open). A failed or empty probe KEEPS the stored models —
   blanking them is what leaves Pi with no model to run — and reconcile runs on
   every sweep, so a models.json that drifted out of sync is repaired even when
-  the probe changed nothing. The provider list is **re-read inside the
-  global-settings write lock**
-  (`updateGlobalSettingsWith` — every probe, thinking levels included, finishes
-  first) and each result is applied only where it still belongs (same id, still
-  auto, same `baseUrl`), so a Settings save landing mid-probe — or queued on the
-  lock ahead of the sweep's write — isn't silently undone. Pinned by `__tests__/autoDiscover.test.ts`.
-- `thinkingLevels.ts` — Pi gives a model `xhigh` / `max` ONLY if it declares a
-  `thinkingLevelMap`; with the map absent Pi **silently clamps** them to `high`
-  (verified: asking for `max` sends `reasoning_effort: "high"`, no error). The
-  levels are detected, never hardcoded: `probeThinkingLevels` posts one request
-  with a deliberately invalid `reasoning_effort`, and a server that validates the
-  field rejects it with a message enumerating the valid ones — the whole answer,
-  for zero generated tokens. `parseAcceptedEffortTokens` needs ≥2 recognizable
-  tokens before it trusts a message, so prose can't produce a map that hides
-  levels which actually work. `probeThinkingLevels` is tri-state: tokens, `[]`
-  (a 2xx — the server validates nothing, recorded so the model isn't re-asked),
-  or `null` for NO answer (network error / timeout, a non-400/422 status such
-  as a 5xx or a 401 from a `$VAR` key, an unparseable rejection) — on `null`
-  the model is left untouched and asked again next sweep, never marked
-  "ordinary". Detection runs once per newly-seen model (`[]` records "asked,
-  nothing extended" — `sanitizeThinkingLevels` must keep an empty array, or the
-  marker is lost on the settings round-trip and every sweep re-probes). Lists
-  above `PI_MODELS_CONFIG.thinkingProbeModelLimit` (25) skip capability probing,
-  independently of the menu's cutoff (5): a provider with 6–25 models can require
-  curation and still receive thinking probes. Both probes run on the
-  provider snapshot BEFORE the re-read, so a save landing mid-probe survives.
+  the probe changed nothing. All model-list and thinking probes use the captured
+  provider request configuration and finish before the provider list is
+  **re-read inside the global-settings write lock** (`updateGlobalSettingsWith`).
+  Inside that lock, results apply only to a provider with the same id, still
+  enabled for auto-discovery, and a matching `baseUrl` / `apiKey` / `headers` fingerprint.
+  Key or header edits during either probe retain the newer provider's models
+  and thinking data, including saves queued ahead of the sweep's write.
+  Capability detection runs once per newly-seen model; `[]` records "asked,
+  nothing extended". Lists above `PI_MODELS_CONFIG.thinkingProbeModelLimit` (25)
+  skip capability probing, independently of the menu's cutoff (5): a provider
+  with 6–25 models can require curation and still receive thinking probes.
+  Pinned by `__tests__/autoDiscover.test.ts`.
+- `thinkingLevels.ts` — parsing, sanitization and thinking-level-map helpers;
+  HTTP execution belongs to `probe.ts`. Pi gives a model `xhigh` / `max` ONLY if
+  it declares a `thinkingLevelMap`; with the map absent Pi **silently clamps**
+  them to `high` (verified: asking for `max` sends `reasoning_effort: "high"`, no
+  error). Levels are detected, never hardcoded. `parseAcceptedEffortTokens`
+  needs ≥2 recognizable tokens before trusting a message, so prose can't produce
+  a map that hides levels which actually work. `sanitizeThinkingLevels` keeps an
+  empty array so the "asked" marker survives the settings round-trip.
+  `extendsBeyondStandard` checks for `xhigh` / `max`; `buildThinkingLevelMap`
+  maps Pi's levels to accepted
+  server tokens (including `off` aliases), or `null` for unsupported levels.
 - `sweepScheduler.ts` — the scheduling policy behind it, isolated so it is
   testable without a server: join an in-flight sweep (even inside the TTL, or
   the caller reads state that sweep is about to replace), throttle by TTL only
