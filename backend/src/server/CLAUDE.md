@@ -35,20 +35,38 @@ Named backend bootstrap helpers used by `index.ts` after process guards are inst
      (`ensurePiSubagentsInstalled()`, `ensurePiMcpInstalled()`, and
      `reconcilePiModelsJson()`); these must never block listen or throw out of
      startup;
-  2. `ensureTerminalServer()` before any recovery can spawn/resume terminals;
-  3. `startSpawnQueue()` to prime terminal-session accounting;
-  4. `recoverOrphanedTasks()` while the API is still closed;
-  5. `listen()` on `127.0.0.1` only (not `localhost`, not LAN-visible);
-  6. after the API is reachable, `resumeInterruptedWorkflowRuns()` and THEN
-     `resumeInterruptedMergeRuns()` (a resumed workflow owns its project's merge
-     pipeline, so the merge-run resume skips projects with an active workflow
-     run), plus `resumeQueuedTaskRuns()`, so spawned agents can call back. The
-     `/api/workflows/:id/run` + `/api/workflow-runs` routes answer 503
-     `workflow-recovering` until the workflow resume settles;
-  7. start the periodic in-progress sweep (`startInProgressSweepLoop()`), the
-     terminal-tab registry watch (`startTerminalRegistryWatch()`), and the
-     completion-callback outbox replay (`ensureCallbackScript()` right away;
-     `startCallbackOutboxLoop()` only once the step-6 chain has settled, so a
-     replayed callback never beats the run it belongs to being re-adopted /
-     re-dispatched — callbacks a Stop hook couldn't deliver while this process
-     was down; see `../callbackOutbox/CLAUDE.md`).
+  2. `runPreListenStartupRecovery()` awaits `ensureTerminalServer()`, then
+     `startSpawnQueue()` to prime terminal-session accounting, then
+     `recoverOrphanedTasks()` (including one-off run adoption) while the API
+     is still closed;
+  3. establish `beginWorkflowRecovery()` before `listen()` on `127.0.0.1` only
+     (not `localhost`, not LAN-visible);
+  4. after listen, `runBootRecoveryChain()` starts
+     `resumeInterruptedWorkflowRuns()`. The `/api/workflows/:id/run` +
+     `/api/workflow-runs` lifecycle routes wait for registry readiness (bounded
+     wait, then 503 `workflow-recovering`). `workflowRunResume.ts` calls
+     `onRegistryReady` once all recovered records and surviving terminal
+     ownership are installed, **before** iterating redispatch decisions. This
+     releases requests to an authoritative registry before full recovery
+     settles, so callbacks need not wait behind lengthy pre-run work;
+  5. once workflow dispatch decisions are applied, the chain awaits
+     `resumeInterruptedMergeRuns()`, then `fireOwedPostMergeHooks()`, and finally
+     starts `startCallbackOutboxLoop()` when that chain settles. Merge-run resume
+     skips projects with an active workflow, which owns their merge pipeline.
+     Redispatched agent pre-run work carries on detached; it must not delay
+     merge-run resume, owed hooks or outbox replay. Replay waits for run
+     adoption / redispatch so undelivered callbacks find their owners.
+
+  In parallel with that post-listen chain, `resumeRunsAfterListen()` starts
+  `startBootWorktreeSweep()` → `resumeQueuedTaskRuns()`: expensive orphan
+  cleanup stays after listen, and queued tasks wait for cleanup to finish.
+  Periodic sweeps, the low-disk monitor and terminal-registry watch also start
+  here; `ensureCallbackScript()` runs immediately, independently of replay.
+  Recovery policy belongs to [recovery/CLAUDE.md](../recovery/CLAUDE.md),
+  workflow lifecycle policy to [workflowRuns/CLAUDE.md](../workflowRuns/CLAUDE.md),
+  and callback delivery to [callbackOutbox/CLAUDE.md](../callbackOutbox/CLAUDE.md).
+
+Command reference (documentation only; cwd: `backend/`): `npm run build`, `npm test`,
+`npx tsc --noEmit`. See [__tests__/CLAUDE.md](../__tests__/CLAUDE.md) for
+isolation requirements; `bootRecoveryPreRunNonBlocking.test.ts` covers the
+detached pre-run invariant.
