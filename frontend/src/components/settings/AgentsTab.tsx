@@ -1,4 +1,4 @@
-import { forwardRef, useEffect, useImperativeHandle, useState } from 'react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 import { fetchGlobalSettings } from '../../api';
 
 type Props = {
@@ -29,6 +29,8 @@ export const AgentsTab = forwardRef<AgentsTabHandle, Props>(function AgentsTab(
   const [value, setValue] = useState('');
   const [loaded, setLoaded] = useState(false);
   const [touched, setTouched] = useState(false);
+  // The pending load must see edits made after its effect started.
+  const touchedRef = useRef(false);
 
   // (Re)load the persisted value each time the dialog opens.
   useEffect(() => {
@@ -36,10 +38,11 @@ export const AgentsTab = forwardRef<AgentsTabHandle, Props>(function AgentsTab(
     let cancelled = false;
     setLoaded(false);
     setTouched(false);
+    touchedRef.current = false;
     fetchGlobalSettings()
       .then((s) => {
         if (cancelled) return;
-        setValue(String(s.maxConcurrentAgents));
+        if (!touchedRef.current) setValue(String(s.maxConcurrentAgents));
         setLoaded(true);
       })
       .catch(() => {
@@ -98,6 +101,7 @@ export const AgentsTab = forwardRef<AgentsTabHandle, Props>(function AgentsTab(
           max={MAX_AGENTS}
           value={value}
           onChange={(e) => {
+            touchedRef.current = true;
             setValue(e.target.value);
             setTouched(true);
           }}
