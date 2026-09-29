@@ -20,8 +20,12 @@ import { worktreeExists } from '../../worktree.js';
 import { SpawnCapacityError } from '../../spawnQueue.js';
 import { isAgentHarness, normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
+import { buildPiModelFlag } from '../../agentCommandBuilder.js';
 import { isCodexYoloEnabled } from '../../userSettings.js';
 import { buildRestoreCommand } from '../../terminalRegistry/restoreCommand.js';
+import {
+  parseAgentCommand, renderCommand, renderToken, stripFlag,
+} from '../../terminalRegistry/commandParse.js';
 import { claudeTranscriptPath } from '../../terminalRegistry/harnessPaths.js';
 import { fileExists } from '../../terminalRegistry/interruption.js';
 import { terminalRegistry } from '../../terminalRegistry/store.js';
@@ -90,10 +94,12 @@ function knownAgentSession(task: Task, records: TerminalRecord[]): AgentSessionR
 
 // Build the true-resume command for a task, or null when there is nothing to
 // continue (no known session, harness mismatch, or the previous launch
-// command is unknown).
+// command is unknown). Policy is already resolved by resumeTaskById, including
+// the recorded Pi model fallback for a body-less resume.
 export async function buildTaskResumeCommand(
   task: Task,
   harness: 'claude' | 'pi' | 'codex',
+  policy: { piModel?: string; codexYolo?: boolean },
   deps = { taskRecords, fileExists },
 ): Promise<string | null> {
   const records = await deps.taskRecords(task);
@@ -113,7 +119,26 @@ export async function buildTaskResumeCommand(
   // A Claude session that never reached its first turn has nothing to
   // resume; the fresh path (original prompt) is the right thing there.
   if (built.mode !== 'resume' || !built.command) return null;
-  return built.command;
+  if (harness === 'claude') return built.command;
+
+  // Explicit task resumes use today's resolved launch policy, even though
+  // the conversation and unrelated flags come from the previous launch.
+  // Keep this out of buildRestoreCommand: automatic tab restoration must
+  // retain its original model and permission flags.
+  const parsed = parseAgentCommand(built.command, harness);
+  if (!parsed) return null;
+  let args = parsed.args;
+  let policyFlags: string;
+  if (harness === 'pi') {
+    args = stripFlag(args, '--model', true);
+    policyFlags = buildPiModelFlag(policy.piModel);
+  } else {
+    args = stripFlag(args, '--yolo', false);
+    args = stripFlag(args, '--dangerously-bypass-approvals-and-sandbox', false);
+    policyFlags = policy.codexYolo === false ? '' : ' --yolo';
+  }
+  const prompt = parsed.prompt ? ` ${renderToken(parsed.prompt)}` : '';
+  return `${renderCommand([parsed.binary, ...args])}${policyFlags}${prompt}`;
 }
 
 // The harness a resume spawns: an explicit (valid) request wins, else the
@@ -171,7 +196,8 @@ export async function resumeTaskById(
   // Resolve the Codex `--yolo` toggle only for a Codex resume (default ON).
   const codexYolo =
     harness === 'codex' ? await isCodexYoloEnabled(task.projectPath) : undefined;
-  const commandOverride = (await deps.buildTaskResumeCommand(task, harness)) ?? undefined;
+  const commandOverride =
+    (await deps.buildTaskResumeCommand(task, harness, { piModel, codexYolo })) ?? undefined;
   const selectedHarness = deps.selectHarnessCommand(task, {
     requestedHarness: harness,
     mode: 'resume',
