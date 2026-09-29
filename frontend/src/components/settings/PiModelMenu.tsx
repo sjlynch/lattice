@@ -7,14 +7,19 @@ type Props = {
   // Patterns the backend always surfaces because their endpoint auto-discovers
   // its models — rendered fixed rather than as a checkbox that does nothing.
   alwaysShown: Set<string>;
+  loaded: boolean;
+  loadError: string | null;
+  onRetry: () => void;
   onToggle: (pattern: string) => void;
 };
 
 // The "Pi model menu" curation section: a checklist deciding which Pi models
 // surface as "Pi — X" rows in the harness dropdowns.
-export function PiModelMenu({ patterns, selected, alwaysShown, onToggle }: Props) {
+export function PiModelMenu({
+  patterns, selected, alwaysShown, loaded, loadError, onRetry, onToggle,
+}: Props) {
   return (
-    <div className="settings-section">
+    <div className="settings-section" aria-busy={!loaded && !loadError}>
       <div className="settings-section-header">
         <div>
           <div className="settings-section-title-row">
@@ -43,12 +48,27 @@ export function PiModelMenu({ patterns, selected, alwaysShown, onToggle }: Props
           </div>
         </div>
       </div>
-      {patterns.length === 0 ? (
+      {loadError ? (
+        <div className="error-msg" role="alert">
+          Could not load the saved Pi model menu ({loadError}). Menu choices are
+          read-only; saving leaves the saved menu unchanged.{' '}
+          <button type="button" className="btn-ghost" onClick={onRetry}>
+            Retry loading Pi model menu
+          </button>
+        </div>
+      ) : !loaded && (
+        <div className="settings-section-sub" role="status">
+          Loading saved Pi model menu… Menu choices are read-only until loading
+          finishes.
+        </div>
+      )}
+      {loaded && patterns.length === 0 && (
         <div className="settings-section-sub" style={{ opacity: 0.7 }}>
           No Pi models detected. Install the <code>pi</code> CLI or add an
           endpoint above.
         </div>
-      ) : (
+      )}
+      {patterns.length > 0 && (
         <div className="settings-checkbox-list">
           {patterns.map((pattern) => {
             const fixed = alwaysShown.has(pattern);
@@ -59,13 +79,15 @@ export function PiModelMenu({ patterns, selected, alwaysShown, onToggle }: Props
                 title={
                   fixed
                     ? 'Always shown — this endpoint auto-discovers its models.'
-                    : undefined
+                    : !loaded
+                      ? 'Read-only until the saved Pi model menu loads.'
+                      : undefined
                 }
               >
                 <input
                   type="checkbox"
                   checked={fixed || selected.has(pattern)}
-                  disabled={fixed}
+                  disabled={fixed || !loaded}
                   onChange={() => onToggle(pattern)}
                 />
                 <span>{pattern}</span>

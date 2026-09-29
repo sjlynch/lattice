@@ -77,6 +77,8 @@ export async function startPushSession(
   backendOrigin: string,
   opts: {
     brief?: PushBrief;
+    // Withdraw a queued admission, or reclaim a terminal already being created.
+    signal?: AbortSignal;
     // The workflow Push step that owns this session, recorded (and persisted)
     // so a re-dispatched step can attach to it after a backend restart.
     workflow?: { runId: string; stepIndex: number };
@@ -84,6 +86,7 @@ export async function startPushSession(
 ): Promise<StartedPushSession> {
   const started = await startPushAgentSession({
     projectPath,
+    signal: opts.signal,
     installHooks: ({ cwd, id }) =>
       installPushStopHook(cwd, id, backendOrigin, projectPath),
     renderInstructions: () => renderPush(projectPath, opts.brief),

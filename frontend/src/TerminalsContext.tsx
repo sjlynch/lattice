@@ -3,6 +3,7 @@ import {
   useCallback,
   useContext,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -53,7 +54,10 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
   // calls updaters twice in dev to detect impurities — a fetch in there
   // would fire twice and DELETE the pty session twice).
   const terminalsRef = useRef<TerminalSpec[]>(terminals);
-  useEffect(() => {
+  // Child cleanup effects issue commands before the provider's passive
+  // effects run. Publish the committed list first so newly arrived tabs can
+  // be closed without relying on an extra render from a no-op removal.
+  useLayoutEffect(() => {
     terminalsRef.current = terminals;
   }, [terminals]);
   const activeFolderRef = useRef(activeFolder);

@@ -31,6 +31,10 @@ single source of truth for all three.
     Used by push + QA, whose flows are exact mirrors. Post-merge keeps its own
     trigger/gate/waiter (`postMergeHooks/trigger.ts`) but reuses the materialize
     half.
+    An optional `signal` passes through to `queuedCreateSession`: aborting a
+    pending admission removes it; an in-flight create is drained and its PTY
+    reclaimed before rejection and scratch cleanup. The mirror factory forwards
+    this per-call signal too.
 - `agentSession.ts` — `createHomeScratchAgentSession(spec)`: the push/QA mirror
   factory layered on `startHomeScratchAgentSession`. From a static per-run-type
   `spec` (paths, instructions filename, fixed command, queue kind / dedupe

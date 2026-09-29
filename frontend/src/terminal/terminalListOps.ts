@@ -16,14 +16,17 @@ export function removeTerminalFromList(
   terminals: TerminalSpec[],
   id: string,
 ): TerminalSpec[] {
-  return terminals.filter((t) => t.id !== id);
+  const next = terminals.filter((t) => t.id !== id);
+  return next.length === terminals.length ? terminals : next;
 }
 
 export function removeTerminalsFromList(
   terminals: TerminalSpec[],
   idSet: Set<string>,
 ): TerminalSpec[] {
-  return terminals.filter((t) => !idSet.has(t.id));
+  if (idSet.size === 0) return terminals;
+  const next = terminals.filter((t) => !idSet.has(t.id));
+  return next.length === terminals.length ? terminals : next;
 }
 
 // The ids of every terminal belonging to a task. Collected in one pass so a

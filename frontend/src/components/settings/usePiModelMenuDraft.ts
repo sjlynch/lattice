@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { getPiModels, type PiModelInfo, type PiProvider } from '../../api';
 import { collectModelUniverse } from './piTabUtils';
 
@@ -16,16 +16,21 @@ export function usePiModelMenuDraft(open: boolean, providers: PiProvider[]) {
   // resolves (or after it failed) would otherwise persist just the auto-added
   // endpoint patterns and drop every curated selection.
   const [loaded, setLoaded] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadAttempt, setLoadAttempt] = useState(0);
   // Patterns we've already reflected into selected — so a newly-added endpoint
   // model defaults to shown, but a model the user later unchecks doesn't get
   // auto-re-added on the next render.
   const seenRef = useRef<Set<string>>(new Set());
 
-  useEffect(() => {
-    if (!open) return;
-    let cancelled = false;
+  // Reset readiness before retained rows can be edited on reopen. Cleanup
+  // fences both successful loads and errors to the dialog session/request.
+  useLayoutEffect(() => {
     setTouched(false);
     setLoaded(false);
+    setLoadError(null);
+    if (!open) return;
+    let cancelled = false;
     getPiModels()
       .then((r) => {
         if (cancelled) return;
@@ -34,11 +39,20 @@ export function usePiModelMenuDraft(open: boolean, providers: PiProvider[]) {
         seenRef.current = new Set(r.models.map((m) => m.pattern));
         setLoaded(true);
       })
-      .catch(() => { /* leave current draft; `loaded` stays false so Save never writes it */ });
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // Retain the rows, but keep mutations and Save gated until Retry works.
+        setLoadError((err instanceof Error ? err.message : String(err)) || 'Unknown error');
+      });
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, loadAttempt]);
+
+  const retry = useCallback(() => {
+    if (!open || !loadError) return;
+    setLoadAttempt((attempt) => attempt + 1);
+  }, [open, loadError]);
 
   // The universe of selectable model patterns = saved models ∪ everything the
   // draft endpoints declare.
@@ -50,6 +64,7 @@ export function usePiModelMenuDraft(open: boolean, providers: PiProvider[]) {
   // Auto-include any newly-appeared pattern (a model just added to a draft
   // endpoint) in the menu, so it shows in the dropdowns by default.
   useEffect(() => {
+    if (!open || !loaded) return;
     const additions: string[] = [];
     for (const pattern of universe) {
       if (!seenRef.current.has(pattern)) {
@@ -63,9 +78,10 @@ export function usePiModelMenuDraft(open: boolean, providers: PiProvider[]) {
       for (const pattern of additions) next.add(pattern);
       return next;
     });
-  }, [universe]);
+  }, [open, loaded, universe]);
 
   const toggle = useCallback((pattern: string) => {
+    if (!open || !loaded) return;
     setTouched(true);
     setSelected((cur) => {
       const next = new Set(cur);
@@ -73,18 +89,20 @@ export function usePiModelMenuDraft(open: boolean, providers: PiProvider[]) {
       else next.add(pattern);
       return next;
     });
-  }, []);
+  }, [open, loaded]);
 
   const getPatch = useCallback(
     (includeProviderEdits: boolean): string[] | undefined => {
-      if (!loaded) return undefined;
+      if (!open || !loaded) return undefined;
       if (!includeProviderEdits && !touched) return undefined;
       return [...selected].filter((p) => universe.has(p));
     },
-    [loaded, selected, touched, universe],
+    [open, loaded, selected, touched, universe],
   );
 
   const patterns = useMemo(() => [...universe].sort(), [universe]);
 
-  return { patterns, selected, toggle, getPatch };
+  return {
+    patterns, selected, loaded: open && loaded, loadError, retry, toggle, getPatch,
+  };
 }

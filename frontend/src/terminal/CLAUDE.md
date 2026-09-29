@@ -3,6 +3,8 @@
 Helpers behind `../TerminalsContext.tsx`. The context file owns React state,
 ref mirroring, persistence and context assembly. Helpers here keep list logic
 and PTY side effects separate so each can be reasoned about on its own.
+The terminal-list ref is mirrored in a layout effect so child lifecycle-cleanup
+effects read the committed list, including tabs that just arrived.
 
 - `terminalTypes.ts` — `TerminalSpec`, `Persisted`, `Ctx`. Re-exported as
   `TerminalSpec` from `../TerminalsContext` for backward compat.
@@ -75,6 +77,8 @@ and PTY side effects separate so each can be reasoned about on its own.
   cancelled only on unmount) and backend close IO outside state updaters.
   Registered tabs stay visible while closing; failures retain PTY ownership
   and show retry feedback. Unregistered closes still remove immediately.
+  Repeated commands for an in-flight close skip additional continuations;
+  empty/absent removals and all-failed bulk confirmations schedule no removal.
   Pending-close registry records project the same feedback after reconnect.
 - `terminalState.ts` — barrel that re-exports the pure functions from the two
   modules below, so `./terminalState` stays the stable import surface for
@@ -83,9 +87,10 @@ and PTY side effects separate so each can be reasoned about on its own.
   (`addTerminalToList`, `removeTerminalFromList`, `removeTerminalsFromList`,
   `terminalIdsForTask`, `planCloseTerminals`, `setServerIdInList`,
   `setStatusInList`, `renameTerminalInList`, `reorderTerminalInList`). No
-  active-id policy here — these only transform the list. `setStatusInList`
-  returns the SAME array reference when nothing changed; `planCloseTerminals`
-  walks the list once keyed by the id set (serverId DELETEs at most once).
+  active-id policy here — these only transform the list. Removal helpers and
+  `setStatusInList` return the SAME array reference when nothing changed;
+  `planCloseTerminals` walks the list once keyed by the id set (serverId DELETEs
+  at most once).
 - `terminalActivePolicy.ts` — active-id selection policies (`pickInitialActiveId`,
   `pickActiveAfterAdd`, `pickActiveAfterClose`, `pickActiveAfterCloseMany`) plus
   the private project-scoped panel grouping helpers they depend on
@@ -99,10 +104,10 @@ and PTY side effects separate so each can be reasoned about on its own.
   looping single-close per id re-read a stale ref and resurrected siblings.
   `closeTerminals`/`closeTerminal` remove from the list **functionally**
   (`setTerminals(current => removeTerminals(current, idSet))`) so that when
-  `useTaskTerminalCleanup` loops `closeTerminalsForTask` once per finalizing
-  task in one React batch (Merge All finishing several resolvers, a multi-select
-  delete), each call composes onto the latest list instead of the last
-  non-functional `setTerminals` clobbering the earlier tasks' removals. The
+  lifecycle cleanup closes several finalizing tasks in one React batch (Merge
+  All finishing several resolvers, a multi-select delete), each call composes
+  onto the latest list instead of the last non-functional `setTerminals`
+  clobbering the earlier tasks' removals. The
   DELETE set + active-id fallback are still derived from the single pre-batch
   `terminalsRef` snapshot, kept out of the StrictMode-double-invoked updater.
   `planCloseTerminals` walks the list once keyed by the id set, so a serverId

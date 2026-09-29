@@ -6,6 +6,7 @@ import type { Ctx, TerminalSpec } from '../terminal/terminalTypes';
 import {
   planCloseTerminals,
   removeTerminalFromList,
+  removeTerminalsFromList,
   reorderTerminalInList,
   setStatusInList,
   terminalIdsForTask,
@@ -32,6 +33,19 @@ function fixture(): TerminalSpec[] {
     term('c', 't2', 'sc'),
   ];
 }
+
+test('terminal removals preserve array identity for empty or already-absent ids', () => {
+  const terminals = fixture();
+  assert.equal(removeTerminalFromList(terminals, 'missing'), terminals);
+  assert.equal(removeTerminalsFromList(terminals, new Set()), terminals);
+  assert.equal(removeTerminalsFromList(terminals, new Set(['missing'])), terminals);
+  assert.equal(planCloseTerminals(terminals, new Set()).next, terminals);
+
+  const removed = removeTerminalsFromList(terminals, new Set(['a', 'b']));
+  assert.deepEqual(removed, [terminals[2]]);
+  assert.equal(removeTerminalsFromList(removed, new Set(['a', 'b'])), removed);
+  assert.deepEqual(terminals.map((t) => t.id), ['a', 'b', 'c'], 'input is never mutated');
+});
 
 test('terminalIdsForTask collects every terminal sharing the task id', () => {
   assert.deepEqual(terminalIdsForTask(fixture(), 't1'), ['a', 'b']);
@@ -102,7 +116,7 @@ test('planCloseTerminals dedupes the DELETE even if an id is passed twice', () =
 });
 
 // Cross-task regression: the single-call atomicity above wasn't enough.
-// useTaskTerminalCleanup's first effect loops closeTerminalsForTask(task.id)
+// useTaskTerminalCleanup originally looped closeTerminalsForTask(task.id)
 // once PER qa/done/deleted task in a synchronous batch. Each call routed
 // through the OLD closeTerminals, which read the same pre-batch terminalsRef
 // snapshot (the ref only re-syncs in the [terminals] effect after render) and
