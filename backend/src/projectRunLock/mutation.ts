@@ -1,52 +1,14 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { canonicalProjectPath } from '../projectPath.js';
 import { acquireProjectRunLock } from './acquire.js';
+import { getLocalProjectRunLockOwner } from './ownership.js';
+import type { Owner } from './ownership.js';
 import type { LockBody, ProjectRunLockHandle } from './types.js';
 
-type Owner = {
-  body: LockBody;
-  closing: boolean;
-  // false = an EXCLUSIVE holder (the workflow Run tests step): its ownership is
-  // never lent to a mutation — the mutation waits until the holder releases.
-  lendable: boolean;
-  tail: Promise<void>;
-};
-const localOwners = new Map<string, Owner>();
+export { registerProjectRunLock } from './ownership.js';
+
 const pendingAcquisitions = new Map<string, Promise<ProjectRunLockHandle>>();
 const mutationContext = new AsyncLocalStorage<{ projectPath: string; owner: Owner; active: boolean }>();
-
-// A process may lend its ownership to resolver callbacks while the merge worker
-// waits for them. Only this registry's acquired generation may be lent; another
-// backend must acquire the on-disk lock itself. Release drains accepted borrowers.
-export function registerProjectRunLock(
-  projectPath: string,
-  body: LockBody,
-  release: () => Promise<void>,
-  opts: { lendable?: boolean } = {},
-): ProjectRunLockHandle {
-  projectPath = canonicalProjectPath(projectPath);
-  const owner: Owner = { body, closing: false, lendable: opts.lendable !== false, tail: Promise.resolve() };
-  localOwners.set(projectPath, owner);
-  let released: Promise<void> | undefined;
-  return {
-    release: () => {
-      if (released) return released;
-      owner.closing = true;
-      released = (async () => {
-        await owner.tail;
-        try { await release(); }
-        finally {
-          // The owner stays registered (closing) until the lockfile is
-          // retired: an acquire attempted before that would find our own
-          // pid's lock on disk and be refused outright (steal.ts), so a
-          // waiting mutation must keep polling this registry instead.
-          if (localOwners.get(projectPath) === owner) localOwners.delete(projectPath);
-        }
-      })();
-      return released;
-    },
-  };
-}
 
 // How long a mutation will wait for a closing owner to drain its borrowers
 // and retire its lockfile (a handful of fs round-trips) before giving up.
@@ -69,7 +31,7 @@ export function currentProjectMutationOwner(projectPath: string): LockBody | und
 // undefined when there is none. A closing exclusive owner still counts until
 // its lockfile is retired.
 export function localExclusiveProjectHold(projectPath: string): LockBody | undefined {
-  const owner = localOwners.get(canonicalProjectPath(projectPath));
+  const owner = getLocalProjectRunLockOwner(canonicalProjectPath(projectPath));
   return owner && !owner.lendable ? owner.body : undefined;
 }
 
@@ -98,7 +60,7 @@ export async function waitForExclusiveProjectHold(
   const maxWaitMs = opts.maxWaitMs ?? EXCLUSIVE_HOLD_WAIT_MAX_MS;
   let announced = false;
   for (;;) {
-    const owner = localOwners.get(key);
+    const owner = getLocalProjectRunLockOwner(key);
     if (!owner || owner.lendable) return;
     if (!announced) {
       announced = true;
@@ -126,16 +88,16 @@ export async function waitForExclusiveProjectHold(
 export async function withProjectMutation<T>(projectPath: string, fn: () => Promise<T>): Promise<T> {
   projectPath = canonicalProjectPath(projectPath);
   const context = mutationContext.getStore();
-  if (context?.active && context.projectPath === projectPath && localOwners.get(projectPath) === context.owner) return fn();
+  if (context?.active && context.projectPath === projectPath && getLocalProjectRunLockOwner(projectPath) === context.owner) return fn();
 
   let acquired: ProjectRunLockHandle | undefined;
-  let owner = localOwners.get(projectPath);
+  let owner = getLocalProjectRunLockOwner(projectPath);
   // A closing owner (release() called, borrowers still draining) cannot admit
   // new work. Nothing that calls this retries — a resolver's one-shot Stop-hook
   // `/complete` that hit the old immediate throw got a 500, never signalled
   // the parked merge-run waiter, and left the run parked (and the project
   // lock held) for the waiter's 30-minute idle cap. So wait it out, briefly:
-  // the owner leaves `localOwners` once its borrowers drain and its lockfile
+  // the owner leaves the local registry once its borrowers drain and its lockfile
   // is retired, after which a fresh acquisition proceeds below.
   let closingDeadline: number | undefined;
   while (owner && (owner.closing || !owner.lendable)) {
@@ -143,7 +105,7 @@ export async function withProjectMutation<T>(projectPath: string, fn: () => Prom
       // Exclusive: wait for the holder to finish (it may pass through
       // `closing` on its way out — that is covered by the same wait).
       await waitForExclusiveProjectHold(projectPath);
-      owner = localOwners.get(projectPath);
+      owner = getLocalProjectRunLockOwner(projectPath);
       continue;
     }
     closingDeadline ??= Date.now() + CLOSING_RETRY_TOTAL_MS;
@@ -151,7 +113,7 @@ export async function withProjectMutation<T>(projectPath: string, fn: () => Prom
       throw new Error('[projectRunLock] project ownership is closing; retry the operation');
     }
     await new Promise<void>((resolve) => setTimeout(resolve, CLOSING_RETRY_STEP_MS));
-    owner = localOwners.get(projectPath);
+    owner = getLocalProjectRunLockOwner(projectPath);
   }
   if (!owner) {
     let pending = pendingAcquisitions.get(projectPath);
@@ -163,7 +125,7 @@ export async function withProjectMutation<T>(projectPath: string, fn: () => Prom
     finally {
       if (pendingAcquisitions.get(projectPath) === pending) pendingAcquisitions.delete(projectPath);
     }
-    owner = localOwners.get(projectPath)!;
+    owner = getLocalProjectRunLockOwner(projectPath)!;
   }
   if (owner.closing) throw new Error('[projectRunLock] project ownership is closing; retry the operation');
   const previous = owner.tail;

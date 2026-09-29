@@ -104,6 +104,8 @@ and silently aborts every later run on that project.
 | `liveness.ts` | `currentLockBody`, PID-alive probe, PID-reuse disambiguation. |
 | `steal.ts` | `clearStaleLockOrThrow` — decide steal vs. throw. |
 | `acquire.ts` | `acquireProjectRunLock` — restart-drain gate, pruning, publication + one stale-recovery retry. |
+| `ownership.ts` | `Owner`, the single canonical-project local registry, its internal live-owner lookup, and `registerProjectRunLock` — registration + cached release that drains borrowers before lockfile retirement. No dependency on acquisition or mutation scheduling. |
+| `mutation.ts` | Shared pending acquisitions, AsyncLocalStorage context, per-project mutation scheduling and closing/exclusive wait policy; compatibility re-export of `registerProjectRunLock`. |
 | `release.ts` | `releaseLockFile` — ownership check, then shared retirement protocol. |
 | `withLock.ts` | `withProjectRunLock` — acquire/run/release wrapper. |
 | `inspect.ts` | `inspectProjectRunLock` — read `{holder, alive}`, no acquire. |
@@ -133,7 +135,13 @@ Command reference from `backend/`: `npm run build`, `npm test`,
 `withProjectMutation(project, fn)` in `mutation.ts` explicitly borrows this
 process's acquired ownership through a per-project queue, or acquires a short
 owner if no run owns the project locally. An ownership record from another
-backend is never borrowable. Resolver re-sync/finalization, snapshot capture,
+backend is never borrowable. `ownership.ts` owns the single canonical-project
+registry and registration/release wrapper, shared by `acquire.ts` and
+`mutation.ts`. Its internal lookup returns the same live owner objects, including
+their mutable queue tail and closing state; acquisition sharing, AsyncLocalStorage
+context and scheduling/wait policy remain in `mutation.ts`. The existing
+`mutation.ts` import path for `registerProjectRunLock` remains a re-export.
+Resolver re-sync/finalization, snapshot capture,
 and restoration all enter this queue; nested calls inherit the active slot via
 AsyncLocalStorage. Only bounded repository operations belong in it, never a
 wait for an agent callback. This lets a merge worker retain `run.lock` while its
