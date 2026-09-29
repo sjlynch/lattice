@@ -17,6 +17,8 @@ to `dispatchRunTestsStep` (never `executeControlStep`); the spawn, hooks,
   advance), `abortRunTestsStep` (cancel / fail), `resumeRunTestsStep` (boot
   readopt), `noteRunTestsStep` (notes from outside the worker). IO goes through
   `RunTestsDeps` (`setRunTestsDepsForTest`).
+- `runTestsLifecycle.ts` — internal entry tracking, lookups and shared timer /
+  subscription cleanup, separate from full teardown that releases the lock.
 - `brief.ts` — renders `RUN_TESTS.md` from the `run-tests` instruction template
   (`../../instructionTemplates/templates/runTests.ts`); completion wording is
   `renderStepCompletionInstructions` from `../stepMarkdown.ts`.
