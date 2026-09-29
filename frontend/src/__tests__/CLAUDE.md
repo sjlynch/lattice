@@ -90,3 +90,10 @@ Selected suites and the contracts they own (not exhaustive):
   Asserts the leak is gone, that the new project still ends up running exactly
   its own startup terminal once its settings land, and that clearing the project
   empties the list.
+- `settingsSaveLifetime.test.ts` — rendered Settings controller and editable
+  tabs with App-like launch state and the real shared settings/startup/metrics
+  hooks. Deferred project and Pi-provider PATCHes pin that an accepted save
+  keeps persisting its captured data without publishing callbacks, closing,
+  or settling the busy/error state of a later project/dialog session. Includes
+  A → B → A, close/reopen, unmount, no-project global saves, a concurrent save
+  in B, and normal current-session success/error behavior.

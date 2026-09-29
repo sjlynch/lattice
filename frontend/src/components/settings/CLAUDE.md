@@ -31,7 +31,15 @@ Each tab is a `forwardRef` panel that:
   the handle stays live even for a tab the user never opened).
 
 `useSettingsController.ts` owns the per-tab imperative `ref` handles and runs
-the save (delegating to `saveSettings.ts`). Focused helpers keep the rest small:
+the save (delegating to `saveSettings.ts`). Each project/open transition creates
+a new session token, invalidated in layout-effect cleanup on replacement or
+unmount. Accepted saves finish persisting their captured project/global data,
+but parent callbacks, close, and saving/error settlement apply only while their
+session is active. A new session resets saving/error immediately; path equality
+alone cannot protect an A → B → A switch or close/reopen. Pinned by
+`__tests__/settingsSaveLifetime.test.ts` (rendered controller + App-like slices,
+deferred project/global saves, success/failure and overlapping sessions).
+Focused helpers keep the rest small:
 `settingsTabs.ts` is the tab metadata + `Tab` union, `useSettingsDirty.ts`
 derives the per-tab **dirty** map (`dirtyByTab` + a `bumpDirty` tick that
 re-reads the non-reactive patch getters after each body edit), and
