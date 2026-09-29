@@ -6,7 +6,9 @@ import type { PiModelInfo, PiProbeModel, PiProvider } from '../../../api';
 // endpoint while the probe is in flight shifts every later row down one, and
 // an index-addressed write then replaced a DIFFERENT endpoint's model list.
 // An endpoint that was removed (or renamed) meanwhile gets nothing — `cur` is
-// returned as-is. Keeps any per-model fields already saved for a model that
+// returned as-is. The optional predicate additionally fences the row instance
+// and request configuration, so a reused id cannot inherit an old result.
+// Keeps any per-model fields already saved for a model that
 // survived, but a context window the server advertised WINS over a stored one:
 // a re-detect is the user asking what this endpoint serves now, and a stale
 // window (a server restarted with a different `--max-model-len`) is exactly
@@ -15,8 +17,9 @@ export function applyDetectedModels(
   cur: PiProvider[],
   endpointId: string,
   probed: PiProbeModel[],
+  matchesRequest: (provider: PiProvider) => boolean = () => true,
 ): PiProvider[] {
-  const idx = cur.findIndex((p) => p.id === endpointId);
+  const idx = cur.findIndex((p) => p.id === endpointId && matchesRequest(p));
   if (idx === -1) return cur;
   return cur.map((p, i) =>
     i === idx

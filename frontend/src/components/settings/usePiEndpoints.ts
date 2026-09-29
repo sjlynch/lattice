@@ -20,10 +20,16 @@ function blankProvider(id: string): PiProvider {
 // Owns the draft endpoint list, its touched flag (the save clobber-guard), and
 // the patch/add/remove mutators. `mutate` is the shared "apply an updater and
 // mark touched" primitive the editor hook reuses for its compat / header /
-// model / detect edits. `setProviders` / `setTouched` are exposed raw for the
+// model / detect edits. `setProviders` / `setTouched` are exposed for the
 // initial load, which must replace the list WITHOUT marking it touched.
-export function useEndpointState() {
-  const [providers, setProviders] = useState<PiProvider[]>([]);
+export function useEndpointState(onRequestInvalidated?: (id: string) => void) {
+  const [providers, publishProviders] = useState<PiProvider[]>([]);
+  // Update request identity synchronously with edits, before React renders.
+  // A -> B -> A in one batch must still invalidate the request started at A.
+  const current = useRef<PiProvider[]>([]);
+  const requests = useRef(new WeakMap<PiProvider, { token: object; fingerprint: string }>());
+  const fingerprint = (p: PiProvider) =>
+    JSON.stringify([p.id, p.baseUrl, p.apiKey, p.headers, p.api]);
   const [touched, setTouched] = useState(false);
   // True once this open's global-settings GET succeeded. The save patch is the
   // WHOLE provider list (the backend deletes every managed provider missing
@@ -31,10 +37,42 @@ export function useEndpointState() {
   // written — see `piProvidersPatch`.
   const [loaded, setLoaded] = useState(false);
 
-  const mutate = (updater: (cur: PiProvider[]) => PiProvider[]) => {
-    setTouched(true);
-    setProviders(updater);
+  const setProviders = (value: PiProvider[] | ((cur: PiProvider[]) => PiProvider[])) => {
+    const next = typeof value === 'function' ? value(current.current) : value;
+    // A load/replacement creates fresh row instances, even if ids are reused.
+    for (const p of current.current) onRequestInvalidated?.(p.id);
+    for (const p of next) requests.current.set(p, { token: {}, fingerprint: fingerprint(p) });
+    current.current = next;
+    publishProviders(next);
   };
+
+  const mutate = (updater: (cur: PiProvider[]) => PiProvider[]) => {
+    const cur = current.current;
+    const next = updater(cur);
+    if (next === cur) return;
+    // Editors clone a row in place; removal/reordering retains the survivor's
+    // object. Keep its token across metadata edits and index shifts, but mint
+    // one for every request edit and newly added row.
+    const live = new Set<object>();
+    next.forEach((p, idx) => {
+      const previous = requests.current.get(p) ?? (cur[idx] && requests.current.get(cur[idx]));
+      const config = fingerprint(p);
+      const request = previous?.fingerprint === config ? previous : { token: {}, fingerprint: config };
+      requests.current.set(p, request);
+      live.add(request.token);
+    });
+    for (const p of cur) {
+      const request = requests.current.get(p);
+      if (request && !live.has(request.token)) onRequestInvalidated?.(p.id);
+    }
+    current.current = next;
+    setTouched(true);
+    publishProviders(next);
+  };
+
+  const requestToken = (p: PiProvider) => requests.current.get(p)?.token;
+  const isCurrentRequest = (token: object | undefined) =>
+    token !== undefined && current.current.some((p) => requestToken(p) === token);
 
   const patch = (idx: number, partial: Partial<PiProvider>) =>
     mutate((cur) => cur.map((p, i) => (i === idx ? { ...p, ...partial } : p)));
@@ -57,6 +95,9 @@ export function useEndpointState() {
     patch,
     add,
     remove,
+    requestToken,
+    isCurrentRequest,
+    getProvider: (idx: number) => current.current[idx],
   };
 }
 
@@ -66,7 +107,9 @@ export function useEndpointState() {
 // survivor's detected list / error to it. `detect` reports the discovered ids
 // back through `onDetected` so the caller can pre-select them on the provider;
 // it never touches provider state directly. `dropEndpoint` forgets one id's
-// entries when that endpoint is removed.
+// entries and invalidates pending work when that row's request changes or it
+// is removed. Each detect also gets a token so overlapping requests cannot
+// publish a result/error or clear a newer request's busy flag.
 //
 // `generation` fences probes to the Settings session that started them: `reset`
 // (run on every dialog open) and unmount bump it, and a probe that resolves
@@ -79,16 +122,19 @@ export function useProbeDetection() {
   const [detected, setDetected] = useState<Record<string, PiProbeModel[]>>({});
   const [probeError, setProbeError] = useState<Record<string, string>>({});
   const generation = useRef(0);
+  const requests = useRef(new Map<string, object>());
 
   useEffect(
     () => () => {
       generation.current += 1;
+      requests.current.clear();
     },
     [],
   );
 
   const reset = () => {
     generation.current += 1;
+    requests.current.clear();
     setProbing({});
     setDetected({});
     setProbeError({});
@@ -115,6 +161,8 @@ export function useProbeDetection() {
   };
 
   const dropEndpoint = (id: string) => {
+    // Deleting the request token fences removal/id reuse and request edits.
+    requests.current.delete(id);
     setProbing((p) => dropEndpointKey(p, id));
     setDetected((d) => dropEndpointKey(d, id));
     setProbeError((e) => dropEndpointKey(e, id));
@@ -124,42 +172,48 @@ export function useProbeDetection() {
     id: string,
     ep: PiProvider | undefined,
     onDetected: (models: PiProbeModel[]) => void,
+    isCurrentRequest: () => boolean = () => true,
   ) => {
+    const gen = generation.current;
+    const request = {};
+    requests.current.set(id, request);
+    const stale = () =>
+      gen !== generation.current || requests.current.get(id) !== request || !isCurrentRequest();
     if (!ep?.baseUrl.trim()) {
-      setProbeError((e) => ({ ...e, [id]: 'Enter a base URL first.' }));
+      setProbing((p) => stale() ? p : { ...p, [id]: false });
+      setProbeError((e) => stale() ? e : { ...e, [id]: 'Enter a base URL first.' });
       return;
     }
-    const gen = generation.current;
-    const stale = () => gen !== generation.current;
-    setProbing((p) => ({ ...p, [id]: true }));
-    setProbeError((e) => ({ ...e, [id]: '' }));
+    setProbing((p) => stale() ? p : { ...p, [id]: true });
+    setProbeError((e) => stale() ? e : { ...e, [id]: '' });
     try {
       const models = await probePiEndpoint(
         ep.baseUrl.trim(),
         ep.apiKey?.trim() || undefined,
+        ep.headers === undefined ? undefined : { ...ep.headers },
       );
       if (stale()) return;
-      setDetected((d) => ({ ...d, [id]: models }));
+      setDetected((d) => stale() ? d : { ...d, [id]: models });
       // A reachable endpoint that lists nothing is worth saying out loud —
       // otherwise the button just blinks and the checklist stays empty.
       if (models.length === 0) {
-        setProbeError((e) => ({
+        setProbeError((e) => stale() ? e : {
           ...e,
           [id]: 'Endpoint reachable, but it lists no models.',
-        }));
+        });
       }
       // Pre-select all detected models (the common case); the user can uncheck.
       onDetected(models);
     } catch (err) {
       if (stale()) return;
-      setProbeError((e) => ({
+      setProbeError((e) => stale() ? e : {
         ...e,
         [id]: (err as Error).message || 'Probe failed',
-      }));
+      });
     } finally {
       // `reset` already cleared `probing`; a stale probe must not write into
       // the new session's map.
-      if (!stale()) setProbing((p) => ({ ...p, [id]: false }));
+      if (!stale()) setProbing((p) => stale() ? p : { ...p, [id]: false });
     }
   };
 
@@ -175,7 +229,7 @@ export function useProbeDetection() {
 export function usePiEndpointEditors(
   endpoints: ReturnType<typeof useEndpointState>,
   probe: ReturnType<typeof useProbeDetection>,
-  providers: PiProvider[],
+  _providers: PiProvider[],
 ) {
   // Set/clear a single `compat` key — see setCompatKey.
   const updateCompat = (
@@ -227,13 +281,20 @@ export function usePiEndpointEditors(
   };
 
   const detectModels = (idx: number) => {
-    const ep = providers[idx];
+    const ep = endpoints.getProvider(idx);
     if (!ep) return;
+    const token = endpoints.requestToken(ep);
+    const isCurrent = () => endpoints.isCurrentRequest(token);
     // Replace the model list with what the server actually offers. Addressed
     // by the endpoint's id when the probe resolves, never by `idx` — see
     // applyDetectedModels.
-    return probe.detect(ep.id, ep, (probed) =>
-      endpoints.mutate((cur) => applyDetectedModels(cur, ep.id, probed)),
+    return probe.detect(
+      ep.id,
+      ep,
+      (probed) => endpoints.mutate((cur) => isCurrent()
+          ? applyDetectedModels(cur, ep.id, probed, (p) => endpoints.requestToken(p) === token)
+          : cur),
+      isCurrent,
     );
   };
 

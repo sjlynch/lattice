@@ -106,7 +106,7 @@ export function applyThinkingLevels(
 // have" signal) so one unreachable endpoint never aborts the whole refresh.
 async function probeProvider(provider: PiProvider): Promise<ProbedModel[] | null> {
   try {
-    return await probeEndpointModels(provider.baseUrl, provider.apiKey);
+    return await probeEndpointModels(provider.baseUrl, provider.apiKey, provider.headers);
   } catch (err) {
     // Covers unreachable AND reachable-but-refusing (a 401 from an endpoint
     // whose apiKey is an env-var NAME, which probes deliberately do not
@@ -151,8 +151,8 @@ async function runRefresh(): Promise<boolean> {
 
   // EVERY probe runs against the snapshot read above — the model listing AND
   // the per-model capability probe — and the results are only APPLIED after
-  // the re-read below. Remember which URL each result came FROM, so it can't
-  // be applied to a provider that has since been pointed somewhere else.
+  // the re-read below. Remember the URL/key/headers each result came FROM, so
+  // it can't be applied after the provider's request configuration changes.
   //
   // Capability detection, once per newly-seen model: ask each endpoint which
   // `reasoning_effort` values it accepts. This is what makes `xhigh` / `max`
@@ -165,6 +165,7 @@ async function runRefresh(): Promise<boolean> {
   const probedById: ProbeResults = new Map();
   await Promise.all(
     targets.map(async (p) => {
+      const request = requestFingerprint(p);
       const models = await probeProvider(p);
       const thinking = new Map<string, string[] | null>();
       const pending = modelsNeedingThinkingProbe(
@@ -173,17 +174,17 @@ async function runRefresh(): Promise<boolean> {
       );
       await Promise.all(
         pending.map(async (m) => {
-          thinking.set(m.id, await probeThinkingLevels(p.baseUrl, p.apiKey, m.id));
+          thinking.set(m.id, await probeThinkingLevels(p.baseUrl, p.apiKey, m.id, p.headers));
         }),
       );
-      probedById.set(p.id, { baseUrl: p.baseUrl, models, thinking });
+      probedById.set(p.id, { request, models, thinking });
     }),
   );
 
   // Re-read before writing. Probing takes real time, and a Settings save can
   // land in the middle of it — writing back the list we read at the start would
   // silently undo the user's edit. Apply each result only where it still
-  // belongs: same provider id, still auto-discovering, still the same baseUrl.
+  // belongs: same provider id, still auto-discovering, same URL/key/headers.
   // NOTHING may be awaited between this read and the write below — every
   // `await` in that gap is a window in which a save is lost.
   //
@@ -223,15 +224,19 @@ async function runRefresh(): Promise<boolean> {
 
 type ProbeResults = Map<
   string,
-  { baseUrl: string; models: ProbedModel[] | null; thinking: Map<string, string[] | null> }
+  { request: string; models: ProbedModel[] | null; thinking: Map<string, string[] | null> }
 >;
 
+function requestFingerprint(p: PiProvider): string {
+  return JSON.stringify([p.baseUrl, p.apiKey, p.headers]);
+}
+
 // Apply a sweep's probe results to the CURRENT provider list: only where the
-// result still belongs (same id, still auto-discovering, same baseUrl).
+// result still belongs (same id, still auto-discovering, same URL/key/headers).
 function applyProbeResults(current: PiProvider[], probedById: ProbeResults): PiProvider[] {
   return current.map((p) => {
     const hit = probedById.get(p.id);
-    if (!hit || hit.baseUrl !== p.baseUrl || !isAutoDiscoverEnabled(p)) return p;
+    if (!hit || hit.request !== requestFingerprint(p) || !isAutoDiscoverEnabled(p)) return p;
     const models = nextModelsForProvider(p, hit.models).map((m) => {
       // Still unprobed as far as the stored record knows, and the probe got a
       // real answer → record it. A `null` (no answer) leaves the model alone so

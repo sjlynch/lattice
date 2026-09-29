@@ -45,8 +45,8 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
 ) {
   // The endpoint list + touched flag + patch/add/remove, and the per-endpoint
   // probe state + "Detect models" flow, each live in a focused hook.
-  const endpoints = useEndpointState();
   const probe = useProbeDetection();
+  const endpoints = useEndpointState(probe.dropEndpoint);
   const { providers } = endpoints;
   const { probing, detected, probeError } = probe;
   // The per-endpoint field editors (compat / headers / model checklist /
@@ -116,8 +116,9 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
   // Remove an endpoint and forget its id-keyed transient state (probe results /
   // Advanced toggle) so a survivor never inherits it.
   const removeEndpoint = (idx: number, id: string) => {
+    // Endpoint state invalidates this row's pending probe before publishing
+    // the removal, so even an immediately reused provider id is fenced out.
     endpoints.remove(idx);
-    probe.dropEndpoint(id);
     setAdvancedOpen((o) => dropEndpointKey(o, id));
   };
 

@@ -18,6 +18,12 @@ Commands from `frontend/` (reference only): `npm test` (tests), `npx tsc -b`
 
 Selected suites and the contracts they own (not exhaustive):
 
+- `terminalRegistrySync.test.ts` / `useTerminalRegistrySync.test.ts` — pure
+  reconciliation and rendered provider/hook coverage for late registry HTTP
+  responses. Deferred lists/restores and a controlled WS stream pin newer pty
+  identities, failures, removals, remote/local additions, project-switch
+  cancellation, and the Sidebar's pane status/remount behavior. Restore summaries
+  still mark queued tabs pending when queue events were missed.
 - `searchMatcher.test.ts` — `buildSearchRegExp` (`components/forceGraph/`):
   wildcard→regex translation, metacharacter escaping, case-insensitive matching,
   and the null-on-empty/invalid-regex guard. Must stay in sync with the backend

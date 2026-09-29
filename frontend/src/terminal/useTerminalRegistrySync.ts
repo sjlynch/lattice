@@ -11,6 +11,7 @@ import type { RestoreNotice, TerminalSpec } from './terminalTypes';
 import { fetchLiveTerminalIds } from './terminalApi';
 import {
   applyTerminalTabsEvent,
+  applyRestoreSummary,
   mergeRegistryTabs,
   restorableCount,
 } from './terminalRegistrySync';
@@ -39,9 +40,23 @@ type Options = {
   // The project's `restoreTerminalsOnOpen` setting, or null while loading.
   restoreMode: RestoreTerminalsMode | null;
   setTerminals: Dispatch<SetStateAction<TerminalSpec[]>>;
+  terminalsRef: MutableRefObject<TerminalSpec[]>;
   // Mirrors `activeFolder`; read by `runRestore` so it can stay stable.
   activeFolderRef: MutableRefObject<string>;
 };
+
+// Event generations belong to one subscription lifetime, so a response from
+// before A -> B -> A cannot reconcile into the new visit to A.
+type RegistrySession = {
+  folder: string;
+  generation: number;
+  snapshotGeneration: number;
+  changedAt: Map<string, number>;
+};
+
+function changedSince(session: RegistrySession, generation: number): Set<string> {
+  return new Set([...session.changedAt].filter(([, at]) => at > generation).map(([id]) => id));
+}
 
 export type TerminalRegistrySync = {
   runRestore: (opts?: { retry?: boolean }) => Promise<RestoreSummary | null>;
@@ -58,6 +73,7 @@ export function useTerminalRegistrySync({
   activeFolder,
   restoreMode,
   setTerminals,
+  terminalsRef,
   activeFolderRef,
 }: Options): TerminalRegistrySync {
   const [lastRestore, setLastRestore] = useState<RestoreNotice | null>(null);
@@ -74,18 +90,26 @@ export function useTerminalRegistrySync({
   // explicit "Restore tabs" click always goes through: the backend answers
   // `already-running` if a pass is still busy, and that is the feedback the
   // button owes the user.
-  const restoreInFlightRef = useRef<Map<string, Promise<RestoreSummary | null>>>(new Map());
+  const registrySessionRef = useRef<RegistrySession | null>(null);
+  const restoreInFlightRef = useRef<Map<string, {
+    session: RegistrySession;
+    promise: Promise<RestoreSummary | null>;
+  }>>(new Map());
 
   const runRestore = useCallback(async (opts: { retry?: boolean } = {}): Promise<RestoreSummary | null> => {
     const folder = activeFolderRef.current;
-    if (!folder) return null;
+    const session = registrySessionRef.current;
+    if (!folder || !session || session.folder !== folder) return null;
     const inFlight = restoreInFlightRef.current.get(folder);
-    if (inFlight && !opts.retry) return inFlight;
+    if (inFlight?.session === session && !opts.retry) return inFlight.promise;
+    const generation = session.generation;
+    const requestedServerIds = new Map(terminalsRef.current.map((t) => [t.id, t.serverId] as const));
     let run: Promise<RestoreSummary | null> | null = null;
     run = (async () => {
       try {
         const summary = await restoreTerminalTabs(folder, opts);
-        if (activeFolderRef.current === folder) setRestorePrompt(null);
+        if (registrySessionRef.current !== session || activeFolderRef.current !== folder) return summary;
+        setRestorePrompt(null);
         // The HTTP response is the authoritative summary for a restore THIS
         // tab asked for: the matching WS `restore-summary` can fire before
         // the socket is even open on a fresh page load. The WS event still
@@ -95,29 +119,29 @@ export function useTerminalRegistrySync({
         if (isNoteworthy(summary) && (summary.status !== 'already-running' || opts.retry)) {
           setLastRestore({ projectPath: folder, summary, at: Date.now() });
         }
-        // Tabs being relaunched: flag them "restored" now and drop the dead
-        // pty id, so no pane attaches to it while the relaunch is in flight.
-        // The registry's own upsert/restored events (or the next `hello`)
-        // deliver the new pty id.
-        const relaunched = new Set(summary.relaunchedIds ?? []);
-        if (relaunched.size > 0) {
-          setTerminals((ts) =>
-            ts.map((t) =>
-              relaunched.has(t.id) && t.registered
-                ? { ...t, restored: true, ...(t.serverId ? { serverId: undefined, restore: 'pending' as const } : {}) }
-                : t,
-            ),
-          );
+        // Fall back to the acknowledgement when this client missed the WS
+        // queue event. Tab events and any new pty/failure from a hello must
+        // win; a hello that still names the requested dead pty can safely be
+        // marked pending by the acknowledgement.
+        const changedIds = changedSince(session, generation);
+        const snapshotChanged = session.snapshotGeneration > generation;
+        // This acknowledgement also supersedes a list request made before
+        // the restore, even when no queue event reached our socket.
+        for (const id of summary.relaunchedIds ?? []) {
+          session.changedAt.set(id, ++session.generation);
         }
+        setTerminals((ts) => registrySessionRef.current === session
+          ? applyRestoreSummary(ts, summary, folder, requestedServerIds, changedIds, snapshotChanged)
+          : ts);
         return summary;
       } catch (err) {
         console.warn('[lattice] terminal restore failed:', err);
         return null;
       } finally {
-        if (run && restoreInFlightRef.current.get(folder) === run) restoreInFlightRef.current.delete(folder);
+        if (run && restoreInFlightRef.current.get(folder)?.promise === run) restoreInFlightRef.current.delete(folder);
       }
     })();
-    if (!opts.retry) restoreInFlightRef.current.set(folder, run);
+    if (!opts.retry) restoreInFlightRef.current.set(folder, { session, promise: run });
     return run;
     // Stable on purpose: reads the folder from `activeFolderRef`, and
     // `setTerminals` is a React state setter.
@@ -142,10 +166,18 @@ export function useTerminalRegistrySync({
     setRestorePrompt(null);
     if (!activeFolder) return;
     let cancelled = false;
+    const session: RegistrySession = {
+      folder: activeFolder, generation: 0, snapshotGeneration: 0, changedAt: new Map(),
+    };
+    registrySessionRef.current = session;
+    const added = new Set<string>();
+    addedDuringFetchRef.current = added;
     const unsub = subscribeTerminalTabs(activeFolder, (ev) => {
       if (cancelled) return;
       if (ev.type === 'hello') {
-        setTerminals((ts) => mergeRegistryTabs(ts, ev.tabs, activeFolder, addedDuringFetchRef.current));
+        session.snapshotGeneration = ++session.generation;
+        const keepIds = new Set(addedDuringFetchRef.current);
+        setTerminals((ts) => cancelled ? ts : mergeRegistryTabs(ts, ev.tabs, activeFolder, keepIds));
         // The socket's snapshot is as good as the HTTP answer for gating the
         // auto-restore — a slow or failed fetch must not leave every pending
         // tab unmountable with no restore ever fired.
@@ -158,22 +190,30 @@ export function useTerminalRegistrySync({
         }
         return;
       }
+      const id = ev.type === 'upsert' || ev.type === 'restored' ? ev.record.id : ev.id;
+      session.changedAt.set(id, ++session.generation);
       setTerminals((ts) => applyTerminalTabsEvent(ts, ev));
     });
     // The HTTP fetch is what gates the auto-restore: it settles even when the
     // WS is slow to connect, and its result tells 'ask' mode how many tabs
     // are on offer.
-    const added = new Set<string>();
-    addedDuringFetchRef.current = added;
     // A backend still booting (the dev runner restarting it under the page)
     // fails the first fetch; retry a few times before leaving it to the WS
     // `hello` above.
     const attempt = (n: number): void => {
+      const generation = session.generation;
       void fetchTerminalTabs(activeFolder)
         .then((records) => {
           if (cancelled) return;
-          setTerminals((ts) => mergeRegistryTabs(ts, records, activeFolder, added));
-          setRegistryLoaded((cur) => (cur && cur.folder === activeFolder ? cur : { folder: activeFolder, records }));
+          // A complete WS snapshot supersedes the entire older HTTP view.
+          // Otherwise preserve just the tabs changed by intervening events,
+          // including tombstones and additions from another browser tab.
+          if (session.snapshotGeneration <= generation) {
+            const changedIds = changedSince(session, generation);
+            const keepIds = new Set(added);
+            setTerminals((ts) => cancelled ? ts : mergeRegistryTabs(ts, records, activeFolder, keepIds, changedIds));
+            setRegistryLoaded((cur) => (cur && cur.folder === activeFolder ? cur : { folder: activeFolder, records }));
+          }
           if (addedDuringFetchRef.current === added) addedDuringFetchRef.current = null;
         })
         .catch((err) => {
@@ -189,6 +229,7 @@ export function useTerminalRegistrySync({
     attempt(1);
     return () => {
       cancelled = true;
+      if (registrySessionRef.current === session) registrySessionRef.current = null;
       if (addedDuringFetchRef.current === added) addedDuringFetchRef.current = null;
       unsub();
     };

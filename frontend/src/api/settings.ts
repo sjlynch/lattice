@@ -32,10 +32,11 @@ export async function getPiModels(): Promise<PiModelsResult> {
 export async function probePiEndpoint(
   baseUrl: string,
   apiKey?: string,
+  headers?: Record<string, string>,
 ): Promise<PiProbeModel[]> {
   const data = await postJson<{ models: PiProbeModel[] }>(
     '/api/pi-endpoints/probe',
-    { baseUrl, apiKey },
+    { baseUrl, apiKey, headers },
   );
   return data.models ?? [];
 }
