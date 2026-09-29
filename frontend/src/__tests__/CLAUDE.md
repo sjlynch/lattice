@@ -16,7 +16,7 @@ Commands from `frontend/` (reference only): `npm test` (tests), `npx tsc -b`
 
 ## Suites
 
-Pure-helper suites pinning a single source of truth (not exhaustive):
+Selected suites and the contracts they own (not exhaustive):
 
 - `searchMatcher.test.ts` — `buildSearchRegExp` (`components/forceGraph/`):
   wildcard→regex translation, metacharacter escaping, case-insensitive matching,
@@ -65,8 +65,19 @@ Pure-helper suites pinning a single source of truth (not exhaustive):
   `withUserInstructions` trims + appends `{{user_instructions}}` exactly once
   (just the token for a blank prompt); `ensureUserInstructions` prepends the
   built-in without duplicating or reordering an existing one.
-- `startupTerminalProjectSwitch.test.ts` — the one React-rendering suite here
-  that exists for a *spawn* rather than a value. Drives the real
+- `backendRestartResilience.test.ts` — React hook/adapter tests rendering the real
+  `useWorkflowRunActions` and `useTaskLifecycleActions` (Resume uses
+  `GitSetupProvider` + `TerminalsProvider`). Keep HTTP acknowledgements deferred
+  and timing/WS boundaries controlled (`installManualTimers`, `FakeWebSocket`);
+  this is not a real-backend browser suite. Pins safe retries of known-unaccepted
+  `503`/`ECONNREFUSED` requests; ambiguous workflow starts/resumes must not allocate
+  again after server-side completion, cancellation, or queue settlement. Later
+  deliberate Run/Resume actions remain allowed; allocation and terminal
+  replacement/deletion assertions guard these boundaries. Also owns workflow
+  terminal outcomes, queue stopping on uncertainty, recovering `hello`/vanished-run
+  reconciliation, and reconnect health.
+- `startupTerminalProjectSwitch.test.ts` — React-rendering coverage for startup
+  terminal spawns across project switches. Drives the real
   `useUserSettings` + `useStartupTerminalSync` through a project switch with the
   new project's settings fetch held open, alongside a stand-in for Sidebar's
   spawn effect (keyed on `activeFolder`, launching each command with cwd = the
