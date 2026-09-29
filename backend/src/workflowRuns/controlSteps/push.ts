@@ -42,10 +42,9 @@ const PUSH_STEP_TIMEOUT_MS = 15 * 60 * 1000;
 // leaving it, so a slowly-draining lane is never killed mid-drain.
 const PUSH_DRAIN_TIMEOUT_MS = 15 * 60 * 1000;
 
-// Injectable seam (production default below). The cancel/timeout race around
-// startPushSession (Fix 3) is the subtle part, so the regression test overrides
-// these to fire a 'cancelled' event WHILE startPushSession is in flight and
-// asserts the resolved session is killed and no 'push complete' is emitted.
+// Injectable seam (production default below). Tests exercise cancellation and
+// timeout while startup waits for capacity or drains an in-flight PTY create,
+// plus the post-spawn guard and adoption of a recovered session.
 export type PushStepDeps = {
   startPushSession: typeof startPushSession;
   getPushRun: typeof getPushRun;
@@ -167,6 +166,8 @@ type PushSessionWatch = {
   // Resolves once the push run reports `done`, the workflow run is
   // cancelled/errored, the timeout fires, or killAndAbandon() runs.
   readonly done: Promise<void>;
+  // Owned by this attempt; reaches the spawn queue through the scratch adapters.
+  readonly signal: AbortSignal;
   readonly sessionId: string | null;
   readonly cancelled: boolean;
   readonly timedOut: boolean;
@@ -189,6 +190,7 @@ function createPushSessionWatch(
   run: WorkflowRun,
   deps: PushStepDeps,
 ): PushSessionWatch {
+  const controller = new AbortController();
   let sessionId: string | null = null;
   let sessionServerId: string | undefined;
   // Set by the cancel handler. startPushSession's serverId isn't known until it
@@ -229,10 +231,11 @@ function createPushSessionWatch(
     if (ev.type !== 'cancelled' && ev.type !== 'errored') return;
     if (!('run' in ev) || ev.run.id !== run.id) return;
     cancelled = true;
-    // If the session already spawned, kill it now. If startPushSession is still
-    // in flight (serverId not yet known), the post-spawn re-check in runPushStep
-    // kills it once it resolves — otherwise the push would run to completion
-    // despite the cancel and only be reaped by its own Stop hook/timeout.
+    // Remove an unstarted admission. If PTY creation is already in flight,
+    // queuedCreateSession drains and reclaims it before startup rejects.
+    controller.abort(new Error('push step cancelled'));
+    // Kill an attached session too. The post-spawn re-check covers cancellation
+    // after the queue delivered its result but before watch.attach().
     void killAndAbandon();
   });
   // Hard timeout backstop. If Claude crashed before the Stop hook fired the
@@ -250,12 +253,14 @@ function createPushSessionWatch(
       return;
     }
     timedOut = true;
+    controller.abort(new Error(timeoutMessage));
     console.warn(`[workflow-run] ${run.id} ${timeoutMessage} — killing the push session`);
     void killAndAbandon();
   }, timeoutMs);
 
   return {
     done,
+    signal: controller.signal,
     get sessionId() { return sessionId; },
     get cancelled() { return cancelled; },
     get timedOut() { return timedOut; },
@@ -296,6 +301,7 @@ export async function runPushStep(
     const session = adopted ?? await deps.startPushSession(wf.projectPath, backendOrigin, {
       brief: 'workflow',
       workflow: { runId: run.id, stepIndex },
+      signal: watch.signal,
     });
     watch.attach(session);
 
@@ -341,6 +347,15 @@ export async function runPushStep(
       throw new Error('push session terminal exited without reporting completion');
     }
     emitControlProgress(run, stepIndex, 'push', 1, 1, 'push complete');
+  } catch (err) {
+    // Await startup itself: aborting it withdraws queued work and drains any
+    // PTY already being created before the control-step lock can be released.
+    // Only our abort is a normal cancellation; preserve real cleanup failures.
+    if (watch.signal.aborted && err === watch.signal.reason &&
+        (watch.cancelled || run.status !== 'running')) return;
+    // The timeout abort reason carries the push timeout message to the worker,
+    // which errors the still-running workflow instead of advancing it.
+    throw err;
   } finally {
     watch.dispose();
     if (watch.sessionId) deps.forgetPushRun?.(watch.sessionId);

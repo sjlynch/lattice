@@ -88,6 +88,8 @@ export type StartedHomeScratchSession = {
 export async function startHomeScratchAgentSession(args: {
   paths: HomeScratchPaths;
   projectPath: string;
+  // Cancellation is drained by queuedCreateSession before scratch cleanup.
+  signal?: AbortSignal;
   instructionsFileName: string;
   installHooks: (ctx: HomeScratchSessionContext) => Promise<void>;
   renderInstructions: (
@@ -150,6 +152,7 @@ export async function startHomeScratchAgentSession(args: {
       kind: args.queueKind,
       priority: args.queuePriority,
       dedupeKey: `${args.dedupeKeyPrefix}:${session.id}`,
+      signal: args.signal,
       opts,
     });
   } catch (err) {
