@@ -34,8 +34,10 @@ test('a real compiler exit -1 preserves the backend and recovers through workflo
       if (!process.argv.includes('--watchFile')) {
         process.stdout.write('Found 0 errors. Watching for file changes.\\n', () => process.exit(-1));
       } else {
-        console.log('Found 0 errors. Watching for file changes.');
+        // Capture the baseline before readiness lets the parent send 'begin'.
+        // Otherwise a delayed read can swallow that command as the baseline.
         let previous = fs.readFileSync(control, 'utf8');
+        console.log('Found 0 errors. Watching for file changes.');
         setInterval(() => {
           const command = fs.readFileSync(control, 'utf8');
           if (command === previous) return;
