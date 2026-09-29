@@ -40,6 +40,173 @@ test('resolver mutations borrow a waiting run owner and serialize against snapsh
   assert.equal(await inspectProjectRunLock(project), null);
 });
 
+for (const rejects of [false, true]) {
+  test(`escaped context queues behind a borrower after its originating mutation ${rejects ? 'rejects' : 'succeeds'}`, { timeout: 5_000 }, async (t) => {
+    const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-mutation-expired-'));
+    const handle = await acquireProjectRunLock(project, 'merge-run');
+    const resume = deferred();
+    const resumed = deferred();
+    const entered = deferred();
+    const finish = deferred();
+    const pending: Promise<unknown>[] = [];
+    const order: string[] = [];
+    let owner: ReturnType<typeof currentProjectMutationOwner>;
+    let continuation: Promise<string> | undefined;
+    t.after(async () => {
+      resume.resolve();
+      finish.resolve();
+      await Promise.allSettled(pending);
+      await handle.release();
+      await fs.rm(project, { recursive: true, force: true });
+    }, { timeout: 2_000 });
+
+    const error = new Error('originating borrower failed');
+    const originating = withProjectMutation(project, async () => {
+      owner = currentProjectMutationOwner(project);
+      assert.equal(owner?.label, 'merge-run');
+      // This unawaited continuation inherits the slot's AsyncLocalStorage.
+      continuation = (async () => {
+        await resume.promise;
+        try {
+          assert.equal(currentProjectMutationOwner(project), undefined);
+          const queued = withProjectMutation(project, async () => {
+            order.push('continuation');
+            assert.equal(currentProjectMutationOwner(project)?.label, 'merge-run');
+            assert.strictEqual(currentProjectMutationOwner(project), owner);
+            return 'continuation-result';
+          });
+          resumed.resolve();
+          const result = await queued;
+          assert.equal(currentProjectMutationOwner(project), undefined);
+          return result;
+        } finally {
+          resumed.resolve();
+        }
+      })();
+      pending.push(continuation);
+      void continuation.catch(() => {});
+      if (rejects) throw error;
+      return 'originating-result';
+    });
+    pending.push(originating);
+    if (rejects) {
+      await assert.rejects(originating, (caught) => {
+        assert.strictEqual(caught, error);
+        return true;
+      });
+    } else {
+      assert.equal(await originating, 'originating-result');
+    }
+    assert.ok(continuation);
+    assert.ok(owner?.ownerId);
+
+    // Keep this exact registered owner alive: replacement-owner detection
+    // cannot fence the expired context for us.
+    const borrower = withProjectMutation(project, async () => {
+      assert.strictEqual(currentProjectMutationOwner(project), owner);
+      order.push('borrower');
+      entered.resolve();
+      await finish.promise;
+      order.push('borrower-done');
+    });
+    pending.push(borrower);
+    void borrower.catch(() => {});
+    await entered.promise;
+    resume.resolve();
+    await resumed.promise;
+    assert.deepEqual(order, ['borrower'], 'the expired context must not bypass the active borrower');
+    assert.equal((await inspectProjectRunLock(project))?.holder.ownerId, owner.ownerId);
+    finish.resolve();
+    await borrower;
+    assert.equal(await continuation, 'continuation-result');
+    assert.deepEqual(order, ['borrower', 'borrower-done', 'continuation']);
+    assert.equal((await inspectProjectRunLock(project))?.holder.ownerId, owner.ownerId);
+    await handle.release();
+    assert.equal(await inspectProjectRunLock(project), null);
+  });
+}
+
+test('release drains a queued successor after a borrowed mutation rejects', { timeout: 5_000 }, async (t) => {
+  const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-mutation-failed-borrower-'));
+  const handle = await acquireProjectRunLock(project, 'merge-run');
+  const owner = (await inspectProjectRunLock(project))?.holder;
+  const entered = deferred();
+  const fail = deferred();
+  const successorEntered = deferred();
+  const finish = deferred();
+  const pending: Promise<unknown>[] = [];
+  const order: string[] = [];
+  let calls = 0;
+  let released = false;
+  t.after(async () => {
+    fail.resolve();
+    finish.resolve();
+    await Promise.allSettled(pending);
+    await handle.release();
+    await fs.rm(project, { recursive: true, force: true });
+  }, { timeout: 2_000 });
+  assert.ok(owner?.ownerId);
+
+  const error = new Error('borrowed mutation failed');
+  const failing = withProjectMutation(project, async () => {
+    order.push('failing');
+    entered.resolve();
+    await fail.promise;
+    throw error;
+  });
+  const rejected = assert.rejects(failing, (caught) => {
+    assert.strictEqual(caught, error);
+    return true;
+  });
+  pending.push(failing, rejected);
+  void rejected.catch(() => {});
+  await entered.promise;
+  const successor = withProjectMutation(project, async () => {
+    calls++;
+    order.push('successor');
+    assert.equal(currentProjectMutationOwner(project)?.label, 'merge-run');
+    assert.equal(currentProjectMutationOwner(project)?.ownerId, owner?.ownerId);
+    successorEntered.resolve();
+    await finish.promise;
+    assert.deepEqual((await inspectProjectRunLock(project))?.holder, owner);
+    assert.equal(released, false, 'the lock remains owned through the successor callback');
+    order.push('successor-done');
+    return 'successor-result';
+  });
+  pending.push(successor);
+  void successor.catch(() => {});
+  assert.equal(calls, 0, 'the successor is queued before the borrower fails');
+  fail.resolve();
+  await rejected;
+  await successorEntered.promise;
+  const releasing = handle.release().then(() => {
+    released = true;
+    order.push('released');
+  });
+  pending.push(releasing);
+  void releasing.catch(() => {});
+  assert.deepEqual((await inspectProjectRunLock(project))?.holder, owner);
+  assert.equal(released, false, 'release must wait for the accepted successor');
+  assert.equal(calls, 1);
+  assert.deepEqual(order, ['failing', 'successor']);
+  finish.resolve();
+  assert.equal(await successor, 'successor-result');
+  await releasing;
+  assert.equal(released, true);
+  assert.equal(calls, 1);
+  assert.deepEqual(order, ['failing', 'successor', 'successor-done', 'released']);
+  assert.equal(await inspectProjectRunLock(project), null);
+
+  const later = await acquireProjectRunLock(project, 'after-failed-borrower');
+  try {
+    assert.equal((await inspectProjectRunLock(project))?.holder.label, 'after-failed-borrower');
+    assert.notEqual((await inspectProjectRunLock(project))?.holder.ownerId, owner?.ownerId);
+  } finally {
+    await later.release();
+  }
+  assert.equal(await inspectProjectRunLock(project), null);
+});
+
 test('release drains accepted callbacks; a mutation arriving meanwhile waits and then runs on its own lock', async (t) => {
   const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-mutation-drain-'));
   t.after(() => fs.rm(project, { recursive: true, force: true }));
