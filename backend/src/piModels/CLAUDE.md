@@ -1,10 +1,9 @@
 # backend/src/piModels
 
 Pi model config for the harness dropdowns. `../piModels.ts` is a re-export
-barrel (`export *` from `discovery` + `reconcile` + `probe`); every consumer
-(`routes/settings`, `routes/globalSettings`, `server/startup`, tasks, workflow
-steps, tests) keeps importing from `'../piModels.js'`. The load-bearing split
-is **read vs. write of Pi config**.
+barrel (`discovery`, `reconcile`, `probe`, `autoDiscover`); consumers keep
+importing from `'../piModels.js'`. The load-bearing split is **read vs. write
+of Pi config**.
 
 ## Read-only discovery map
 
@@ -28,7 +27,10 @@ is **read vs. write of Pi config**.
   wins when non-empty; otherwise default to every model from a
   models.json-declared provider plus Pi's current default. Entries remain valid
   if reported by `pi --list-models` **or** declared in `models.json`, so a
-  fragile CLI probe doesn't hide explicitly configured models.
+  fragile CLI probe doesn't hide explicitly configured models. Auto-discovered
+  providers with at most `PI_MODELS_CONFIG.aggregatorModelCount` (5) models bypass
+  curation; larger lists respect it. Only labels that actually collide get a
+  `(provider-id)` suffix.
 - `types.ts` — shared `PiModelInfo`, `PiMenuEntry`, `PiModelsResult`,
   `ModelsJson`, and cache shapes.
 
@@ -38,6 +40,9 @@ is **read vs. write of Pi config**.
   `globalSettings.piProviders` into `~/.pi/agent/models.json` (atomic
   temp→rename), preserving every hand-written provider and precisely deleting
   removed-managed ones via the `~/.lattice/piManagedProviders.json` sidecar.
+  Absent `headers` / `compat` preserve prior hand-written values on adoption;
+  explicit `{}` clears those overrides from models.json. The empty maps remain
+  in global settings so later sweeps cannot restore the cleared overrides.
   Every managed provider always gets an `apiKey` (defaults `"local"`) — one
   keyless provider makes Pi reject the *whole* file. Reconcile invalidates
   discovery's cache, skips the write entirely when the file already matches, and
@@ -49,21 +54,25 @@ is **read vs. write of Pi config**.
   reading as "no providers" and deleting every managed one.
 - `probe.ts` — `probeEndpointModels()` GETs `<baseUrl>/models` (OpenAI-compatible)
   behind the "Detect models" button, returning `{id, contextWindow?}` per model;
-  only a literal `apiKey` becomes the bearer token (never ambient env /
-  `!command` secrets). The context window is read from whichever key the server
-  uses (`max_model_len` on vLLM/NInfer/SGLang, `context_length` on
+  probe auth uses literal `apiKey` text: `$VAR` / `${VAR}` is not interpolated,
+  and `!command` supplies no token. Endpoints requiring those resolved secrets
+  may reject probes; endpoints allowing unauthenticated access can succeed.
+  The context window is read from whichever key the server uses
+  (`max_model_len` on vLLM/NInfer/SGLang, `context_length` on
   llama.cpp/LM Studio, …) and carried onto the saved provider model, so
   models.json gets the endpoint's real window instead of Pi's conservative
   default — the difference between a 262K-context local server being usable and
   being quietly capped.
 - `autoDiscover.ts` — `refreshEndpointDiscovery()` keeps each `autoDiscover`
   endpoint's model list matching what it actually serves: probe → merge into
-  `globalSettings.piProviders` → reconcile. Called at boot, after a settings
-  save, and from `GET /api/pi-models` (every harness dropdown open). A failed or
-  empty probe KEEPS the stored models — blanking them is what leaves Pi with no
-  model to run — and reconcile runs on every sweep, so a models.json that
-  drifted out of sync is repaired even when the probe changed nothing. The
-  provider list is **re-read inside the global-settings write lock**
+  `globalSettings.piProviders` → reconcile. Discovery sees only currently served
+  `/models` entries; it cannot enumerate unloaded weights or load another model.
+  Called at boot, after a settings save, and from `GET /api/pi-models` (every
+  harness dropdown open). A failed or empty probe KEEPS the stored models —
+  blanking them is what leaves Pi with no model to run — and reconcile runs on
+  every sweep, so a models.json that drifted out of sync is repaired even when
+  the probe changed nothing. The provider list is **re-read inside the
+  global-settings write lock**
   (`updateGlobalSettingsWith` — every probe, thinking levels included, finishes
   first) and each result is applied only where it still belongs (same id, still
   auto, same `baseUrl`), so a Settings save landing mid-probe — or queued on the
@@ -83,8 +92,10 @@ is **read vs. write of Pi config**.
   the model is left untouched and asked again next sweep, never marked
   "ordinary". Detection runs once per newly-seen model (`[]` records "asked,
   nothing extended" — `sanitizeThinkingLevels` must keep an empty array, or the
-  marker is lost on the settings round-trip and every sweep re-probes) and
-  never against an aggregator. Both probes run on the
+  marker is lost on the settings round-trip and every sweep re-probes). Lists
+  above `PI_MODELS_CONFIG.thinkingProbeModelLimit` (25) skip capability probing,
+  independently of the menu's cutoff (5): a provider with 6–25 models can require
+  curation and still receive thinking probes. Both probes run on the
   provider snapshot BEFORE the re-read, so a save landing mid-probe survives.
 - `sweepScheduler.ts` — the scheduling policy behind it, isolated so it is
   testable without a server: join an in-flight sweep (even inside the TTL, or
@@ -98,8 +109,8 @@ is **read vs. write of Pi config**.
   + `piAgentDir()` (`~/.pi/agent`), shared by both sides.
 
 Model **SELECTION** is per-spawn via the `--model` flag
-(`worktree/commands.ts` `buildPiModelFlag`); `settings.json` defaults are
-never touched.
+(`agentCommandBuilder.ts` defines `buildPiModelFlag`; `worktree/commands.ts`
+retains its compatibility re-export); `settings.json` defaults are never touched.
 
 ## Served by / tested by
 
@@ -109,3 +120,5 @@ never touched.
 `sanitizePiProviders` (via the `'../globalSettings.js'` / `'../piModels.js'`
 surfaces), `parseProbedModels` (the `/models` context-window spellings), and
 `buildMenu`'s collision handling.
+
+Commands from `backend/`: `npm run build`, `npm test`, `npx tsc --noEmit`.
