@@ -82,24 +82,33 @@ licence text + a source pointer) — keep it a runtime download.
   EPERM/EBUSY), and every OTHER `downloads/*.part` (a transfer a restart killed)
   is swept when the next install starts. **Never at boot** — the user clicks
   Install.
-- `rules.ts` — `installRulePack(id)`: `git init` + `fetch --depth 1 origin
-  <commit>` + `checkout FETCH_HEAD` (content-addressed, so the pin verifies the
-  tree by construction; tarball bytes are not stable) → `prunePackTree` (keep
-  only `*.yaml`/`*.yml` with a top-level `rules:` key that are not
-  `*.test.yaml`, plus LICENSE/README; drop the pack's `prune` folders, dot
-  dirs, tests, scripts) → swap into place → state.json. The swap moves the
+- `rules.ts` — `installRulePack(id)`: `fetchPackCommit` → `prunePackTree`
+  (the helpers below) → swap into place → state.json. Keeps the public facade,
+  job snapshots and per-pack single-flight installs; re-exports the helpers
+  and shared `RulePackError` so existing imports keep working. The swap moves the
   previous install aside first and puts it BACK if the new tree cannot be
   renamed in, so an update can never leave the user with no pack; stale
   `.tmp-<id>-*` / `.old-<id>-*` siblings from a killed install are swept at the
   start of the next install of THE SAME pack (never another pack's: installs of
-  different packs may overlap). `git` runs with `GIT_TERMINAL_PROMPT=0` so a credential prompt
-  fails fast instead of parking the job until its timeout. The swap + state
+  different packs may overlap). The swap + state
   write run under `withRulesMutation` (see `rulesGate.ts`), waiting for running
   scans first. In-flight installs are tracked per pack (`isRulePackInstalling`;
   the DELETE route answers 409 `installing`), and `removeRulePack` — itself a
   gated mutation that refuses (busy) while a scan runs — cancels a
   still-running install of that pack, which then discards its tree instead of
   swapping it in: a removal is never silently undone.
+- `rulePackFetch.ts` — `fetchPackCommit`: `git init` + `fetch --depth 1 origin
+  <commit>` + `checkout FETCH_HEAD`, then verifies HEAD matches the pin and
+  removes `.git`. Content-addressed (tarball bytes are not stable); invoked
+  only by a requested install. Git has a 5-minute timeout per command and
+  `GIT_TERMINAL_PROMPT=0` / `GCM_INTERACTIVE=never` so credential prompts fail fast.
+- `rulePackTree.ts` — `prunePackTree`: keep only `*.yaml`/`*.yml` with a
+  top-level `rules:` key, excluding `*.test.yaml`, plus root LICENSE/README;
+  drop the pack's `prune` folders, dot dirs, tests and scripts, counting files
+  and rule ids. `sweepStalePackDirs` removes only the same pack's `.tmp`/`.old`
+  siblings with a numeric suffix guard, preserving overlapping sibling installs.
+- `rulePackError.ts` — dependency-free `RulePackError`, shared by the fetch
+  helper and lifecycle facade without an import cycle.
 - `rulesGate.ts` — reader/writer exclusion between engine runs and rule-pack
   tree mutations. A scan holds a read slot (`acquireRulesRead`, abortable) from
   resolving its packs until its record is stored; a mutation
