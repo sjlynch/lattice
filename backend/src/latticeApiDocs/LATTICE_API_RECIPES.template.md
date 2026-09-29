@@ -38,7 +38,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | DELETE | /api/tasks/:id                     | PERMANENTLY remove a task (not a move to the `deleted` lane — PATCH `status` for that) and tear down its worktree + branch. A branch with commits not on HEAD is KEPT: the response then carries `keptBranch: {name, unmergedCommits, hint}`. **409** while the task is mid-merge — retry. Irreversible |
 | POST   | /api/tasks/:id/run                 | Run an Open task. Optional `{harness, piModel}`. Returns `{accepted, queued}` — see the async note below |
 | POST   | /api/tasks/:id/resume              | Re-spawn the agent in an existing in-progress worktree. Same body and `{accepted, queued}` shape as `/run` |
-| POST   | /api/tasks/:id/cancel-queued-run   | Drop a still-queued run, reverting the task to plain Open. Idempotent (no-op if it already started) |
+| POST   | /api/tasks/:id/cancel-queued-run   | Drop a queued run back to plain Open, or abort an admitted start still in flight (`inFlight:true` while it backs out). Idempotent; no-op for a fully settled start. Targets only the `task-run` key, not `task-resume`; does not kill an established running agent |
 | POST   | /api/tasks/:id/merge               | Attempt git merge of a Ready-to-Merge task |
 | POST   | /api/merge-runs                    | Body `{project}` — merge every Ready-to-Merge task |
 | GET    | /api/merge-runs/active?project=    | Active merge run, or `null` |
@@ -322,10 +322,21 @@ Workflows are the same shape — `GET /api/workflows?project=` for the ids,
 To override the run's harness and Pi model, send
 `{"harnessOverride":"pi","piModelOverride":"provider/model"}`. The model override
 is ignored without the Pi harness override; omit both to keep step selections.
-On **503** `workflow-recovering`, honor `Retry-After: 2` before retrying. If a
-start's outcome is ambiguous (for example, the response was lost), first inspect
-`GET /api/workflow-runs/active?project=` before retrying the POST; the original
-run may already exist. **409** `active-run-exists` means the project is busy.
+**409** `active-run-exists` means the project is busy.
+
+For workflow starts and task Resume (`POST /api/tasks/:id/resume`), retry only
+confirmed pre-application refusals: **503** `workflow-recovering` or
+`backend-restarting` (honor `Retry-After`), or the proxy's explicit **502**
+`ECONNREFUSED`.
+
+If the outcome is ambiguous (lost response, network error, timeout or connection
+reset), do not automatically replay the POST: it may already have been applied.
+Check workflow status or the task terminal for evidence, but status checks are
+not an idempotency guarantee. An empty `GET /api/workflow-runs/active?project=`
+list cannot prove the start was unaccepted: the first run may have finished or
+been cancelled. Do not infer request identity from an active-run list, matching
+workflow IDs or timestamps. A later deliberate new start or Resume remains
+possible after reviewing the uncertain outcome.
 
 ## Finding dead / unreachable code
 
