@@ -16,7 +16,8 @@ import { getLastCursor } from './cursorTracker';
 import { healthColor } from './healthOverlay';
 import {
   ESTIMATED_HEIGHT,
-  TOOLTIP_WIDTH,
+  MIN_TOOLTIP_WIDTH,
+  VIEWPORT_PAD,
   clampPosition,
   type TooltipPosition,
 } from './tooltipPosition';
@@ -33,9 +34,9 @@ type Props = {
 
 export function HealthTooltip({ node }: Props) {
   const ref = useRef<HTMLDivElement>(null);
-  // Height is measured once per commit (and so re-measured on a content/node
-  // change) and cached here, so the hot per-pointer placement path never
-  // reads layout (`offsetHeight`) again.
+  // Dimensions are measured on commits and viewport resizes, then cached so
+  // the hot per-pointer placement path never reads layout.
+  const widthRef = useRef(MIN_TOOLTIP_WIDTH);
   const heightRef = useRef(ESTIMATED_HEIGHT);
   // Last clamped position actually written to `transform`; lets us skip the
   // write entirely when a pointer move doesn't change the clamped placement.
@@ -54,7 +55,7 @@ export function HealthTooltip({ node }: Props) {
   const place = useCallback((clientX: number, clientY: number) => {
     const el = ref.current;
     if (!el) return;
-    const pos = clampPosition(clientX, clientY, TOOLTIP_WIDTH, heightRef.current);
+    const pos = clampPosition(clientX, clientY, widthRef.current, heightRef.current);
     const last = placedElRef.current === el ? lastPosRef.current : null;
     if (last && last.left === pos.left && last.top === pos.top) return;
     lastPosRef.current = pos;
@@ -67,18 +68,22 @@ export function HealthTooltip({ node }: Props) {
     el.style.visibility = 'visible';
   }, []);
 
-  useLayoutEffect(() => {
+  const measureAndPlace = useCallback(() => {
     // The element starts hidden until we have cursor coordinates. Same-file
     // hover refreshes and overlay-mode renders (for example when `h`
     // toggles) don't necessarily change `node.path`, so a dependency-limited
     // effect can miss the placement/reveal pass. Re-measure + re-place/reveal
-    // after every commit; this is one layout read plus (at most) one transform
-    // write per commit — the per-pointer path below never touches layout.
+    // after every commit and resize; the per-pointer path never touches layout.
     const el = ref.current;
     if (!el) return;
+    widthRef.current = el.offsetWidth || MIN_TOOLTIP_WIDTH;
     heightRef.current = el.offsetHeight || ESTIMATED_HEIGHT;
     const cached = getLastCursor();
     if (cached) place(cached.clientX, cached.clientY);
+  }, [place]);
+
+  useLayoutEffect(() => {
+    measureAndPlace();
   });
 
   useLayoutEffect(() => {
@@ -92,14 +97,16 @@ export function HealthTooltip({ node }: Props) {
       if (rafRef.current === null) rafRef.current = requestAnimationFrame(flush);
     };
     window.addEventListener('pointermove', onMove, { passive: true });
+    window.addEventListener('resize', measureAndPlace);
     return () => {
       window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('resize', measureAndPlace);
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current);
         rafRef.current = null;
       }
     };
-  }, [place]);
+  }, [place, measureAndPlace]);
 
   const m = node.healthDetails;
   if (!m) return null;
@@ -118,7 +125,9 @@ export function HealthTooltip({ node }: Props) {
       style={{
         left: 0,
         top: 0,
-        width: TOOLTIP_WIDTH,
+        width: 'max-content',
+        minWidth: `min(${MIN_TOOLTIP_WIDTH}px, calc(100vw - ${VIEWPORT_PAD * 2}px))`,
+        maxWidth: `calc(100vw - ${VIEWPORT_PAD * 2}px)`,
         visibility: 'hidden',
       }}
     >
