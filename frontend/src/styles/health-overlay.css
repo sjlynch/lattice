@@ -236,9 +236,9 @@
   font-family: var(--mono);
   font-size: 12px;
   color: var(--text-primary);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  /* Let the tooltip fit the full filename, wrapping only at its viewport cap. */
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 .health-tooltip-lang {
   font-size: 10px;
