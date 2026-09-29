@@ -1,8 +1,9 @@
 import { RestoreNotice } from './sidebar/RestoreNotice';
-import { memo, useCallback, useEffect } from 'react';
+import { memo, useCallback, useEffect, useRef } from 'react';
 import type { StartupTerminal, TerminalLaunchSettings } from '../api';
 import { usePiModelMenu } from '../hooks/usePiModelMenu';
 import { useTerminals } from '../TerminalsContext';
+import { pickActiveAfterDisappear } from '../terminal/terminalActivePolicy';
 import { TerminalPane } from './TerminalPane';
 import { SidebarHeaderActions } from './sidebar/SidebarHeaderActions';
 import { SidebarPanelTabs } from './sidebar/SidebarPanelTabs';
@@ -69,18 +70,23 @@ export const Sidebar = memo(function Sidebar({
   // Keyed by backend session id, so it covers tabs whose pane was never mounted.
   const busyServerIds = useBusyAgentTerminals(activeFolder);
 
-  // When the active folder changes, the currently-active terminal may
-  // belong to a different project. Pick a terminal from the new project
-  // if available, otherwise clear the selection.
+  // The active terminal left this project's list: either the folder changed
+  // (it belongs to another project) or the tab was removed — typically the
+  // registry's `ended` event for a close, which lands before the DELETE
+  // response and so before closeTerminal's own neighbour fallback. The
+  // previous list tells the two apart; see pickActiveAfterDisappear.
+  const prevProjectRef = useRef({ folder: activeFolder, list: projectTerminals });
   useEffect(() => {
+    const prev = prevProjectRef.current;
+    prevProjectRef.current = { folder: activeFolder, list: projectTerminals };
     if (!activeId) return;
-    const current = projectTerminals.find((t) => t.id === activeId);
-    if (current) return;
-    if (projectTerminals.length > 0) {
-      setActiveId(projectTerminals[projectTerminals.length - 1].id);
-    } else {
-      setActiveId(null);
-    }
+    if (projectTerminals.some((t) => t.id === activeId)) return;
+    setActiveId(pickActiveAfterDisappear(
+      prev.list,
+      projectTerminals,
+      activeId,
+      prev.folder === activeFolder,
+    ));
   }, [activeFolder, projectTerminals, activeId, setActiveId]);
 
   const {

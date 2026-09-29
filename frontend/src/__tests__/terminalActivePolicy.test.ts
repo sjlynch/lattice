@@ -4,6 +4,7 @@ import type { TerminalSpec } from '../terminal/terminalTypes';
 import {
   pickActiveAfterClose,
   pickActiveAfterCloseMany,
+  pickActiveAfterDisappear,
 } from '../terminal/terminalActivePolicy.ts';
 
 // Regression: the close fallback grouped tabs by a STRICT projectPath compare,
@@ -35,4 +36,33 @@ test('tabs of another project are never a fallback', () => {
   const prev = [t('a', 'c:/dev/proj'), t('b', 'c:/dev/other')];
   const next = prev.filter((x) => x.id !== 'a');
   assert.equal(pickActiveAfterClose(prev, next, 'a', 'a'), null);
+});
+
+// Regression: closing a tab fires the registry's `ended` event before the
+// DELETE response, so the Sidebar saw the active id vanish first and focused
+// "the last project tab" — a Startup terminal — instead of a neighbour.
+const k = (id: string, kind: TerminalSpec['kind']): TerminalSpec => ({
+  ...t(id, 'c:/dev/proj'),
+  kind,
+});
+
+test('a tab removed in place falls back to its panel neighbour, not Startup', () => {
+  const prev = [k('a', undefined), k('b', undefined), k('c', undefined), k('s', 'startup')];
+  const next = prev.filter((x) => x.id !== 'b');
+  assert.equal(pickActiveAfterDisappear(prev, next, 'b', true), 'c');
+  const nextLast = prev.filter((x) => x.id !== 'c');
+  assert.equal(pickActiveAfterDisappear(prev, nextLast, 'c', true), 'b');
+});
+
+test('removing the last regular tab clears focus instead of jumping to Startup', () => {
+  const prev = [k('a', undefined), k('s', 'startup')];
+  const next = prev.filter((x) => x.id !== 'a');
+  assert.equal(pickActiveAfterDisappear(prev, next, 'a', true), null);
+});
+
+test('a project switch prefers a regular tab over Startup, else any tab', () => {
+  const list = [k('a', undefined), k('s', 'startup')];
+  assert.equal(pickActiveAfterDisappear([], list, 'x', false), 'a');
+  assert.equal(pickActiveAfterDisappear([], [k('s', 'startup')], 'x', false), 's');
+  assert.equal(pickActiveAfterDisappear([], [], 'x', false), null);
 });

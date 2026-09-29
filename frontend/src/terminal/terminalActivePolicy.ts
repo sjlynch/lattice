@@ -108,3 +108,24 @@ export function pickActiveAfterCloseMany(
   }
   return nextPanelList[0]?.id ?? null;
 }
+
+// The active tab vanished from the project's list. Two ways that happens:
+//  - it was removed while this project stayed open — usually the registry's
+//    `ended` event for a close landing before the DELETE response, so
+//    `closeTerminal`'s own fallback hasn't run yet. Use the same in-panel
+//    neighbour policy; picking "the last project tab" here jumped focus to a
+//    Startup terminal.
+//  - the project switched: prefer a regular (agent/shell) tab, falling back to
+//    a Startup/Merging one only when the project has no regular tab at all.
+export function pickActiveAfterDisappear(
+  prevProjectList: TerminalSpec[],
+  nextProjectList: TerminalSpec[],
+  missingId: string,
+  sameProject: boolean,
+): string | null {
+  if (sameProject && prevProjectList.some((t) => t.id === missingId)) {
+    return pickActiveAfterClose(prevProjectList, nextProjectList, missingId, missingId);
+  }
+  const regular = nextProjectList.filter((t) => terminalPanelKind(t) === 'regular');
+  return (regular.at(-1) ?? nextProjectList.at(-1))?.id ?? null;
+}

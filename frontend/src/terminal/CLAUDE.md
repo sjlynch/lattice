@@ -98,6 +98,11 @@ effects read the committed list, including tabs that just arrived.
   Close fallbacks stay
   inside the closed terminal's project-scoped panel; single-close clamps the
   prior index there, while multi-close walks backward to the first survivor.
+  `pickActiveAfterDisappear` covers the active tab vanishing before that
+  fallback runs (Sidebar's effect): the registry's `ended` event for a close
+  beats the DELETE response, so a same-project removal uses the same in-panel
+  neighbour policy — never "last project tab", which focused a Startup tab. A
+  project switch prefers a regular tab over Startup/Merging.
   `closeTerminalsForTask` collects ids via `terminalIdsForTask` and delegates
   to the batched `closeTerminals` (which plans the DELETE set with
   `planCloseTerminals`) so all of a task's terminals drop in ONE setState —
