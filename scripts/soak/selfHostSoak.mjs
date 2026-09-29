@@ -22,11 +22,12 @@
 // Then it checks the invariants that "no friction" means and prints a report.
 // Exit 0 = every invariant held.
 
-import { spawn, execFileSync } from 'node:child_process';
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createSoakFixture } from './soakFixture.mjs';
+import { createSoakRuntime, sleep } from './soakRuntime.mjs';
+import { collectSoakReport } from './soakReport.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '..', '..');
@@ -58,120 +59,17 @@ if (!fs.existsSync(distEntry)) {
   process.exit(2);
 }
 
-const root = fs.mkdtempSync(path.join(os.tmpdir(), 'lattice-soak-'));
-const home = path.join(root, 'home');
-const project = path.join(root, 'project');
-const bin = path.join(root, 'bin');
-const soakLog = path.join(root, 'fake-agents.jsonl');
-for (const d of [home, project, bin, path.join(root, 'tmp')]) fs.mkdirSync(d, { recursive: true });
+const fixture = createSoakFixture({ here, port: PORT, terminalPort: TERMINAL_PORT });
+const { root, home, project, env } = fixture;
 
 const say = (...a) => console.log(`[soak ${new Date().toISOString().slice(11, 19)}]`, ...a);
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const rand = (a, b) => a + Math.random() * (b - a);
 
-// ── the throwaway project ────────────────────────────────────────────────
-function g(args, cwd = project) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
-}
-g(['init', '-q', '-b', 'main']);
-// Repo-local identity: the isolated HOME has no ~/.gitconfig, and both the
-// fake agents' commits and Lattice's in-worktree merges need one.
-g(['config', 'user.name', 'Lattice Soak']);
-g(['config', 'user.email', 'soak@example.invalid']);
-fs.writeFileSync(path.join(project, 'README.md'), '# soak project\n');
-fs.writeFileSync(path.join(project, 'shared.txt'), 'shared log\n');
-g(['add', '-A']);
-g(['commit', '-q', '-m', 'initial']);
-
-// ── the fake harness, first on PATH ─────────────────────────────────────
-const fake = path.join(here, 'fakeClaude.mjs');
-if (process.platform === 'win32') {
-  fs.writeFileSync(path.join(bin, 'claude.cmd'), `@"${process.execPath}" "${fake}" %*\r\n`);
-} else {
-  const sh = path.join(bin, 'claude');
-  fs.writeFileSync(sh, `#!/bin/sh\nexec "${process.execPath}" "${fake}" "$@"\n`);
-  fs.chmodSync(sh, 0o755);
-}
-
-const env = { ...process.env };
-// A backend started from inside a Claude Code session scrubs these itself;
-// the fake agent doesn't care, but keep the child env honest.
-for (const k of Object.keys(env)) if (k.startsWith('CLAUDE_CODE_') || k === 'CLAUDECODE') delete env[k];
-const pathKey = Object.keys(env).find((k) => k.toUpperCase() === 'PATH') ?? 'PATH';
-Object.assign(env, {
-  HOME: home,
-  USERPROFILE: home,
-  PORT: String(PORT),
-  TERMINAL_PORT: String(TERMINAL_PORT),
-  LATTICE_DEFAULT_ROOT: project,
-  // The backend prunes projects.json entries under os.tmpdir() as test junk at
-  // every boot, which would make this very project invisible to restart
-  // recovery. Give the instance a temp dir the project isn't under.
-  TEMP: path.join(root, 'tmp'),
-  TMP: path.join(root, 'tmp'),
-  TMPDIR: path.join(root, 'tmp'),
-  [pathKey]: `${bin}${path.delimiter}${env[pathKey] ?? ''}`,
-  // The pty PATH puts the Windows registry PATH ahead of anything inherited,
-  // so the fake needs this to stay ahead of a real `claude` in every terminal.
-  LATTICE_PTY_PATH_PREPEND: bin,
-  SOAK_LOG: soakLog,
-  SOAK_FAKE_DELAY: '1500-8000',
-});
-
 // ── backend lifecycle (what the dev runner does, minus the manners) ──────
-let backend = null;
-let backendGen = 0;
+const { startBackend, killBackend, api, waitHealthy, shutdownTerminalServer } = createSoakRuntime({
+  root, home, repoRoot, distEntry, env, origin: ORIGIN, terminalPort: TERMINAL_PORT,
+});
 let restarts = 0;
-
-function startBackend() {
-  const gen = ++backendGen;
-  const out = fs.openSync(path.join(root, `backend-${gen}.log`), 'a');
-  backend = spawn(process.execPath, [distEntry], {
-    cwd: path.join(repoRoot, 'backend'),
-    env,
-    stdio: ['ignore', out, out],
-  });
-  backend.gen = gen;
-  return backend;
-}
-
-async function killBackend() {
-  const b = backend;
-  if (!b || b.exitCode !== null) return;
-  const exited = new Promise((r) => b.once('exit', r));
-  b.kill('SIGKILL');
-  await exited;
-}
-
-async function api(method, p, body, { retryMs = 60_000 } = {}) {
-  const deadline = Date.now() + retryMs;
-  for (;;) {
-    try {
-      const res = await fetch(`${ORIGIN}${p}`, {
-        method,
-        headers: body !== undefined ? { 'Content-Type': 'application/json' } : undefined,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-        signal: AbortSignal.timeout(15_000),
-      });
-      if (res.status === 503 || res.status === 502) throw new Error(`HTTP ${res.status}`);
-      const text = await res.text();
-      let json = null;
-      try {
-        json = text ? JSON.parse(text) : null;
-      } catch {
-        json = text;
-      }
-      return { status: res.status, json };
-    } catch (err) {
-      if (Date.now() > deadline) throw err;
-      await sleep(500);
-    }
-  }
-}
-
-async function waitHealthy() {
-  await api('GET', '/api/health', undefined, { retryMs: 120_000 });
-}
 
 const P = encodeURIComponent(project);
 
@@ -251,80 +149,13 @@ await sleep(15_000);
 for (let waited = 15_000; outboxEntries().length > 0 && waited < 120_000; waited += 2000) await sleep(2000);
 
 // ── invariants ─────────────────────────────────────────────────────────
-const failures = [];
-const check = (ok, msg) => {
-  if (!ok) failures.push(msg);
-};
-
-check(finalRun?.status === 'completed', `workflow run ended ${finalRun?.status ?? 'NOT AT ALL (timeout)'}${finalRun?.error ? `: ${finalRun.error}` : ''}`);
-
-const list = await api('GET', `/api/tasks?project=${P}&status=all&fields=full&clip=0&limit=0&confirm_large=1`);
-const tasks = (list.json?.tasks ?? []).filter((t) => taskIds.includes(t.id));
-const byStatus = {};
-for (const t of tasks) byStatus[t.status] = (byStatus[t.status] ?? 0) + 1;
-for (const t of tasks) {
-  check(t.status === 'qa' || t.status === 'done', `task ${t.title} ended ${t.status}${t.conflict ? ' (conflict)' : ''}`);
-}
-
-const mainLog = g(['log', '--oneline', 'main']);
-for (const { file, line } of expectedLines) {
-  const p = path.join(project, file);
-  const content = fs.existsSync(p) ? fs.readFileSync(p, 'utf8') : '';
-  // CRLF: Git for Windows' system config checks out with core.autocrlf.
-  check(content.split(/\r?\n/).includes(line), `main is missing "${line}" in ${file}`);
-}
-check(!/<<<<<<<|>>>>>>>/.test(fs.readFileSync(path.join(project, 'shared.txt'), 'utf8')), 'conflict markers on main');
-
-const worktrees = g(['worktree', 'list', '--porcelain']).split('\n').filter((l) => l.startsWith('worktree ')).length;
-check(worktrees === 1, `${worktrees - 1} task worktree(s) still registered`);
-
-const outboxDir = path.join(home, '.lattice', 'callback-outbox');
-const pending = fs.existsSync(outboxDir) ? fs.readdirSync(outboxDir).filter((n) => n.endsWith('.json')) : [];
-check(pending.length === 0, `${pending.length} undelivered callback(s) left in the outbox`);
-
-const events = fs.existsSync(soakLog)
-  ? fs.readFileSync(soakLog, 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l))
-  : [];
-const starts = events.filter((e) => e.event === 'start');
-const sessionsBy = {};
-for (const e of starts) sessionsBy[e.kind] = (sessionsBy[e.kind] ?? 0) + 1;
-const pushSessions = starts.filter((e) => e.kind === 'session' && /[\\/]push[\\/]/.test(e.cwd)).length;
-check(pushSessions === 1, `${pushSessions} push session(s) spawned (want exactly 1)`);
-const hookSessions = starts.filter((e) => e.kind === 'session' && /[\\/]post-merge-hooks[\\/]/.test(e.cwd)).length;
-// The hook is on and merges landed: it must have run — even when a kill fell
-// between the last merge and the hook firing (postMergeHooks/owed.ts).
-check(hookSessions >= 1, 'the post-merge hook never ran');
-const failedWork = events.filter((e) => e.event === 'work-failed' || e.event === 'crashed');
-check(failedWork.length === 0, `${failedWork.length} fake-agent failure(s): ${failedWork.map((e) => e.error).join(' | ').slice(0, 400)}`);
-
-const report = {
-  ok: failures.length === 0,
-  failures,
-  elapsedSec: elapsed,
-  restarts,
-  run: finalRun ? { status: finalRun.status, error: finalRun.error, stepSummaries: finalRun.stepSummaries } : null,
-  tasksByStatus: byStatus,
-  mainCommits: mainLog.split('\n').length,
-  sessionsByKind: sessionsBy,
-  pushSessions,
-  hookSessions,
-  stopHooks: events.filter((e) => e.event === 'stop-hook').length,
-  root,
-};
+const report = await collectSoakReport({ fixture, api, finalRun, taskIds, expectedLines, elapsed, restarts });
+const { failures } = report;
 console.log(JSON.stringify(report, null, 2));
 
 // ── teardown ───────────────────────────────────────────────────────────
 await killBackend();
-try {
-  const token = fs.readFileSync(path.join(home, '.lattice', 'terminalServerToken'), 'utf8').trim();
-  await fetch(`http://127.0.0.1:${TERMINAL_PORT}/shutdown`, {
-    method: 'POST',
-    headers: { 'x-lattice-terminal-token': token },
-    signal: AbortSignal.timeout(5000),
-  });
-} catch {
-  // already gone
-}
+await shutdownTerminalServer();
 if (!KEEP && failures.length === 0) {
   await sleep(2000); // let the executor's ptys release their cwd handles
   fs.rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });

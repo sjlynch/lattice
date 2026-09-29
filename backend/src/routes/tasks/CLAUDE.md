@@ -141,6 +141,13 @@ undoes that bump, and any other failure clears the run-queue state:
   body still wins, and the harness/model a resume actually spawned is written
   back onto the task so the switch sticks. (It used to default every
   body-less resume to Claude, silently moving Pi/Codex tasks onto Claude.)
+  **Conversation resume policy**: `buildTaskResumeCommand` receives that same
+  resolved Pi model and current project `codexYolo` setting. It replaces the
+  old model/permission flags before the command bypasses the fresh builder in
+  `selectHarnessCommand`, keeping the conversation and unrelated flags. This
+  is specific to explicit task Resume; ordinary `buildRestoreCommand` tab
+  restoration still preserves its original launch flags. Covered through the
+  real command override and registry recording in `taskResumePolicy.test.ts`.
   **Withdrawal**: observes the queue's AbortSignal and re-reads task status,
   worktree/branch identity and start time after preparation and at allocation
   settlement. Conversation/harness metadata is committed only after a final
