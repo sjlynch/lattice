@@ -6,7 +6,7 @@ import { projectRunLockFilePath } from './paths.js';
 import { releaseLockFile } from './release.js';
 import { clearStaleLockOrThrow } from './steal.js';
 import type { ProjectRunLockHandle } from './types.js';
-import { registerProjectRunLock } from './mutation.js';
+import { registerProjectRunLock } from './ownership.js';
 import { pruneRetiredTombstonesOnce } from './tombstones.js';
 import { waitWhileRestartDraining } from '../restartDrain/gate.js';
 

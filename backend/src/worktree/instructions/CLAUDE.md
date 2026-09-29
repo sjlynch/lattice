@@ -30,7 +30,8 @@ caller does the `resolveInstructionTemplate(project, id)`. See
 - `stopHookRepair.ts` — `ensureValidStopHook`: validates/repairs the worktree's
   `.claude/settings.local.json` from Lattice's template if it's missing or
   unparseable. Called by `writeMergeInstructions` *before* the UI spawns the
-  resolver.
+  resolver. Imports the renderer directly from its owner, `../stopHook.ts`,
+  to avoid a setup/instructions cycle.
 - `shared.ts` — conflict-marker constants, file-list hints, stash-drop steps,
   the checkout-theirs footer, and `renderEnvBlockFor`. Centralised so the prose
   duplicated across the three rendered files stays in lockstep.
@@ -45,9 +46,10 @@ caller does the `resolveInstructionTemplate(project, id)`. See
   `settings.local.json`, Claude's parser errors at bootstrap before it ever
   reads the merge instructions, so the repair is a hard prerequisite.
 - **`harness` reshapes `LATTICE_TASK.md`.** Claude (default) ends the session
-  and its Stop hook POSTs `/complete`. Pi/Codex have no command-hook
-  mechanism, so the markdown gains an autonomy preamble and a stronger final
-  step instructing the model to `curl` `/complete` itself.
+  and its Stop hook POSTs `/complete`. Pi/Codex get an autonomy preamble and
+  an explicit final step to `curl` `/complete` themselves. Backstops are Pi's
+  worktree-local completion extension on session quit and Codex's Stop hook,
+  installed in `.codex/hooks.json` with `if-absent` to preserve repo-owned hooks.
 - **Injections are gated.** The env-notes block only renders when a package
   manager is detected; the dead-code block only when `deadCode.total > 0`, and
   is framed as optional context so an unrelated task isn't derailed into a

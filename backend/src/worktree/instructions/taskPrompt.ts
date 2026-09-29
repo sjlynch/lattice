@@ -43,13 +43,11 @@ ${sampleLine}> This is a heuristic: it can't see dynamic \`import()\`, string-pa
 
 // `harness` controls a couple of pieces. Claude (the default) ends the
 // session and its Stop hook in `.claude/settings.local.json` POSTs
-// `/complete`. Pi and Codex have no command-hook mechanism, so the model
-// itself must run the whole tail end of the checklist — commit, PATCH the
-// description, POST `/complete` — without stopping to ask. (For Pi a
-// worktree-local extension, installPiCompletionExtension, also POSTs
-// `/complete` on session exit as a backstop, but the model should not rely
-// on it.) The non-Claude variant therefore gets an explicit "this is an
-// autonomous session, finish everything" preamble and a stronger final step.
+// `/complete`. Pi/Codex get an explicit autonomy preamble and final step:
+// commit, append a summary, and POST `/complete` without stopping to ask.
+// Backstops are Pi's worktree-local completion extension on session quit
+// and Codex's Stop hook in `.codex/hooks.json`, installed with `if-absent`
+// to preserve repo-owned hooks. The model must still call `/complete` itself.
 //
 // `template` is the resolved per-project template (override or default); the
 // caller looks it up via resolveInstructionTemplate so this stays synchronous.
