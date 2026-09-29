@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   type StartupTerminal,
   type TerminalLaunchSettings,
@@ -32,7 +32,7 @@ type SettingsControllerParams = {
   onMetricsIgnoredExtsChange: (next: string[]) => void | Promise<void>;
 };
 
-// Owns the Settings modal's per-tab imperative handles and save orchestration.
+// Owns the Settings dialog's per-tab imperative handles and save orchestration.
 // Focused hooks below derive the dirty map and gate the warn-on-unsaved-close
 // flow, keeping this controller as the coordinator the dialog consumes.
 export function useSettingsController({
@@ -48,6 +48,18 @@ export function useSettingsController({
 }: SettingsControllerParams) {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Each project/open transition creates a distinct session token, including
+  // A -> B -> A and close/reopen. Invalidate it at commit (and on unmount),
+  // before an old save can publish into the next editor. Persistence still
+  // finishes with the project and tab handles captured when Save was accepted.
+  const session = useMemo(() => ({ active: false }), [activeFolder, open]);
+  useLayoutEffect(() => {
+    session.active = open;
+    setSaving(false);
+    setError(null);
+    return () => { session.active = false; };
+  }, [open, session]);
+
   const startupTerminalsRef = useRef<StartupTerminalsTabHandle>(null);
   const envNotesRef = useRef<EnvNotesTabHandle>(null);
   const instructionTemplatesRef = useRef<InstructionTemplatesTabHandle>(null);
@@ -93,7 +105,13 @@ export function useSettingsController({
     refs,
   });
 
+  const closeCurrentSession = () => {
+    if (session.active) onClose();
+  };
+
   const save = async () => {
+    // A pending close confirmation may also hold an earlier session's save.
+    if (!session.active) return;
     setSaving(true);
     setError(null);
     try {
@@ -106,7 +124,7 @@ export function useSettingsController({
           pi: piRef.current,
           tools: toolsRef.current,
         });
-        onClose();
+        closeCurrentSession();
         return;
       }
       await saveSettings({
@@ -134,15 +152,23 @@ export function useSettingsController({
           mcp: mcpRef.current,
           tools: toolsRef.current,
         },
-        onStartupTerminalsChange,
-        onTerminalLaunchSettingsChange,
-        onMetricsIgnoredExtsChange,
+        onStartupTerminalsChange: (next) => {
+          if (session.active) onStartupTerminalsChange(next);
+        },
+        onTerminalLaunchSettingsChange: (next) => {
+          if (session.active) onTerminalLaunchSettingsChange(next);
+        },
+        onMetricsIgnoredExtsChange: (next) => {
+          if (session.active) return onMetricsIgnoredExtsChange(next);
+        },
       });
-      onClose();
+      closeCurrentSession();
     } catch (err) {
-      setError((err as Error).message || 'Failed to save settings');
+      if (session.active) {
+        setError((err as Error).message || 'Failed to save settings');
+      }
     } finally {
-      setSaving(false);
+      if (session.active) setSaving(false);
     }
   };
 
@@ -150,7 +176,7 @@ export function useSettingsController({
     saving,
     computeDirty,
     save,
-    onClose,
+    onClose: closeCurrentSession,
   });
 
   return {

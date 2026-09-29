@@ -33,6 +33,8 @@ export type PiProvider = {
   // all three at request time. NOTE a bare `MY_API_KEY` is a LITERAL to Pi, not
   // an env lookup. Lattice's probe resolves none of them (see piModels/probe.ts).
   apiKey?: string;
+  // Absent leaves existing models.json overrides alone; an explicit empty map
+  // clears them. Keep empty maps through validation and persisted settings.
   headers?: Record<string, string>;
   compat?: Record<string, unknown>;
   // Keep `models` in sync with whatever `<baseUrl>/models` currently reports.
@@ -95,6 +97,8 @@ export function sanitizePiProviders(raw: unknown): PiProvider[] {
     if (typeof e.autoDiscover === 'boolean') provider.autoDiscover = e.autoDiscover;
     if (typeof e.api === 'string' && e.api) provider.api = e.api;
     if (typeof e.apiKey === 'string' && e.apiKey) provider.apiKey = e.apiKey;
+    // Do not drop empty maps: they carry an explicit clear from Settings,
+    // distinct from absent fields when adopting a hand-written provider.
     if (e.headers && typeof e.headers === 'object') {
       provider.headers = stringRecord(e.headers);
     }
