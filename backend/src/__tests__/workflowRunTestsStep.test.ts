@@ -416,12 +416,12 @@ for (const spawned of [false, true]) {
       assert.equal(subscriptions.active, 1);
       assert.equal(subscriptions.removed, 0);
       assert.equal(hasActiveRunTestsStep(run.id), true);
-      assert.deepEqual(run.testStep, { stepIndex: 0, startHead: 'aaaaaaa1' });
+      assert.deepEqual<WorkflowRun['testStep']>(run.testStep, { stepIndex: 0, startHead: 'aaaaaaa1' });
 
       t.mock.timers.enable({ apis: ['setTimeout'] });
       const scheduled = t.mock.method(globalThis, 'setTimeout');
       const cleared = t.mock.method(globalThis, 'clearTimeout');
-      const errors = t.mock.method(console, 'error', () => {});
+      const errors = t.mock.method(console, 'error', (..._args: unknown[]) => {});
       let timeout: ReturnType<typeof setTimeout> | undefined;
       if (spawned) {
         subscriptions.emit({ type: 'step-spawned', runId: run.id, projectPath: run.projectPath, stepIndex: 0, command: 'claude', cwd: '' });
@@ -479,8 +479,8 @@ for (const spawned of [false, true]) {
           if (run) await abortRunTestsStep(run.id);
         } finally {
           subscriptions.cleanup();
-          t.mock.restoreAll();
-          t.mock.timers.reset();
+          // Discard timer spies so automatic teardown cannot reinstall fake timers.
+          t.mock.reset();
           try { await locks.cleanup(); } finally { await h.cleanup(); }
         }
       }
@@ -509,7 +509,7 @@ test('a rejected run-tests.json write still completes and releases the entry, ch
     assert.equal(run.testStep?.stepIndex, 0);
     await fs.writeFile(path.join(workflowStepDir(run.projectPath, run.id, 0), 'TEST_SUMMARY.md'), 'All green.', 'utf8');
     head = 'ddddddd9';
-    const warnings = t.mock.method(console, 'warn', () => {});
+    const warnings = t.mock.method(console, 'warn', (..._args: unknown[]) => {});
 
     await completeWorkflowStep(run.id, 0, ORIGIN);
     assert.ok(warnings.mock.calls.some((call) => call.arguments.includes(failure)), 'the state-write failure was contained');
