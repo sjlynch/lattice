@@ -69,6 +69,9 @@ let shuttingDown = false;
 let shutdownDone = null; // the one in-flight shutdown, shared by every trigger
 // null while running; 'full' (Ctrl+C / a child died), 'restart' or 'detach'.
 let stopMode = null;
+// A full stop overwrites stopMode, so remember separately that a soft stop is
+// still running and will exit this process itself.
+let softStopInFlight = false;
 let frontend = null;
 // vite children we stopped on purpose (a dependency install): their exit is
 // not "the frontend died".
@@ -94,9 +97,29 @@ function shutdown(signal) {
   return shutdownDone;
 }
 
+// How long a full stop waits, after the tree kills, for the children's own
+// 'exit' before exiting anyway.
+const FULL_STOP_EXIT_MS = 5000;
+
+// Every other exit hangs off a child's 'exit' event. A child that outlives its
+// taskkill left this process alive for days, still reading the console and
+// answering the user's next `npm run dev` with "unknown command" (2026-09-29).
+// Once it exits, the children's pipes close and a lingering shell ends too.
+async function exitAfterFullStop(signal) {
+  // A soft stop in flight owns the exit: it still has to POST the
+  // terminal-server `/shutdown` a full stop means, and its waits are bounded.
+  if (softStopInFlight) return;
+  await Promise.all([
+    waitForExit(backend, FULL_STOP_EXIT_MS),
+    frontend ? waitForExit(frontend, FULL_STOP_EXIT_MS) : Promise.resolve(true),
+  ]);
+  await settleConsole();
+  process.exit(signal === 'SIGINT' ? 130 : 143);
+}
+
 for (const sig of ['SIGINT', 'SIGTERM']) {
   process.on(sig, () => {
-    void shutdown(sig);
+    void shutdown(sig).then(() => exitAfterFullStop(sig));
   });
 }
 
@@ -201,6 +224,7 @@ async function softStop(mode, { force = false } = {}) {
     }
   }
   stopMode = mode;
+  softStopInFlight = true;
   closeDepsWatchers();
   note(
     mode === 'restart'
@@ -286,6 +310,9 @@ function startDepsWatchers() {
 }
 
 function onConsoleLine(line) {
+  // After Ctrl+C, npm hands the prompt back while this process is still
+  // stopping, so a line typed now is meant for the shell, not for us.
+  if (stopMode === 'full') return;
   const cmd = parseConsoleCommand(line);
   switch (cmd.kind) {
     case 'none':

@@ -63,6 +63,17 @@ export function killTree(
     return Promise.resolve();
   }
   if (platform === 'win32' && child.pid) {
+    // The child is `cmd.exe` running the npm.cmd batch. On Ctrl+C, once npm
+    // exits, that batch prompts "Terminate batch job (Y/N)?" and reads the
+    // answer from ITS stdin — our pipe, which nobody answers — so it never
+    // exits on its own. EOF ends the prompt (and the shell). Nothing else
+    // reads these pipes at shutdown: dev.mjs ignores a control-pipe EOF, and
+    // vite, which closes on stdin end, is being stopped anyway.
+    try {
+      child.stdin?.end();
+    } catch {
+      /* ignore */
+    }
     return new Promise((resolve) => {
       let timer = null;
       const onExit = () => {
@@ -73,10 +84,15 @@ export function killTree(
       timer = setTimeout(() => {
         child.off('exit', onExit);
         // npm.cmd spawns node as a child; SIGTERM on the .cmd doesn't kill
-        // the descendants. taskkill /T walks the tree.
+        // the descendants. taskkill /T walks the tree. `detached` gives it no
+        // console, so the Ctrl+C the user is still pressing can't kill it
+        // mid-walk — which left both shells alive and the orchestrator
+        // waiting on them for days (2026-09-29).
         try {
           spawnProcess('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
             stdio: 'ignore',
+            detached: true,
+            windowsHide: true,
           });
         } catch {
           /* ignore */

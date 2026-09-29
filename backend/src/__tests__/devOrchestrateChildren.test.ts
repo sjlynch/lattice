@@ -32,8 +32,13 @@ function fakeChild(): FakeChild {
 
 function taskkillSpy() {
   const calls: { cmd: string; args: string[] }[] = [];
-  const spawnProcess = ((cmd: string, args: string[]) => { calls.push({ cmd, args }); return new EventEmitter(); }) as unknown as typeof spawn;
-  return { calls, spawnProcess };
+  const options: Record<string, unknown>[] = [];
+  const spawnProcess = ((cmd: string, args: string[], opts: Record<string, unknown>) => {
+    calls.push({ cmd, args });
+    options.push(opts);
+    return new EventEmitter();
+  }) as unknown as typeof spawn;
+  return { calls, options, spawnProcess };
 }
 
 test('KILL_GRACE_MS exceeds the dev runner terminal-server shutdown cap (2.5 s)', () => {
@@ -62,6 +67,27 @@ test('killTree (win32) falls back to taskkill /F /T once the grace period lapses
   await killTree(child, 'SIGTERM', { graceMs: 30, platform: 'win32', spawnProcess });
   assert.ok(Date.now() - started >= 25, 'waited for the grace period first');
   assert.deepEqual(calls, [{ cmd: 'taskkill', args: ['/PID', '4242', '/T', '/F'] }]);
+});
+
+// Regression (2026-09-29): after Ctrl+C the npm.cmd batch shell sat at
+// "Terminate batch job (Y/N)?" reading its stdin pipe, and the taskkill meant
+// to clear it was itself killed by the user's repeated Ctrl+C. Both shells and
+// the orchestrator survived for days, stealing lines from the console.
+test('killTree (win32) ends the child stdin so a "Terminate batch job?" prompt reads EOF', async () => {
+  const ended: boolean[] = [];
+  const child = Object.assign(fakeChild(), { stdin: { end: () => ended.push(true) } });
+  const { spawnProcess } = taskkillSpy();
+  const done = killTree(child, 'SIGINT', { graceMs: 500, platform: 'win32', spawnProcess });
+  assert.deepEqual(ended, [true], 'stdin is ended at once, not after the grace period');
+  child.exitCode = 1;
+  child.emit('exit', 1, null);
+  await done;
+});
+
+test('killTree (win32) runs taskkill detached from the console, out of reach of a repeated Ctrl+C', async () => {
+  const { options, spawnProcess } = taskkillSpy();
+  await killTree(fakeChild(), 'SIGINT', { graceMs: 10, platform: 'win32', spawnProcess });
+  assert.equal(options[0]?.detached, true);
 });
 
 test('killTree resolves immediately for a child that already exited', async () => {
