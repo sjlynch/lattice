@@ -3,7 +3,7 @@
 ## Top-level files
 
 - `TopAppBar.tsx` — folder picker + workflow/taskboard launchers.
-- `BackendConnectionIndicator.tsx` — quiet navbar pill ("Backend restarting — reconnecting…") shown while any live `subscribeWs` channel is down for more than 1.5 s (`api/ws.ts` `subscribeBackendConnection`), i.e. a backend restart. Informational only: feeds re-sync on their own and start actions retry (`api/retry.ts`).
+- `BackendConnectionIndicator.tsx` — quiet navbar pill ("Backend restarting — reconnecting…") shown while any live `subscribeWs` channel is down for more than 1.5 s (`api/ws.ts` `subscribeBackendConnection`), i.e. a backend restart. Informational only: WebSocket feeds reconnect/re-sync independently; start actions use caller-specific retry policies. Task Resume/workflow Run retry only definitely unaccepted transient failures and surface uncertain acknowledgements without replaying an unkeyed POST. See [API](../api/CLAUDE.md), [taskboard hooks](taskboard/hooks/CLAUDE.md), and [workflow hooks](workflows/hooks/CLAUDE.md).
 - `TerminalServerChip.tsx` — navbar chip shown only while the detached terminal-server runs an older build than the backend (update deferred until it has zero ptys). Polls `GET /api/terminal-server/status` every 60 s while visible; copy in `terminalServerChipDerive.ts` (tested in `__tests__/terminalServerChipDerive.test.ts`).
 - `Sidebar.tsx` + `sidebar/` — terminal tabs/panels + new-shell tray; `Sidebar.tsx` composes the split components/hooks and reads `useTerminals()`.
 - `TerminalPane.tsx` + `terminal/` — xterm.js + WS to `/ws/terminal` (backend `:5184`, bridged to the detached terminal-server on `:5185`); the pane is just `useRef`s wired into the three `terminal/` hooks (lifecycle / connection / active-WebGL). The WebglAddon is attached only while `active=true` and disposed on deactivate so each tab doesn't permanently hold a WebGL context (Chrome's ~16-per-page cap).
@@ -92,3 +92,8 @@ Cascade-sensitive moves to be aware of when editing:
 - `timeline.css` adds a second `:root { --timeline-h: 64px }` block —
   the variable is timeline-local, so it stays co-located with timeline
   rules rather than moving to `tokens.css`.
+
+## Commands
+
+From `frontend/`: `npm run build` (build), `npm test` (tests), `npx tsc -b`
+(type-check). See [test conventions](../__tests__/CLAUDE.md).
