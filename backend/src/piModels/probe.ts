@@ -5,6 +5,7 @@
 //
 // The models.json reconciliation half lives in ./reconcile.ts.
 
+import { validateHeaderName, validateHeaderValue } from 'node:http';
 import { PI_MODELS_CONFIG } from './config.js';
 import { parseAcceptedEffortTokens } from './thinkingLevels.js';
 
@@ -82,6 +83,34 @@ function resolveProbeKey(apiKey?: string): string | undefined {
   return key;
 }
 
+// Only explicitly configured literal headers reach probes. Do not interpolate
+// environment variables or execute Pi's !command syntax in header values.
+// Custom headers override defaults, case-insensitively; the last configured
+// spelling wins when the custom map itself contains differently cased names.
+// Validate every entry, including overridden entries, before sending anything.
+function probeHeaders(apiKey: string | undefined, custom: unknown, json = false): Record<string, string> {
+  const headers: Record<string, string> = Object.create(null);
+  const key = resolveProbeKey(apiKey);
+  if (key) headers.authorization = `Bearer ${key}`;
+  if (json) headers['content-type'] = 'application/json';
+  if (custom === undefined) return headers;
+  if (!custom || typeof custom !== 'object' || Array.isArray(custom)) {
+    throw new Error('headers must be an object of string values');
+  }
+  for (const [name, value] of Object.entries(custom)) {
+    if (typeof value !== 'string') throw new Error('headers must contain only string values');
+    try {
+      validateHeaderName(name);
+      validateHeaderValue(name, value);
+    } catch {
+      // Do not echo a potentially secret value in the route error or sweep log.
+      throw new Error('headers contain an invalid HTTP header name or value');
+    }
+    headers[name.toLowerCase()] = value;
+  }
+  return headers;
+}
+
 // "Detect models" for the Settings → Pi endpoint form: GET <baseUrl>/models
 // (OpenAI-compatible) and return each model id with any context length the
 // server advertised. Throws on a non-OK response or network error so the route
@@ -89,14 +118,13 @@ function resolveProbeKey(apiKey?: string): string | undefined {
 export async function probeEndpointModels(
   baseUrl: string,
   apiKey?: string,
+  customHeaders?: Record<string, string>,
 ): Promise<ProbedModel[]> {
   const url = `${baseUrl.trim().replace(/\/+$/, '')}/models`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PI_MODELS_CONFIG.probeTimeoutMs);
   try {
-    const headers: Record<string, string> = {};
-    const key = resolveProbeKey(apiKey);
-    if (key) headers.Authorization = `Bearer ${key}`;
+    const headers = probeHeaders(apiKey, customHeaders);
     const r = await fetch(url, { headers, signal: controller.signal });
     if (!r.ok) throw new Error(`endpoint returned HTTP ${r.status}`);
     return parseProbedModels(await r.json());
@@ -132,14 +160,13 @@ export async function probeThinkingLevels(
   baseUrl: string,
   apiKey: string | undefined,
   modelId: string,
+  customHeaders?: Record<string, string>,
 ): Promise<string[] | null> {
   const url = `${baseUrl.trim().replace(/\/+$/, '')}/chat/completions`;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), PI_MODELS_CONFIG.probeTimeoutMs);
   try {
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const key = resolveProbeKey(apiKey);
-    if (key) headers.Authorization = `Bearer ${key}`;
+    const headers = probeHeaders(apiKey, customHeaders, true);
     const r = await fetch(url, {
       method: 'POST',
       headers,
