@@ -71,10 +71,12 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
 
   // Restore-flow notifications (restore.ts). Plain fan-out; no state change.
   emitRestored(record: TerminalRecord, mode: 'adopted' | 'relaunched'): void {
+    if (record.closePending || this.findInCacheById<TerminalRecord>(record.id, (r) => r.id)?.item.closePending) return;
     this.emit({ type: 'restored', projectPath: record.projectPath, record: { ...record }, mode });
   }
 
   emitRestoreFailed(record: TerminalRecord, reason: string): void {
+    if (record.closePending || this.findInCacheById<TerminalRecord>(record.id, (r) => r.id)?.item.closePending) return;
     this.emit({ type: 'restore-failed', projectPath: record.projectPath, id: record.id, reason });
   }
 
@@ -170,10 +172,44 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
     patch: Partial<Omit<TerminalRecord, 'id' | 'projectPath' | 'createdAt'>>,
     projectPath?: string,
   ): Promise<TerminalRecord | null> {
+    return this.updateRecord(id, patch, projectPath, false);
+  }
+
+  // Only the actual spawn's bookkeeping may hand a late PTY to close intent;
+  // an adoption from a stale restore snapshot must not claim an unrelated PTY.
+  async recordRelaunch(
+    id: string,
+    patch: Partial<Omit<TerminalRecord, 'id' | 'projectPath' | 'createdAt'>>,
+    projectPath?: string,
+  ): Promise<TerminalRecord | null> {
+    return this.updateRecord(id, patch, projectPath, true);
+  }
+
+  private async updateRecord(
+    id: string,
+    patch: Partial<Omit<TerminalRecord, 'id' | 'projectPath' | 'createdAt'>>,
+    projectPath: string | undefined,
+    fromSpawn: boolean,
+  ): Promise<TerminalRecord | null> {
     const loc = await this.locate(id, projectPath);
     if (!loc) return null;
-    return this.runProjectWrite(loc.key, () => {
+    return this.runProjectWrite(loc.key, async () => {
       const next = this.writeRecordList(loc.key, id, (list, idx) => {
+        const current = list[idx]!;
+        if (current.closePending) {
+          // Stale restore/discovery writes cannot clear close intent or erase
+          // its PTY. A spawn already in flight may hand off its new PTY to the
+          // tombstone, so even an unconfirmed cleanup remains retryable.
+          patch = {
+            ...(patch.label !== undefined ? { label: patch.label } : {}),
+            ...(patch.order !== undefined ? { order: patch.order } : {}),
+            ...('relaunching' in patch && patch.relaunching === undefined ? { relaunching: undefined } : {}),
+            ...(fromSpawn && !current.serverId && patch.serverId ? {
+              serverId: patch.serverId, serverInstanceId: patch.serverInstanceId,
+            } : {}),
+          };
+          if (Object.keys(patch).length === 0) return null;
+        }
         const patched: TerminalRecord = { ...list[idx]!, ...patch, updatedAt: Date.now() };
         // `undefined` in a patch clears the field on disk too.
         for (const [k, v] of Object.entries(patch)) {
@@ -183,6 +219,29 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
         return patched;
       });
       if (!next) return null;
+      if (next.closePending) await this.writeStateNow(loc.key, this.getCached(loc.key) ?? []);
+      this.emit({ type: 'upsert', projectPath: next.projectPath, record: { ...next } });
+      return { ...next };
+    });
+  }
+
+  // Persist intent BEFORE abort/kill IO. Unlike end('closed'), this keeps the
+  // identity needed by a later DELETE, and emits no premature removal event.
+  async requestClose(id: string, projectPath?: string): Promise<TerminalRecord | null> {
+    const loc = await this.locate(id, projectPath);
+    if (!loc) return null;
+    return this.runProjectWrite(loc.key, async () => {
+      const next = this.writeRecordList(loc.key, id, (list, idx) => {
+        const record = list[idx]!;
+        const now = Date.now();
+        const at = record.closePending ? record.ended!.at : now;
+        list[idx] = { ...record, closePending: true, ended: { reason: 'closed', at }, updatedAt: now };
+        return list[idx]!;
+      });
+      if (!next) return null;
+      // Let errors propagate: a best-effort flush is insufficient for close
+      // ownership. The cache still blocks restore, and persistence can retry.
+      await this.writeStateNow(loc.key, this.getCached(loc.key) ?? []);
       this.emit({ type: 'upsert', projectPath: next.projectPath, record: { ...next } });
       return { ...next };
     });
@@ -196,6 +255,9 @@ export class TerminalRegistryStore extends ProjectStateManager<TerminalRecord[],
     return this.runProjectWrite(loc.key, () => {
       const done = this.writeRecordList(loc.key, id, (list, idx) => {
         const record = list[idx]!;
+        // Only a confirmed close may discard pending ownership. A stale
+        // restore failure / owner cleanup must not turn it into a lost PTY.
+        if (record.closePending && ended.reason !== 'closed') return null;
         // Re-ending an already-ended record for the same reason keeps its
         // original timestamp, so the retention prune still counts from the
         // FIRST failure rather than restarting on every retry.

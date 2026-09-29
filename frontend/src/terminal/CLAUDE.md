@@ -1,8 +1,8 @@
 # frontend/src/terminal
 
-Helpers behind `../TerminalsContext.tsx`. The context file owns React state +
-effects; everything else lives here so the reducer logic and the pty-DELETE
-side effect can each be reasoned about (and changed) on their own.
+Helpers behind `../TerminalsContext.tsx`. The context file owns React state,
+ref mirroring, persistence and context assembly. Helpers here keep list logic
+and PTY side effects separate so each can be reasoned about on its own.
 
 - `terminalTypes.ts` — `TerminalSpec`, `Persisted`, `Ctx`. Re-exported as
   `TerminalSpec` from `../TerminalsContext` for backward compat.
@@ -58,6 +58,14 @@ side effect can each be reasoned about (and changed) on their own.
   effect, the once-per-project auto-restore effect, `runRestore`, and the
   `lastRestore` / `restorePrompt` state; returns `addedDuringFetchRef` for
   `addTerminal`. Every race fix described above lives (and is commented) there.
+- `useTerminalActions.ts` — stable add/activate/rename/reorder/status and
+  single/bulk/task-close callbacks, with explicit provider setters/refs.
+  Called after registry sync so persistence → sync → order cleanup stays
+  ordered. Owns the 300 ms order PATCH debounce (captures folder/order;
+  cancelled only on unmount) and backend close IO outside state updaters.
+  Registered tabs stay visible while closing; failures retain PTY ownership
+  and show retry feedback. Unregistered closes still remove immediately.
+  Pending-close registry records project the same feedback after reconnect.
 - `terminalState.ts` — barrel that re-exports the pure functions from the two
   modules below, so `./terminalState` stays the stable import surface for
   `TerminalsContext` and the tests.
@@ -96,5 +104,5 @@ side effect can each be reasoned about (and changed) on their own.
 
 If you add a new mutation, put the data transform in `terminalListOps.ts` (or a
 new active-id rule in `terminalActivePolicy.ts`), re-export it from the
-`terminalState.ts` barrel, and keep `fetch`/IO calls in the context callbacks
+`terminalState.ts` barrel, and keep `fetch`/IO calls in `useTerminalActions`
 (or `terminalApi.ts`).

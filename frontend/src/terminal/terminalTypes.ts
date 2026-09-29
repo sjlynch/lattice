@@ -28,6 +28,9 @@ export type TerminalSpec = {
   // the tab survives a reload / restart and closes via /api/terminal-tabs.
   // A serverless fallback tab (pre-create failed) stays unregistered.
   registered?: boolean;
+  // Registered closes retain the tab until the backend confirms teardown.
+  closeState?: 'closing' | 'failed';
+  closeError?: string;
   // Restore state. 'pending' — the registry knows the tab but its pty is
   // being relaunched (no pane may mount: a serverless attach would run the
   // launch command a second time). 'failed' — the relaunch failed; the tab

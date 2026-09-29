@@ -145,6 +145,7 @@ export function deserializeTerminalRecord(raw: unknown): TerminalRecord | null {
   if (lastBusy) record.lastBusy = lastBusy;
   const ended = parseEnded(r.ended);
   if (ended) record.ended = ended;
+  if (r.closePending === true && ended?.reason === 'closed') record.closePending = true;
   return record;
 }
 
@@ -161,7 +162,7 @@ export function deserializeTerminalRecords(raw: unknown): TerminalRecord[] | nul
     const rec = deserializeTerminalRecord(item);
     if (!rec) continue;
     // Prune long-ended leftovers so the file can't grow forever.
-    if (rec.ended && now - rec.ended.at > ENDED_RETENTION_MS) continue;
+    if (rec.ended && !rec.closePending && now - rec.ended.at > ENDED_RETENTION_MS) continue;
     out.push(rec);
   }
   return out.sort((a, b) => a.order - b.order || a.createdAt - b.createdAt);

@@ -9,6 +9,7 @@ import { normalizeDirPath } from './terminalScope';
 import type { TerminalSpec } from './terminalTypes';
 
 function restoreStateFor(record: TerminalRecord): Pick<TerminalSpec, 'restore' | 'restoreReason'> {
+  if (record.closePending) return record.serverId ? {} : { restore: 'pending' };
   if (record.ended) {
     return {
       restore: 'failed',
@@ -43,6 +44,10 @@ export function recordToSpec(record: TerminalRecord, prev?: TerminalSpec): Termi
     startupId: record.startupId,
     serverId: record.serverId,
     registered: true,
+    ...(record.closePending ? {
+      closeState: prev?.closeState === 'closing' ? 'closing' as const : 'failed' as const,
+      closeError: prev?.closeError ?? 'Terminal close is unconfirmed. Retry closing this tab.',
+    } : prev?.closeState ? { closeState: prev.closeState, closeError: prev.closeError } : {}),
     ...(samePty && prev?.status ? { status: prev.status, exitCode: prev.exitCode } : {}),
     ...(prev?.restored ? { restored: true } : {}),
     ...(relaunchNonce ? { relaunchNonce } : {}),
@@ -107,7 +112,7 @@ export function applyTerminalTabsEvent(
         next[idx] = recordToSpec(ev.record, terminals[idx]);
         return next;
       }
-      if (ev.record.ended) return terminals;
+      if (ev.record.ended && !ev.record.closePending) return terminals;
       // A pty another browser tab (or a backend spawn we never saw an event
       // for) created: adopt it, dropping any unregistered local tab on the
       // same pty.

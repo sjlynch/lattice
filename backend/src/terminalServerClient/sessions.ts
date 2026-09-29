@@ -137,7 +137,19 @@ export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void
   }
 }
 
-export async function proxyKillSession(id: string): Promise<boolean> {
+const killsInFlight = new Map<string, Promise<boolean>>();
+
+export function proxyKillSession(id: string): Promise<boolean> {
+  const existing = killsInFlight.get(id);
+  if (existing) return existing;
+  const killing = killSessionOnce(id).finally(() => {
+    if (killsInFlight.get(id) === killing) killsInFlight.delete(id);
+  });
+  killsInFlight.set(id, killing);
+  return killing;
+}
+
+async function killSessionOnce(id: string): Promise<boolean> {
   try {
     const res = await fetch(
       `${BASE}/sessions/${encodeURIComponent(id)}`,
@@ -147,7 +159,9 @@ export async function proxyKillSession(id: string): Promise<boolean> {
         signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
       },
     );
-    return res.ok;
+    // 404 is authoritative absence, unlike a transport error or 5xx. A retry
+    // after a lost acknowledgement may find the PTY already removed.
+    return res.ok || res.status === 404;
   } catch {
     // Terminal server down, wedged, or timed out — treat as kill-unconfirmed
     // (false) so awaiting callers (workflow advance, post-merge abort,

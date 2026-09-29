@@ -26,6 +26,12 @@ from.
   frontend only patches decorations. `end()` REMOVES a record for
   `exit` / `closed` / `killed` / `owner-finished` and KEEPS it (with the
   marker) for `cwd-missing` / `restore-failed` so the UI can show why.
+  Registered DELETE uses `requestClose()` first: durably marks `closed` with
+  `closePending`, retaining PTY identity and emitting only an upsert until
+  kill/404 confirms absence. Uncertain kills return retryable 503 and the
+  same tab id can retry; pending ownership never expires through retention.
+  Restore writes cannot clear intent; `recordRelaunch()` alone may hand a late
+  spawned PTY to its tombstone, which stays reclaimable if cleanup fails.
   `endWhere()` is what the kill paths (`terminalProxy.ts` wrappers, the
   `/api/terminals/:id` DELETE) and the exit watcher use.
 - `recordCodec.ts` — the untrusted-file codec: `deserializeTerminalRecord(s)` (per-field parsers, retention prune), re-exported from `store.ts`.

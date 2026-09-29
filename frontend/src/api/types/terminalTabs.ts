@@ -65,6 +65,7 @@ export type TerminalRecord = {
   // A restore pass (possibly another browser tab's) has this tab's relaunch
   // queued or in flight.
   relaunching?: boolean;
+  closePending?: boolean;
   ended?: TerminalEnded;
 };
 

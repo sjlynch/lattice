@@ -114,6 +114,9 @@ export type TerminalRecord = {
   // (the dead `serverId` is cleared at that point). Lets another client tell
   // "being relaunched right now" from "dead and waiting to be asked about".
   relaunching?: boolean;
+  // A durable close intent: restore must leave this record alone, but its
+  // PTY identity remains reclaimable until teardown is confirmed.
+  closePending?: boolean;
   ended?: TerminalEnded;
 };
 

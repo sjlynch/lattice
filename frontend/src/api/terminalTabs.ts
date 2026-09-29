@@ -40,16 +40,30 @@ export async function patchTerminalTabOrder(project: string, order: string[]): P
   await patchJson(`/api/terminal-tabs?project=${encodeURIComponent(project)}`, { order });
 }
 
-// Close a registered tab: the backend ends the record (so restore never
-// resurrects it) and kills its pty if one is alive. Fire-and-forget like
-// `deleteBackendSession`; kept out of any setState updater.
-export function closeTerminalTab(project: string, id: string): void {
-  void fetch(
-    `/api/terminal-tabs/${encodeURIComponent(id)}?project=${encodeURIComponent(project)}`,
-    { method: 'DELETE' },
-  ).catch(() => {
-    /* ignore */
-  });
+// Keep the existing void command contract; callers owning tab state can
+// observe confirmation/failure without putting IO in a React updater.
+export function closeTerminalTab(
+  project: string,
+  id: string,
+  callbacks?: { onClosed: () => void; onError: (error: unknown) => void },
+): void {
+  const request = async () => {
+    const res = await fetch(
+      `/api/terminal-tabs/${encodeURIComponent(id)}?project=${encodeURIComponent(project)}`,
+      { method: 'DELETE' },
+    );
+    // A retry after a lost successful response may find the tab already gone.
+    if (res.status === 404) return;
+    const result = await asJson<{ ok: boolean }>(res);
+    if (result.ok !== true) throw new Error('Terminal close could not be confirmed. Retry closing this tab.');
+  };
+  void request().then(
+    () => callbacks?.onClosed(),
+    (error: unknown) => {
+      if (callbacks) callbacks.onError(error);
+      else console.warn('[lattice] terminal close failed:', error);
+    },
+  );
 }
 
 export function subscribeTerminalTabs(

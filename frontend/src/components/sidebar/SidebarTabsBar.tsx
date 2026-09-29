@@ -122,6 +122,8 @@ export function SidebarTabsBar({
               kind={t.kind}
               status={t.status}
               exitCode={t.exitCode}
+              closeState={t.closeState}
+              closeError={t.closeError}
               restore={t.restore}
               restoreReason={t.restoreReason}
               restored={t.restored}

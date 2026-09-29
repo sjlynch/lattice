@@ -15,7 +15,9 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
   `KillSessionsByCwd`) carry a shared **3s** `AbortSignal.timeout` — awaited on
   spawn-queue accounting, recovery sweeps, and worktree teardown, where a wedged
   terminal-server must surface as "can't tell" fast; `proxyListSessions` /
-  `proxyKillSession` use the same timeout (return `[]` / `false` on any error). The
+  `proxyKillSession` use the same timeout (return `[]` / `false` on uncertainty).
+  Kill treats executor 404 as confirmed absence and coalesces concurrent
+  requests for one PTY; 5xx/transport failures remain unconfirmed. The
   `…OrNull` / `Count` variants return `null` (not `[]` / `0`) when unreachable so
   callers that act on "no live sessions" can distinguish it from a real empty.
   `proxyListSessionsShared` is a ≤750 ms memoized + single-flighted

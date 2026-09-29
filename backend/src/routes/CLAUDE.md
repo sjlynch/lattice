@@ -51,8 +51,9 @@ qaRuns, workflows.
   (`backend/src/terminalRegistry/`): `GET /api/terminal-tabs` (records),
   `POST /api/terminal-tabs/restore` (adopt / relaunch on project open),
   `PATCH /api/terminal-tabs` (order), `PATCH /api/terminal-tabs/:id` (label),
-  `DELETE /api/terminal-tabs/:id` (close: end the record, abort a post-merge
-  hook owning the pty, kill the pty — same abort as `DELETE /api/terminals/:id`). All
+  `DELETE /api/terminal-tabs/:id` (close: persist intent, abort a post-merge
+  hook owning the pty, kill the pty, then remove the record; uncertain kills
+  retain ownership and return retryable 503 — same abort as `DELETE /api/terminals/:id`). All
   `?project=`-scoped. Static paths, so mount order is unconstrained.
 - `terminals.ts` — terminal list (debug) + `DELETE /api/terminals/:id`, plus
   **`POST /api/terminals`**: pre-create a pty via `proxyCreateSession` and return

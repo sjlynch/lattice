@@ -36,7 +36,7 @@ export async function recordSpawnedTerminal(
       // replace it, or the next restore would try to resume a resume.
       const prev = await terminalRegistry.get(hint.existingId, projectPath);
       const restoredAt = Date.now();
-      return await terminalRegistry.update(hint.existingId, {
+      return await terminalRegistry.recordRelaunch(hint.existingId, {
         serverId,
         serverInstanceId,
         ...(session ? { agentSession: session } : {}),

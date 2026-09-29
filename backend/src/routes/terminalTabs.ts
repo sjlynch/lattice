@@ -28,6 +28,35 @@ function optionalProject(req: Parameters<typeof readProjectParam>[0], res: Param
   return project || undefined;
 }
 
+// Coalesce concurrent closes (multiple browser tabs / bulk actions) so the
+// executor never tears down the same live PTY twice in parallel.
+const closesInFlight = new Map<string, Promise<boolean>>();
+
+function closeRegisteredTerminal(id: string, projectPath: string): Promise<boolean> {
+  const existing = closesInFlight.get(id);
+  if (existing) return existing;
+  const closing = (async () => {
+    const record = await terminalRegistry.requestClose(id, projectPath);
+    if (!record) return true; // another confirmed close already removed it
+    if (record.serverId) {
+      await abortPostMergeHookForServerId(record.serverId);
+      const killed = await proxyKillSession(record.serverId);
+      if (!killed) return false;
+      notifySessionsFreed();
+    }
+    // A queued / in-flight restore has yet to hand off (or decline to spawn)
+    // its PTY. Keep its tombstone until that operation settles.
+    const current = await terminalRegistry.get(id, projectPath);
+    if (current?.relaunching || (current?.serverId && current.serverId !== record.serverId)) return false;
+    await terminalRegistry.end(id, { reason: 'closed' }, projectPath);
+    return true;
+  })().finally(() => {
+    if (closesInFlight.get(id) === closing) closesInFlight.delete(id);
+  });
+  closesInFlight.set(id, closing);
+  return closing;
+}
+
 export function buildTerminalTabsRouter(): Router {
   const r = Router();
 
@@ -74,8 +103,8 @@ export function buildTerminalTabsRouter(): Router {
     res.json(updated);
   });
 
-  // Close a tab: end the record first (so the exit watcher / restore never
-  // resurrect it), then kill its pty if one is alive. A post-merge hook's tab is
+  // Close a tab: persist intent first (so restore never resurrects it), then
+  // remove ownership only after a confirmed kill. A post-merge hook's tab is
   // a registered record too, so closing it here must end the hook `aborted`
   // before the kill, exactly as DELETE /api/terminals/:id does — otherwise the
   // hook stays `running` with a dead pty and the merge run waiting on it parks
@@ -85,13 +114,17 @@ export function buildTerminalTabsRouter(): Router {
     if (project === null) return;
     const record = await terminalRegistry.get(req.params.id, project);
     if (!record) return res.status(404).json({ error: 'not found' });
-    await terminalRegistry.end(record.id, { reason: 'closed' }, record.projectPath);
-    if (record.serverId) {
-      await abortPostMergeHookForServerId(record.serverId);
-      const killed = await proxyKillSession(record.serverId);
-      if (killed) notifySessionsFreed();
+    try {
+      if (await closeRegisteredTerminal(record.id, record.projectPath)) return res.json({ ok: true });
+    } catch (err) {
+      console.warn('[terminal-registry] close unconfirmed:', err);
     }
-    res.json({ ok: true });
+    res.setHeader('Retry-After', '1');
+    res.status(503).json({
+      error: 'Terminal close could not be confirmed. Retry closing this tab.',
+      code: 'terminal-close-unconfirmed',
+      retryable: true,
+    });
   });
 
   return r;

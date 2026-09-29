@@ -31,6 +31,8 @@ type SidebarTabProps = {
   status?: TerminalStatus;
   exitCode?: number;
   busy?: boolean;
+  closeState?: 'closing' | 'failed';
+  closeError?: string;
   // Registry restore state (see terminal/terminalTypes.ts).
   restore?: 'pending' | 'failed';
   restoreReason?: string;
@@ -64,6 +66,8 @@ export const SidebarTab = memo(function SidebarTab({
   status,
   exitCode,
   busy,
+  closeState,
+  closeError,
   restore,
   restoreReason,
   restored,
@@ -128,9 +132,16 @@ export const SidebarTab = memo(function SidebarTab({
           onCancel={onCancelRename}
         />
       ) : (
-        <span>{label}</span>
+        <span>{label}{closeState === 'closing' ? ' · Closing…' : closeState === 'failed' ? ' · Close failed' : ''}</span>
       )}
-      {restore ? (
+      {closeState ? (
+        <span
+          className={`sidebar-tab-status ${closeState === 'closing' ? 'reconnecting' : 'dead'}`}
+          title={closeState === 'closing' ? 'Closing…' : `${closeError ?? 'Close unconfirmed'} — click × to retry`}
+          aria-label={closeState === 'closing' ? 'Closing terminal' : 'Close failed — retry closing this tab'}
+          role="img"
+        />
+      ) : restore ? (
         // A relaunch in flight (amber pulse) or one that failed (red, with
         // the reason in the tooltip) — takes precedence over the pane's own
         // connection status, which has nothing to say without a pty.
@@ -158,8 +169,9 @@ export const SidebarTab = memo(function SidebarTab({
       <button
         className="sidebar-tab-close"
         onClick={(e) => { e.stopPropagation(); onClose(id); }}
-        title="Close"
-        aria-label="Close terminal"
+        disabled={closeState === 'closing'}
+        title={closeState === 'failed' ? 'Retry close' : 'Close'}
+        aria-label={closeState === 'failed' ? 'Retry closing terminal' : 'Close terminal'}
       >
         <X size={12} />
       </button>

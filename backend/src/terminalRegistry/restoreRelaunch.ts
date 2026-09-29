@@ -91,6 +91,13 @@ export function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Prom
       }
       const latest = await terminalRegistry.get(current.id, current.projectPath) ?? current;
       const plan = await planRelaunch(latest, deps);
+      const beforeSpawn = await terminalRegistry.get(current.id, current.projectPath);
+      if (!beforeSpawn || beforeSpawn.ended || beforeSpawn.serverId) {
+        if (beforeSpawn?.relaunching) {
+          await terminalRegistry.update(current.id, { relaunching: undefined }, current.projectPath);
+        }
+        return;
+      }
       const built = buildRestoreCommand({
         launch: current.launch,
         // A conversation the detector re-learned wins over the pinned id; the
@@ -124,12 +131,16 @@ export function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Prom
       }
       const restored = await terminalRegistry.get(current.id, current.projectPath);
       // The tab was closed (record ended / removed) while the spawn was in
-      // flight — recordSpawnedTerminal's update found nothing to attach the
-      // new pty to. Nothing owns that agent now: kill it rather than leave it
-      // running headless with no tab to ever find it again.
+      // flight. A close tombstone owns the late PTY until its cleanup succeeds;
+      // legacy callers may already have removed the record entirely.
       if (!restored || restored.ended || restored.serverId !== sess.id) {
-        await deps.killSession(sess.id).catch(() => false);
-        notifySessionsFreed();
+        const killed = await deps.killSession(sess.id).catch(() => false);
+        if (killed) {
+          notifySessionsFreed();
+          if (restored?.closePending && restored.serverId === sess.id) {
+            await terminalRegistry.end(restored.id, { reason: 'closed' }, restored.projectPath);
+          }
+        }
         return;
       }
       terminalRegistry.emitRestored(restored, 'relaunched');
