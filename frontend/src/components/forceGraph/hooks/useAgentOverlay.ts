@@ -1,17 +1,18 @@
 import { useCallback, useEffect, useRef, type MutableRefObject } from 'react';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import {
-  subscribeAgentSessions,
-  subscribeTasks,
-  type AgentSession,
-  type Task,
-} from '../../../api';
-import { sessionColor, taskColor } from '../../../taskColors';
+import { subscribeAgentSessions, subscribeTasks } from '../../../api';
 import type { GraphSettings } from '../graphSettings';
 import { getIdleController } from '../idleController';
 import { onFrame } from '../sceneFrameDriver';
 import { AgentOverlay, type AgentDescriptor } from '../agentOverlay';
 import { PendingActivityBuffer } from '../agentActivityBuffer';
+import {
+  routeAgentActivity,
+  sameDescriptors,
+  sessionDescriptors,
+  taskDescriptors,
+  type ActivityLike,
+} from './agentOverlayEvents';
 
 // How often a settled scene is checked for a satellite past its idle TTL.
 const SATELLITE_REAP_CHECK_MS = 30_000;
@@ -40,48 +41,6 @@ const SATELLITE_REAP_CHECK_MS = 30_000;
 //     mid-turn (backend projectClaude/lifecycle.ts).
 // Focus beams for both arrive as `task-activity` (taskId) / `agent-activity`
 // (agentId) events on `/ws/tasks` and just attach to the matching node.
-//
-// Every harness reports activity: Claude through its hooks
-// (`.claude/settings.local.json`), Codex through `.codex/hooks.json` (same hook
-// events, edits via `apply_patch`, reads via the shell), Pi through the
-// `.pi/extensions/lattice-activity.ts` extension — so any in-progress task gets
-// a node, whatever its harness.
-function taskDescriptors(tasks: Task[]): AgentDescriptor[] {
-  return tasks
-    .filter((t) => t.status === 'in_progress')
-    .map((t) => ({ taskId: t.id, color: taskColor(t) }));
-}
-
-function sessionDescriptors(sessions: AgentSession[]): AgentDescriptor[] {
-  return sessions.map((s) => ({ taskId: s.agentId, color: sessionColor(s) }));
-}
-
-// Cheap equality on a descriptor set: `/ws/tasks` re-pushes a full snapshot for
-// ANY board change (a status flip on an unrelated task, a title edit), so the
-// recomputed array is usually identical to the last one. Guarding the apply on
-// an actual change keeps a busy board from running a full `overlay.setAgents`
-// reconcile on every WS message. Mirrors `sameSet`/`lastAppliedRef` in
-// `useGraphSearch`. Order is stable (both descriptor sources map in input
-// order), so an index-wise compare on `taskId` + `color` is sufficient.
-function sameDescriptors(a: AgentDescriptor[], b: AgentDescriptor[]): boolean {
-  if (a.length !== b.length) return false;
-  for (let i = 0; i < a.length; i++) {
-    if (a[i].taskId !== b[i].taskId || a[i].color !== b[i].color) return false;
-  }
-  return true;
-}
-
-// The fields a `task-activity` / `agent-activity` frame carries that the
-// overlay routing cares about — shared shape of TaskActivityEvent and
-// AgentActivityEvent so one router handles both (keyed by the parent's id).
-type ActivityLike = {
-  file?: string;
-  phase: 'start' | 'end';
-  subagentId?: string;
-  subagentType?: string;
-  lifecycle?: 'spawn' | 'stop';
-};
-
 export function useAgentOverlay(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   settingsRef: MutableRefObject<GraphSettings>,
@@ -121,51 +80,21 @@ export function useAgentOverlay(
     getIdleController(graphRef.current)?.wakeForRefresh();
   }, [graphRef]);
 
-  // Route one activity/lifecycle frame to the overlay, keyed by the parent
-  // agent's id (taskId for task-activity, agentId for agent-activity):
-  //   - lifecycle 'spawn'/'stop' → a subagent satellite appears/disappears.
-  //   - a tool-use frame with `subagentId` → a satellite's focus beam.
-  //   - a plain tool-use frame → the main agent's focus beam.
+  // Read the live overlay and clock before handing the frame to the event router.
   const routeActivity = useCallback(
     (parentId: string, event: ActivityLike) => {
       const ov = overlayRef.current;
       if (!ov) return;
       const now = performance.now();
-      // No node yet: hold the frame until the presence snapshot that creates
-      // it arrives (a different socket — see agentActivityBuffer). Replayed by
-      // applyMerged.
-      if (!ov.hasAgent(parentId)) {
-        pendingRef.current.add(parentId, event, now);
-        return;
-      }
-      if (event.lifecycle === 'spawn') {
-        // The new satellite eases out from the parent — kick() animates it.
-        if (
-          event.subagentId &&
-          ov.addSubagent(parentId, event.subagentId, event.subagentType, now)
-        ) {
-          kick();
-        }
-        return;
-      }
-      if (event.lifecycle === 'stop') {
-        if (event.subagentId && ov.removeSubagent(parentId, event.subagentId)) {
-          wakeRefresh();
-        }
-        return;
-      }
-      if (!event.file) return;
-      const applied = event.subagentId
-        ? ov.addSubagentActivity(
-            parentId,
-            event.subagentId,
-            event.subagentType,
-            event.file,
-            event.phase,
-            now,
-          )
-        : ov.addActivity(parentId, event.file, event.phase, now);
-      if (applied) kick();
+      routeAgentActivity(
+        ov,
+        pendingRef.current,
+        parentId,
+        event,
+        now,
+        kick,
+        wakeRefresh,
+      );
     },
     [kick, wakeRefresh],
   );
