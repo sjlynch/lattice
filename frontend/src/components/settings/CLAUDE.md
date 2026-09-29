@@ -241,6 +241,14 @@ absent fields preserve hand-written configuration on adoption.
 The card/advanced/menu pieces get index-pre-bound callbacks; all mutation still
 flows through `useEndpointState`'s `mutate`.
 
+`usePiModelMenuDraft` keeps menu checkboxes and its `toggle` entry point
+read-only until this dialog session's saved-menu GET succeeds, including rows
+retained across close/reopen. `PiModelMenu` shows loading status or a load error
+with Retry; `getPatch` stays `undefined` while unavailable so Save preserves
+the curated menu. Provider patterns are auto-included only after hydration,
+and cancelled loads/errors cannot settle a later session. Pinned by
+`__tests__/piModelMenuDraftLoading.test.ts`.
+
 After a save that changed `piProviders`/`piModelMenu`, `saveSettings` calls
 `notifyPiModelsChanged()` (`piModelMenuStore.ts`) so every mounted harness
 dropdown refetches `GET /api/pi-models` without a page reload.

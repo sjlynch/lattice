@@ -27,8 +27,7 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
 - `createSession.ts` — `POST /sessions` (`proxyCreateSession` /
   `tryCreateSessionOnce`), the heavy path, **30s** cap. It re-exports
   `resolveHarnessSpawnBody` / `SessionWireBody` / `CreateSessionOptions` from
-  `spawnBody.ts` (per-harness `resolveClaudeSpawn` / `resolveCodexSpawn` /
-  `resolvePiSpawn`); `recordSpawn.ts` writes the terminal-registry record (and
+  `spawnBody.ts`; `recordSpawn.ts` writes the terminal-registry record (and
   ends a re-seeded startup tab's dead predecessor). `resolveHarnessSpawnBody`
   resolves the per-harness spawn config (Claude/Codex managed MCP via
   `mcp/registry.ts` + memory opt-out + system-prompt overrides; Pi writes its
@@ -46,6 +45,13 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
   Both paths also regenerate the project's `.lattice/LATTICE_API*.md`
   (`refreshLatticeApiDocs`) before the pty exists — the terminal-server only
   looks the doc up for its banner, so API-doc edits never make it stale.
+- `spawnBody.ts` — shared preparation, command recognition, harness dispatch,
+  and GC/LFS environment overlays; re-exports the public spawn types.
+- `spawnTypes.ts` — wire types and shared harness context; type-only imports.
+- `spawnClaude.ts` — `resolveClaudeSpawn` + strict MCP config/flags helper.
+- `spawnCodex.ts` — `resolveCodexSpawn` + managed MCP key filtering,
+  shell-aware prompts, and project activity hooks.
+- `spawnPi.ts` — `resolvePiSpawn` + cwd-local MCP and prompt extensions.
 - `shutdown.ts` — `POST /shutdown` (`proxyShutdown`), **2s**, fired by the dev
   orchestrator on Ctrl+C (the detached server gets no signal of its own).
 

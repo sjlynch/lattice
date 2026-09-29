@@ -1,138 +1,84 @@
 # backend/src/latticeMcp
 
-Lattice's **own** MCP server: eleven typed board tools over the task-board HTTP
-API (plus the three Opengrep tools, see the table), so a Lattice-spawned agent
-drives the board through tool calls instead of hand-written `curl`. It is the first-party entry in the MCP catalog
-(`../mcp/catalog.ts`, id `lattice`) and the one server that ships **on by
-default** — see `../mcp/CLAUDE.md` for why that exception exists and how to opt
-out.
+First-party stdio MCP bridge to the task-board and Opengrep HTTP APIs.
+[catalog.ts](../mcp/catalog.ts) reserves `defaultEnabled: true` for `lattice`;
+never use it for third-party servers. The [MCP parent guide](../mcp/CLAUDE.md)
+owns catalog policy, harness injection, scoping and opt-outs.
 
-## Why a server and not just the docs
+The harness launches the backend's Node with `dist/latticeMcp/server.js`,
+which talks HTTP to the running backend. Required env: `LATTICE_API_URL`,
+`LATTICE_PROJECT`; optional: `LATTICE_TASK_ID`.
 
-Every project's generated `.lattice/LATTICE_API.md` already documents the API,
-and agents did use it — badly, in three repeatable ways:
+## Module map
 
-- **They forgot `project=`**, or passed a non-canonical form of it, and read a
-  different board than the one they were working in.
-- **They skipped the `canonicalProject` check** the docs ask them to perform by
-  hand on every response.
-- **They called `GET /api/tasks` unfiltered.** On this machine that is 479
-  tasks / 1.28 MB / ~320k tokens for one project. It is the shape the docs show
-  first, so it is the shape agents copy.
+| Module | Responsibility |
+|---|---|
+| [createServer.ts](createServer.ts) | Server composition, registrar order and session gate. |
+| [client.ts](client.ts) | HTTP outcomes, bounded retries and injectable polling sleep. |
+| [toolResult.ts](toolResult.ts) | MCP result mapping, status descriptions and kept-branch hint. |
+| [server.ts](server.ts) | Env validation, stderr logging and stdio transport. |
+| [entryPath.ts](entryPath.ts) | Resolves compiled sibling `server.js` via `import.meta.url`. |
+| [tools/readTools.ts](tools/readTools.ts) | `board_summary`, `list_tasks`, `get_task`, `my_task`, `search_tasks`. |
+| [tools/writeTools.ts](tools/writeTools.ts) | `create_task`, `create_tasks`, `append_summary`. |
+| [tools/boardManagementTools.ts](tools/boardManagementTools.ts) | `update_task`, `transition_tasks`, `delete_task`, `run_task`. |
+| [tools/opengrepTools.ts](tools/opengrepTools.ts) | Scan/findings; separately registered ignore. |
 
-Typed tools fix all three structurally rather than by exhortation: `project` is
-pinned by the client and no tool accepts one, the canonical-project assertion is
-automatic, and the **tool descriptions carry the progressive-disclosure ladder**
-(`board_summary` → `list_tasks` → `get_task` / `search_tasks`) to the exact place
-the model reads before choosing a call — for free, on every call, with no brief
-to remember.
+## Registration and session scope
 
-## Process shape
+Model-visible order: read tools → write tools → Opengrep read tools →
+Opengrep ignore → board management. `createServer.ts` returns before the last
+two groups when `taskId` is set. Normal sessions have 14 tools; task-worktree
+sessions have 10: add `my_task`, allow `append_summary.id` to default to the
+session task, and omit board management plus `opengrep_ignore`. Otherwise
+`append_summary.id` is required.
 
-The server is spawned **by the harness**, not by Lattice: the catalog entry runs
-`<the backend's own node> dist/latticeMcp/server.js` with two env vars the
-resolver injects per spawn.
+## Shared contracts
 
-```
-harness (claude/codex/pi)
-  └─ node dist/latticeMcp/server.js        LATTICE_API_URL, LATTICE_PROJECT [, LATTICE_TASK_ID]
-       └─ HTTP ──▶ the running Lattice backend on :5184
-```
+- **Project isolation:** no tool accepts `project`. The client pins `project=`
+  on every request, including writes; by-id API routes refuse foreign tasks
+  before acting. Successful responses assert `canonicalProject` (envelope) or
+  `projectPath` (bare task) when present, using normalized paths.
+- **API-owned defaults:** forward supplied arguments without duplicating API
+  defaults. Discovery: `board_summary` (counts/cost) → `list_tasks` (compact,
+  active lanes, newest 100 by API default) → `get_task` (full record), or
+  `search_tasks` (ranked snippets, all lanes by default). Board results are
+  compact JSON in one text block.
+- **413 teaches narrowing:** a normal result without `isError`, carrying
+  summary/suggestions. Narrow first; `confirm_large` explicitly bypasses the
+  API's 256 KB ceiling.
+- **Distinct failures:** `timeout` means the backend accepted the request and
+  may still be working; `unreachable` means it could not be reached;
+  `projectMismatch` refuses another board's response. These and `httpError`
+  (status/body retained) are errors; see the scan exception below.
+- **Bounded retries:** `client.ts` owns the budget. Writes replay only after
+  `ECONNREFUSED` or HTTP 503 (refusal before acting); ambiguous network failures
+  permit GET retries only, avoiding duplicate writes.
+- **Stdout is the protocol:** `server.ts` redirects `console.log`, `info` and
+  `debug` to stderr; stray stdout corrupts the JSON-RPC stream.
+- **Management:** deletion erases the task/worktree, retaining an unmerged
+  branch with a leading hint; update/transition moves to the `deleted` lane.
+  `run_task` returns `{accepted, queued}` for admission; the agent starts later.
 
-It therefore imports **nothing** from the rest of the backend except
-`../projectPath.js` (path canonicalization) — no task cache, no Express, no
-node-pty. It is a short-lived stdio process that only speaks HTTP to the backend
-that is already running.
+## Opengrep flow
 
-## Modules
+`opengrep_scan` and `opengrep_findings` return digest markdown, not raw scan
+JSON. Scan POSTs with `async: true`, `includeMarkdown: true`: a quick scan
+returns its digest; a longer one returns 202 with a running scan id, then polls
+`GET /api/opengrep/scans/<id>` with `include=markdown`. Timeout or exhausted
+polling budget returns a normal "still running" result pointing to findings;
+do not start another scan. Scan failures are errors; an unknown polled id
+asks the agent to scan again.
 
-- `createServer.ts` — `createLatticeMcpServer({apiUrl, project, taskId?, fetchImpl?})`
-  → an `McpServer`. Two tool sets: the full eleven for a planner / sidebar /
-  user session, or — when `taskId` is set (a task worktree's agent) — the
-  eight-tool read / `my_task` / file / report set with the board-management
-  tools (`update_task`, `transition_tasks`, `delete_task`, `run_task`) left
-  out. Both sets carry the read-only `opengrep_scan` / `opengrep_findings`;
-  `opengrep_ignore` sits behind the same `taskId` cut as board management
-  (14 / 10 tools in total). A short composition: builds the client +
-  `McpServer`, calls the `tools/` registrars in order (tool order is what the
-  model sees), and keeps the `taskId` gate visible.
-- `toolResult.ts` — `ToolResult`, `toToolResult` (outcome → MCP-result mapping), `withKeptBranchHint`, `STATUS_DESC`.
-- `tools/readTools.ts` — `board_summary`, `list_tasks`, `get_task`, `my_task` (worktree only), `search_tasks`.
-- `tools/writeTools.ts` — `create_task`, `create_tasks`, `append_summary`.
-- `tools/opengrepTools.ts` — `registerOpengrepTools` (`opengrep_scan` with its start-then-poll loop, `opengrep_findings`, the digest unwrap) and `registerOpengrepIgnoreTool` (`opengrep_ignore`, not in a worktree session).
-- `tools/boardManagementTools.ts` — `update_task`, `transition_tasks`, `delete_task`, `run_task` (not in a worktree session).
-- `client.ts` — the HTTP layer. Builds URLs with `project` pinned (sent on
-  EVERY call, so the by-id routes can 404 a foreign task), sends/parses JSON,
-  asserts the response's `canonicalProject` (envelopes) or `projectPath` (a
-  bare `Task`), and classifies each round trip into the six-way
-  `LatticeCallOutcome`. A **`timeout`** (undici's `UND_ERR_HEADERS_TIMEOUT` /
-  `UND_ERR_BODY_TIMEOUT` — Node's fetch gives up on a response after 300 s) is
-  its own kind, NOT `unreachable`: the backend answered the connection and is
-  most likely still working, so "Is Lattice running?" was the wrong thing to
-  tell the agent. `httpError` carries the `status`. `pause(ms)` exposes the
-  injectable sleep for tools that poll. Imports no MCP types, so it is testable
-  (and reasonable) without a transport.
-- `server.ts` — the stdio entry point. Reads `LATTICE_API_URL` +
-  `LATTICE_PROJECT` (exit 1 on either missing), builds the server, connects a
-  `StdioServerTransport`.
-- `entryPath.ts` — `latticeMcpServerEntryPath()`, the absolute path of the
-  compiled `server.js`, resolved from `import.meta.url` so it is correct from
-  `dist/mcp/catalog.js` whatever that caller's depth is.
+`opengrep_findings` reads an existing scan (`latest` by default), narrowed by `rule`,
+`file`, `severity` or `budgetKb`, and recognizes running scans.
+`opengrep_ignore` adds permanent rule/fingerprint exclusions; `reason` is
+echoed, never stored. The [registrar](tools/opengrepTools.ts) owns
+exact timing constants and result messages; the [Opengrep guide](../opengrep/CLAUDE.md)
+owns backend scan/storage details.
 
-## The tools
+## Coverage
 
-| tier | tool | notes |
-|---|---|---|
-| 0 orient | `board_summary` | counts + per-lane cost. Under 1 KB. |
-| 1 scan | `list_tasks` | compact / active lanes / newest 100 — **the API's defaults, not ours**; `confirm_large` is the only way past the 256 KB ceiling |
-| 2 expand | `get_task` | one full record |
-| 2 expand | `my_task` | **task worktree sessions only** — the live record of the task this agent is running. Registered iff `LATTICE_TASK_ID` is set (run/resume spawns and the worktree merge-conflict resolvers); the same variable makes `append_summary`'s `id` optional |
-| find | `search_tasks` | ranked, all lanes, snippets |
-| write | `create_task`, `create_tasks`, `append_summary` | in every session |
-| manage | `update_task`, `transition_tasks`, `delete_task` | **not in a task-worktree session** — a worktree agent's brief is untrusted input; it reads, files follow-ups and reports, it does not re-lane or delete. `delete_task` is `DELETE /api/tasks/:id` — a PERMANENT erase that also tears down the task's worktree + branch (a branch with commits not on HEAD is KEPT; the route then returns `keptBranch.hint`, which the tool puts on the first line of its result, before the JSON), not a move to the `deleted` lane (that is `update_task` / `transition_tasks` with `status: "deleted"`) |
-| run | `run_task` | returns `{accepted, queued}` — admitted, **not started**. Also **not in a task-worktree session** |
-| tools | `opengrep_scan`, `opengrep_findings` | in every session. Both return the Opengrep **digest markdown** (never the JSON envelope): `opengrep_scan` runs a scan with the project's packs/filter (409 busy / not-installed / no-rules surfaces as an error the agent can act on); `opengrep_findings` re-reads a stored scan (`latest` by default) narrowed by `rule` / `file` / `severity` / `budgetKb` — the drill-down when a digest says rules were cut for the byte budget. **A scan never holds one request open**: the tool POSTs with `async: true`, a scan done within the backend's 15 s accept window answers at once, a longer one answers `202 {scanId, status: 'running'}` and the tool polls `GET /api/opengrep/scans/<id>` every 5 s (budget 12 min, above the 10 min scan cap). A failed scan comes back as its own 409/500 error; an id the backend no longer knows (restarted mid-scan) says to scan again; running out of budget — or a response timeout on the POST — is a NON-error "still running, don't start another (busy), fetch it with `opengrep_findings`" result. Before this, a >300 s scan hit undici's headers timeout and the agent was told Lattice was down |
-| tools | `opengrep_ignore` | **not in a task-worktree session** (same cut as board management): it appends rule ids / fingerprints to the project's ignore lists PERMANENTLY (`POST /api/opengrep/ignore`, additive), and a poisoned or careless brief could otherwise have a task agent hide the findings its own change introduced from every later security-review digest. Echoes the agent's optional `reason` back in the result text (never stored). Backed by `routes/opengrep.ts`; see `../opengrep/CLAUDE.md` |
-
-## Invariants
-
-- **No tool takes a `project` argument.** It is pinned from `LATTICE_PROJECT`
-  and enforced twice: the client sends `project=` on EVERY request and the by-id
-  routes 404 a task that belongs to another board
-  (`routes/tasks/requestUtils.ts` `requireTaskInRequestedProject`) — so a foreign
-  id is refused before anything is read or written; then the response's
-  `canonicalProject` (envelopes) or `projectPath` (a bare `Task`) is asserted
-  as a backstop. That pair is what lets the server be trusted with writes; the
-  response check alone would not be, because the by-id routes echo no
-  `canonicalProject`.
-- **No tool invents a default the API already has.** `list_tasks` forwards only
-  the arguments it was given, so "compact fields, active lanes, newest 100"
-  lives in one place (`routes/tasks/`). Duplicating a default here would drift
-  from the API silently, and the drift would only show as wrong output.
-- **`stdout` is the protocol.** `server.ts` re-points `console.log`/`info`/
-  `debug` at stderr before anything else runs; one stray line corrupts the
-  JSON-RPC frame stream and the harness drops the server with a parse error.
-- **An HTTP 413 is a normal result, never `isError`.** It is the teaching
-  response (board summary + narrowing suggestions) and the agent has to read it;
-  marking it an error invites a retry of the identical oversized call.
-- **A connection failure and a project mismatch ARE errors**, and each says
-  which it is — one means "Lattice isn't running", the other means "stop, you
-  are pointed at the wrong board".
-- **A restarting backend is retried first** (`client.ts` `send`, up to
-  `RETRY_BUDGET_MS` = 45 s): when Lattice works on its own repo the backend
-  restarts after merges, and a call landing in that window used to come back
-  "Is Lattice running?", telling the agent to abandon the board. Only failures
-  that provably did nothing are re-sent for a write — connection refused, or a
-  503 from the restart-drain / workflow-recovery gates; any other network error
-  re-sends a GET only, so a `create_task` is never duplicated.
-- **Results are compact JSON in one text block.** Agents parse it; indentation
-  would cost tokens for nothing.
-
-## Tests
-
-`../__tests__/latticeMcp.test.ts` drives the real server from a real `Client`
-over `InMemoryTransport.createLinkedPair()` with a recording `fetchImpl`, so it
-pins the actual tool registry, zod schemas and result shaping against the exact
-HTTP request each tool makes. Nothing in the suite SPAWNS the process — which is
-why `entryPath.ts` resolving to a non-existent `src/latticeMcp/server.js` under
-`tsx` is fine.
+[latticeMcp.test.ts](../__tests__/latticeMcp.test.ts): registry, schemas, HTTP
+forwarding, project guards, result shaping and retries via in-memory MCP and
+injected fetch. [latticeMcpOpengrep.test.ts](../__tests__/latticeMcpOpengrep.test.ts):
+digests, ignore writes, async polling, failures and still-running results.
