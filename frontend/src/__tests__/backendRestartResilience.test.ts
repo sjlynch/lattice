@@ -2,7 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import React from 'react';
 import TestRenderer, { act } from 'react-test-renderer';
-import type { Workflow, WorkflowQueueEntry, WorkflowRun, WorkflowRunStatus } from '../api';
+import type { Task, TaskSpawnedEvent, Workflow, WorkflowQueueEntry, WorkflowRun, WorkflowRunStatus } from '../api';
 import { HttpError } from '../api/http.ts';
 import {
   isTransientRequestError,
@@ -14,7 +14,12 @@ import {
   subscribeBackendConnection,
   subscribeWs,
 } from '../api/ws.ts';
-import { FakeWebSocket } from './domDoubles.ts';
+import { FakeWebSocket, installManualTimers } from './domDoubles.ts';
+import { GitSetupProvider } from '../components/gitSetup/GitSetupProvider.tsx';
+import { TerminalsProvider, useTerminals } from '../TerminalsContext.tsx';
+import type { Ctx } from '../terminal/terminalTypes';
+import { useTaskLifecycleActions } from '../components/taskboard/hooks/useTaskLifecycleActions.ts';
+import { useTaskSpawnHandler } from '../components/taskboard/hooks/useTaskSpawnHandler.ts';
 import {
   resolveVanishedRun,
   VANISHED_RUN_GRACE_MS,
@@ -31,8 +36,9 @@ import {
 } from '../components/workflows/hooks/useWorkflowRunActions.ts';
 
 // Lattice restarts its own backend whenever it merges a backend change into
-// itself. These pin the frontend half of surviving that: start actions retry
-// through the gap, a mid-recovery `hello` is not read as "the run vanished",
+// itself. These pin the frontend half of surviving that: unaccepted start
+// actions retry through the gap, lost acknowledgements never replay a resume
+// or workflow start, a mid-recovery `hello` is not read as "the run vanished",
 // the workflow queue asks before declaring a vanished run errored, and the
 // navbar can tell that the live channels are down.
 
@@ -260,10 +266,20 @@ beforeEach(() => {
     WebSocket: g.WebSocket,
     window: g.window,
     fetch: g.fetch,
+    React: g.React,
+    sessionStorage: g.sessionStorage,
   };
   g.IS_REACT_ACT_ENVIRONMENT = true;
   g.WebSocket = FakeWebSocket;
   g.window = { location: { protocol: 'http:', host: 'localhost:5183' } };
+  // The provider JSX uses the classic runtime in these node:test fixtures.
+  g.React = React;
+  const storage = new Map<string, string>();
+  g.sessionStorage = {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => { storage.set(key, value); },
+    removeItem: (key: string) => { storage.delete(key); },
+  };
 });
 
 afterEach(() => {
@@ -391,19 +407,28 @@ let latestStart: (id: string) => Promise<StartOutcome> = async () => ({ status: 
 let added: WorkflowRun[] = [];
 let errors: string[] = [];
 
-function RunActionsHarness() {
+function RunActionsHarness({ recent = {} }: { recent?: RunMap }) {
   const actions = useWorkflowRunActions({
     activeFolder: FOLDER,
     editor: emptyEditor(),
     workflowsById: workflows,
     save: async () => null,
     addActiveRun: (r) => { added.push(r); },
-    getRecentRun: () => null,
+    getRecentRun: (id) => recent[id] ?? null,
     getWorkflowHarnessOverride: () => null,
     getWorkflowPiModelOverride: () => undefined,
     onError: (msg) => { errors.push(msg); },
   });
   latestStart = (id) => actions.startWorkflowDefinition(id);
+  const queue = useWorkflowQueue({
+    activeFolder: FOLDER,
+    workflowsById: workflows,
+    runWorkflow: (wf) => actions.startWorkflowDefinition(wf.id),
+    activeRuns: {},
+    recentRuns: recent,
+  });
+  latestDispatch = queue.dispatch;
+  latestState = queue.state;
   return null;
 }
 
@@ -411,50 +436,275 @@ function jsonResponse(status: number, body: unknown) {
   return { ok: status >= 200 && status < 300, status, json: () => Promise.resolve(body) };
 }
 
-test('a queued start that hits a restarting backend retries instead of failing', async () => {
+test('a workflow start retries recovery 503 and ECONNREFUSED before allocating once', async (t) => {
+  const timers = installManualTimers();
+  t.after(() => timers.restore());
   added = [];
   errors = [];
   let posts = 0;
+  let allocations = 0;
   g.fetch = async (url: string) => {
     if (String(url).includes('/api/workflows/wf1/run')) {
       posts++;
       if (posts === 1) return jsonResponse(503, { error: 'recovering', code: 'workflow-recovering' });
+      if (posts === 2) return jsonResponse(502, { error: '[api-proxy]: ECONNREFUSED' });
+      allocations++;
       return jsonResponse(200, { run: run('run-new') });
     }
     return jsonResponse(404, {});
   };
   let renderer!: ReturnType<typeof TestRenderer.create>;
   await act(async () => { renderer = TestRenderer.create(React.createElement(RunActionsHarness)); });
-  let outcome!: StartOutcome;
-  await act(async () => { outcome = await latestStart('wf1'); });
+  t.after(async () => { await act(async () => { renderer.unmount(); }); });
+  let pending!: Promise<StartOutcome>;
+  await act(async () => { pending = latestStart('wf1'); });
+  for (const delay of [1_000, 2_000]) {
+    assert.deepEqual(timers.scheduled.map((timer) => timer.delay), [delay]);
+    assert.equal(allocations, 0);
+    await act(async () => { timers.fireAll(); });
+  }
+  const outcome = await pending;
   assert.equal(outcome.status, 'started');
-  assert.equal(posts, 2);
+  assert.equal(posts, 3);
+  assert.equal(allocations, 1);
   assert.deepEqual(errors, [], 'no error toast for a restart');
-  await act(async () => { renderer.unmount(); });
 });
 
-test('a 409 after a lost-response attempt adopts our own run instead of requeuing', async () => {
+const ambiguousFailures = [
+  new TypeError('Failed to fetch'),
+  new HttpError(504, 'gateway timeout'),
+  new HttpError(502, '[api-proxy]: ECONNRESET (socket hang up)'),
+];
+
+function lostAcknowledgement(error: Error) {
+  if (error instanceof HttpError) return jsonResponse(error.status, { error: error.message });
+  throw error;
+}
+
+for (const error of ambiguousFailures) {
+  for (const status of ['running', 'completed', 'errored', 'cancelled'] as const) {
+    test(`workflow ${status} before lost acknowledgement (${error.message}) is never replayed`, async (t) => {
+      const timers = installManualTimers();
+      t.after(() => timers.restore());
+      added = [];
+      errors = [];
+      const acknowledgement = deferredVoid();
+      const recent: RunMap = {};
+      const created: WorkflowRun[] = [];
+      const requests: string[] = [];
+      g.fetch = async (url: string) => {
+        requests.push(String(url));
+        assert.ok(String(url).includes('/api/workflows/wf1/run'), 'no timestamp-based active-run lookup');
+        const started = run(`run-${created.length + 1}`);
+        created.push(started);
+        if (created.length === 1) {
+          await acknowledgement.promise;
+          return lostAcknowledgement(error);
+        }
+        return jsonResponse(200, { run: started });
+      };
+      let renderer!: ReturnType<typeof TestRenderer.create>;
+      await act(async () => { renderer = TestRenderer.create(React.createElement(RunActionsHarness, { recent })); });
+      t.after(async () => { await act(async () => { renderer.unmount(); }); });
+      let pending!: Promise<StartOutcome>;
+      await act(async () => { pending = latestStart('wf1'); });
+      // The server has settled (or the user cancelled) run A before the
+      // browser learns that its acknowledgement was lost. Deliver its WS
+      // terminal event too: it still cannot identify which click created A.
+      const original = { ...created[0], status };
+      created[0] = original;
+      if (status !== 'running') {
+        handleWorkflowRunEvent({ type: status, run: original }, {
+          projectPath: FOLDER,
+          addTerminal: () => '',
+          setActiveRuns: () => {},
+          setControlProgress: () => {},
+          addRecentRun: (finished) => { recent[finished.id] = finished; },
+        });
+      }
+      await act(async () => { acknowledgement.resolve(); });
+      // Advance any retry the old code would have scheduled after 1 second.
+      await act(async () => { timers.fireAll(); });
+      assert.deepEqual(await pending, { status: 'uncertain' });
+      assert.equal(requests.length, 1);
+      assert.equal(created.length, 1);
+      assert.deepEqual(added, [], 'no guessed ownership or resurrected run');
+      assert.match(errors[0], /could not be confirmed/);
+      if (status !== 'running') assert.equal(recent[original.id].status, status);
+
+      if (status !== 'running') {
+        let deliberate!: StartOutcome;
+        await act(async () => { deliberate = await latestStart('wf1'); });
+        assert.equal(deliberate.status, 'started', 'a later explicit Run is a new intent');
+        assert.equal(created.length, 2);
+        assert.deepEqual(added.map((r) => r.id), ['run-2']);
+      }
+    });
+  }
+}
+
+test('a lost workflow start stops its queue without replaying or advancing the next entry', async (t) => {
+  const timers = installManualTimers();
+  t.after(() => timers.restore());
   added = [];
   errors = [];
-  let posts = 0;
-  const own = run('run-own');
+  const posts: string[] = [];
   g.fetch = async (url: string) => {
-    const raw = String(url);
-    if (raw.includes('/api/workflows/wf1/run')) {
-      posts++;
-      if (posts === 1) return jsonResponse(502, { error: '[api-proxy]: ECONNRESET (socket hang up)' });
-      return jsonResponse(409, { error: 'busy', code: 'active-run-exists' });
-    }
-    if (raw.includes('/api/workflow-runs/active')) return jsonResponse(200, [own]);
-    return jsonResponse(404, {});
+    posts.push(String(url));
+    return lostAcknowledgement(ambiguousFailures[0]);
   };
   let renderer!: ReturnType<typeof TestRenderer.create>;
   await act(async () => { renderer = TestRenderer.create(React.createElement(RunActionsHarness)); });
-  let outcome!: StartOutcome;
-  await act(async () => { outcome = await latestStart('wf1'); });
-  assert.deepEqual(outcome, { status: 'started', run: own });
-  assert.deepEqual(added.map((r) => r.id), ['run-own']);
-  await act(async () => { renderer.unmount(); });
+  t.after(async () => { await act(async () => { renderer.unmount(); }); });
+  await act(async () => {
+    latestDispatch({ type: 'enqueue', entry: { id: 'q1', workflowId: 'wf1', harnessOverride: null } });
+    latestDispatch({ type: 'enqueue', entry: { id: 'q2', workflowId: 'wf2', harnessOverride: null } });
+    latestDispatch({ type: 'startQueue' });
+  });
+  await act(async () => { timers.fireAll(); });
+  assert.equal(posts.length, 1);
+  assert.equal(latestState!.running, false);
+  assert.deepEqual(latestState!.queued.map((entry) => entry.id), ['q2']);
+  assert.deepEqual(latestState!.started, []);
+  assert.match(errors[0], /could not be confirmed/);
+});
+
+for (const status of ['completed', 'errored', 'cancelled'] as const) {
+  for (const viaSocket of [false, true]) {
+    test(`acknowledged ${status} run keeps its terminal status from ${viaSocket ? 'WS' : 'HTTP'}`, async () => {
+      added = [];
+      errors = [];
+      const finished = run('run-finished', 'wf1', { status });
+      const recent = viaSocket ? { [finished.id]: finished } : {};
+      g.fetch = async () => jsonResponse(200, { run: viaSocket ? run(finished.id) : finished });
+      let renderer!: ReturnType<typeof TestRenderer.create>;
+      await act(async () => { renderer = TestRenderer.create(React.createElement(RunActionsHarness, { recent })); });
+      let outcome!: StartOutcome;
+      await act(async () => { outcome = await latestStart('wf1'); });
+      assert.deepEqual(outcome, { status: 'finished', run: finished });
+      assert.deepEqual(added, []);
+      await act(async () => { renderer.unmount(); });
+    });
+  }
+}
+
+// ----------------------------------------------- task Resume retry path
+
+const resumableTask: Task = {
+  id: 't1', title: 'resume me', projectPath: FOLDER,
+  status: 'in_progress', createdAt: 0, worktreePath: 'C:/wt/t1',
+};
+
+async function mountResumeActions() {
+  let actions!: ReturnType<typeof useTaskLifecycleActions>;
+  let terminals!: Ctx;
+  let handleSpawn!: (event: TaskSpawnedEvent) => void;
+  const messages: string[] = [];
+  function Harness() {
+    terminals = useTerminals();
+    handleSpawn = useTaskSpawnHandler(terminals.addTerminal, terminals.closeTerminalsForTask).handleTaskSpawned;
+    actions = useTaskLifecycleActions({
+      activeFolder: FOLDER,
+      tasks: [resumableTask],
+      pickRunHarness: () => ({ harness: 'claude' }),
+      showError: (message) => { messages.push(message); },
+    });
+    return null;
+  }
+  let renderer!: ReturnType<typeof TestRenderer.create>;
+  await act(async () => {
+    renderer = TestRenderer.create(React.createElement(GitSetupProvider, {
+      children: React.createElement(TerminalsProvider, {
+        activeFolder: '', restoreMode: null, children: React.createElement(Harness),
+      }),
+    }));
+  });
+  return {
+    resume: () => actions.resumeTaskAction(resumableTask),
+    spawn: (serverId: string) => handleSpawn({
+      taskId: resumableTask.id, title: resumableTask.title, projectPath: FOLDER,
+      worktreePath: resumableTask.worktreePath!, command: 'claude', serverId,
+    }),
+    terminals: () => terminals.terminals,
+    messages,
+    unmount: async () => { await act(async () => { renderer.unmount(); }); },
+  };
+}
+
+for (const error of ambiguousFailures) {
+  for (const connected of [false, true]) {
+    test(`settled Resume with lost acknowledgement (${error.message}, socket ${connected}) allocates once`, async (t) => {
+      const timers = installManualTimers();
+      t.after(() => timers.restore());
+      const acknowledgement = deferredVoid();
+      let allocations = 0;
+      const deletes: string[] = [];
+      const mounted = await mountResumeActions();
+      t.after(mounted.unmount);
+      g.fetch = async (url: string, init?: RequestInit) => {
+        if (init?.method === 'DELETE') {
+          deletes.push(String(url));
+          return jsonResponse(200, {});
+        }
+        assert.ok(String(url).includes('/api/tasks/t1/resume'));
+        assert.equal(init?.method, 'POST');
+        // Model a completed queue thunk: no dedupe entry remains to prevent
+        // a later POST from allocating a fresh agent in this same worktree.
+        allocations++;
+        if (connected) mounted.spawn(`agent-${allocations}`);
+        if (allocations === 1) {
+          await acknowledgement.promise;
+          return lostAcknowledgement(error);
+        }
+        return jsonResponse(202, { accepted: true, queued: false });
+      };
+      let pending!: Promise<void>;
+      await act(async () => { pending = mounted.resume(); });
+      assert.equal(allocations, 1, 'the first spawn settled before its HTTP response');
+      await act(async () => { acknowledgement.resolve(); });
+      await act(async () => { timers.fireAll(); });
+      await pending;
+      assert.equal(allocations, 1, 'advancing the retry delay cannot allocate agent B');
+      assert.deepEqual(deletes, [], 'the first successfully resumed agent was never killed');
+      assert.deepEqual(mounted.terminals().map((tab) => tab.serverId), connected ? ['agent-1'] : []);
+      assert.match(mounted.messages[0], /could not be confirmed/);
+
+      await act(async () => { await mounted.resume(); });
+      assert.equal(allocations, 2, 'a later explicit Resume is allowed');
+      assert.deepEqual(mounted.terminals().map((tab) => tab.serverId), connected ? ['agent-2'] : []);
+      assert.deepEqual(deletes, connected ? ['/api/terminals/agent-1'] : []);
+    });
+  }
+}
+
+test('Resume retries only unaccepted 503/ECONNREFUSED requests before allocating once', async (t) => {
+  const timers = installManualTimers();
+  t.after(() => timers.restore());
+  const mounted = await mountResumeActions();
+  t.after(mounted.unmount);
+  let posts = 0;
+  let allocations = 0;
+  g.fetch = async (url: string) => {
+    assert.ok(String(url).includes('/api/tasks/t1/resume'));
+    posts++;
+    if (posts === 1) return jsonResponse(503, { error: 'backend-restarting' });
+    if (posts === 2) return jsonResponse(502, { error: '[api-proxy]: ECONNREFUSED' });
+    allocations++;
+    mounted.spawn('agent-1');
+    return jsonResponse(202, { accepted: true, queued: false });
+  };
+  let pending!: Promise<void>;
+  await act(async () => { pending = mounted.resume(); });
+  for (const delay of [1_000, 2_000]) {
+    assert.deepEqual(timers.scheduled.map((timer) => timer.delay), [delay]);
+    assert.equal(allocations, 0);
+    await act(async () => { timers.fireAll(); });
+  }
+  await pending;
+  assert.equal(posts, 3);
+  assert.equal(allocations, 1);
+  assert.deepEqual(mounted.messages, []);
+  assert.deepEqual(mounted.terminals().map((tab) => tab.serverId), ['agent-1']);
 });
 
 // ------------------------------------------------ connection indicator

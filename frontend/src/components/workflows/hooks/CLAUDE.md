@@ -66,13 +66,15 @@ there.
   `startWorkflowDefinition`/`runWorkflow`/`runEditorWorkflow`/`stopRun`. Saves a
   dirty editor before running and threads `harnessOverride`/`piModelOverride` to
   `startWorkflow`. The start POST goes through `retryTransient` (`api/retry.ts`),
-  so a backend restart / its 503 `workflow-recovering` window is waited out with
-  backoff — the queue entry stays dispatched instead of being dropped as
-  `failed`; a 409 after an attempt whose response was lost adopts the matching
-  active run (same workflow, started since the first attempt) as `started`
-  rather than requeuing behind what is really its own run. Returns a discriminated `StartOutcome` (`started` / `finished`
-  (completion WS beat the `/run` response) / `busy` (backend 409: another run is
-  active for the project) / `failed`) — `runEditorWorkflow` pairs it with the
+  with `retryIf: err => !mayHaveBeenApplied(err)`: recovery 503 and proxy
+  ECONNREFUSED wait with backoff, keeping the queue entry dispatched. A lost
+  acknowledgement (network error, 504, proxy reset) returns `uncertain` with a
+  message to check workflow status before starting again. It never replays the
+  unkeyed POST or guesses ownership from active runs / timestamps: the original
+  run may already have finished or been cancelled. Returns a discriminated
+  `StartOutcome` (`started` / `finished` (terminal HTTP response or completion
+  WS beat the response, preserving its status) / `busy` (backend 409: another run
+  is active for the project) / `uncertain` / `failed`) — `runEditorWorkflow` pairs it with the
   workflow it (possibly just) saved — and guards every await against a mid-flight
   project switch so a result never lands on the wrong project's state.
 - `useWorkflowManualRun.ts` — the ▶ Run buttons (editor footer + saved-list row;
@@ -128,7 +130,8 @@ there.
 - `startOutcomeActions.ts` — the queue's pure halves: `queueActionsForStartOutcome`
   (`finished` → `runFinished` then `workflowStarted`, so a completion WS that beat
   `/run` still retires the entry with its terminal status, stopping the queue
-  on error/cancellation; another project's run → `dispatchFailed`) and
+  on error/cancellation; `uncertain` stops the queue before retiring the
+  unconfirmed entry, leaving later entries queued; another project's run → `dispatchFailed`) and
   `classifyVanishedRuns` (report now vs. hand to `vanishedRunResolver`).
 - `useWorkflowQueueActions.ts` — enqueue/remove/clear/start/stop callbacks
   dispatched into `useWorkflowQueue`. Each enqueue captures the workflow's current

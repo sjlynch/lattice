@@ -1,7 +1,6 @@
 import { useCallback, useRef } from 'react';
 import {
   cancelWorkflowRun as apiCancelWorkflowRun,
-  fetchActiveWorkflowRuns,
   HttpError,
   mayHaveBeenApplied,
   retryTransient,
@@ -13,42 +12,18 @@ import {
 import { sameProjectPath } from '../../../terminal/terminalScope';
 import type { EditorState } from '../editorState';
 
-// Clock slack when matching a run's server-side `startedAt` against the
-// client's first attempt (same machine, but the request is in flight a while).
-const OWN_RUN_START_SLACK_MS = 5_000;
-
-// After a start attempt whose response was lost, a retry's 409 usually means
-// the lost attempt DID start the run. Adopt it (an active run of the same
-// workflow started after our first attempt) instead of requeuing — requeuing
-// would treat our own run as foreign and, once it finished, start the
-// workflow a second time.
-async function findRunStartedSince(
-  project: string,
-  workflowId: string,
-  since: number,
-): Promise<WorkflowRun | null> {
-  try {
-    const active = await fetchActiveWorkflowRuns(project);
-    return (
-      active.find(
-        (run) =>
-          run.workflowId === workflowId && run.startedAt >= since - OWN_RUN_START_SLACK_MS,
-      ) ?? null
-    );
-  } catch {
-    return null;
-  }
-}
-
 // Outcome of a run-start attempt. `busy` (backend 409: another run is active
 // for the project) is distinct from `failed` so the queue can requeue-and-retry
 // — and a manual ▶ Run can enqueue — rather than drop the start.
 export type StartOutcome =
   | { status: 'started'; run: WorkflowRun }
-  // WS completion beat the /run response. The queue must consume this as a
-  // pre-finished run instead of attaching a dead run id and stalling.
+  // A terminal response or WS completion beat acceptance. The queue must
+  // consume the final status instead of attaching a dead run id and stalling.
   | { status: 'finished'; run: WorkflowRun }
   | { status: 'busy' }
+  // A lost acknowledgement has no run identity. Stop the queue without
+  // replaying or guessing ownership from a workflow id / timestamp.
+  | { status: 'uncertain' }
   | { status: 'failed' };
 
 // What `runEditorWorkflow` attempted: the (possibly just-saved) workflow and
@@ -110,13 +85,12 @@ export function useWorkflowRunActions({
       if (alreadyFinished) {
         return { status: 'finished', run: alreadyFinished };
       }
+      if (run.status !== 'running') {
+        return { status: 'finished', run };
+      }
       addActiveRun(run);
       return { status: 'started', run };
     };
-    const firstAttemptAt = Date.now();
-    // Set when a failed attempt may have started the run anyway (response
-    // lost mid-restart) — a later 409 is then probably our own run.
-    let possiblyApplied = false;
     try {
       // A backend restart (Lattice merging a backend change into itself) or
       // its post-boot workflow recovery (503 `workflow-recovering`) is waited
@@ -126,9 +100,9 @@ export function useWorkflowRunActions({
         () => apiStartWorkflow(workflowId, { harnessOverride, piModelOverride }),
         {
           isCancelled: projectChanged,
-          onRetry: (err) => {
-            if (mayHaveBeenApplied(err)) possiblyApplied = true;
-          },
+          // Once a run finishes or is cancelled the active-run guard no
+          // longer dedupes a replay. Retry only a definitely unaccepted start.
+          retryIf: (err) => !mayHaveBeenApplied(err),
         },
       );
       return accept(res.run);
@@ -138,11 +112,11 @@ export function useWorkflowRunActions({
       // because a run is already active. Not a user-facing error — the queue
       // requeues, a manual ▶ Run enqueues.
       if (err instanceof HttpError && err.status === 409) {
-        if (possiblyApplied) {
-          const own = await findRunStartedSince(requestedProject, workflowId, firstAttemptAt);
-          if (own) return accept(own);
-        }
         return { status: 'busy' };
+      }
+      if (mayHaveBeenApplied(err)) {
+        onError('Workflow start could not be confirmed and may already have run. Check workflow status before starting it again.');
+        return { status: 'uncertain' };
       }
       onError(`Run failed: ${(err as Error).message}`);
       return { status: 'failed' };

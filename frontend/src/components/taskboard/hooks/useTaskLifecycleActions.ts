@@ -18,7 +18,7 @@ type UseTaskLifecycleActionsArgs = {
   showError: (message: string) => void;
 };
 
-// The run/resume routes answer a request that no longer fits the task's state
+// The run route answers a request that no longer fits the task's state
 // with 400 (or 409): after an attempt whose response was lost, that is the
 // signature of the lost attempt having gone through.
 function isStateConflict(err: unknown): boolean {
@@ -91,15 +91,20 @@ export function useTaskLifecycleActions({
 
   const resumeTaskAction = useCallback(
     async (task: Task) => {
-      let possiblyApplied = false;
       try {
         const sel = pickRunHarness();
+        // Queue deduplication ends when the spawn settles, while the task
+        // stays in_progress. Replaying a lost acknowledgement can therefore
+        // allocate a second agent in the same checkout.
         await retryTransient(
           () => apiResumeTask(activeFolder, task.id, sel.harness, sel.piModel),
-          { onRetry: (err) => { if (mayHaveBeenApplied(err)) possiblyApplied = true; } },
+          { retryIf: (err) => !mayHaveBeenApplied(err) },
         );
       } catch (err) {
-        if (possiblyApplied && isStateConflict(err)) return;
+        if (mayHaveBeenApplied(err)) {
+          showError('Resume could not be confirmed and may already have started. Check the task terminal before resuming again.');
+          return;
+        }
         showError(`Resume failed: ${(err as Error).message}`);
       }
     },

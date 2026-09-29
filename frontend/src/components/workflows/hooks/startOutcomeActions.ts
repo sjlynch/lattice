@@ -34,6 +34,11 @@ export function queueActionsForStartOutcome(
     // with a retry delay so a stale active-run snapshot cannot cause a loop.
     return [{ type: 'dispatchRejected', entryId }];
   }
+  if (outcome.status === 'uncertain') {
+    // Stop before retiring the entry so the next workflow cannot start while
+    // this one's outcome (including failure/cancellation) is still unknown.
+    return [{ type: 'stopQueue' }, { type: 'dispatchFailed', entryId }];
+  }
   return [{ type: 'dispatchFailed', entryId }];
 }
 
