@@ -180,7 +180,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | GET | `/api/global-settings` | Read machine-global settings |
 | PATCH | `/api/global-settings` | Update machine-global settings (softCap applied live; `piProviders` reconciled into models.json) |
 | GET | `/api/pi-models` | Pi models + curated "Pi — X" `menu` + Pi's `defaultPattern` |
-| POST | `/api/pi-endpoints/probe` | `{baseUrl, apiKey?}` → models an OpenAI-compatible server serves (+ context window) |
+| POST | `/api/pi-endpoints/probe` | `{baseUrl, apiKey?, headers?}` → models an OpenAI-compatible server serves (+ context window) |
 | GET | `/api/mcp-catalog` | Merged MCP catalog (definitions only, no secrets) |
 | GET | `/api/mcp-secrets` | Redacted MCP secret presence (booleans + last-4 hints) |
 | PATCH | `/api/mcp-secrets` | Set/clear one secret `{serverId, envVar, value}` |
@@ -367,22 +367,18 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   the project root — the user's global Pi config is never touched. See
   `backend/src/piSubagents/CLAUDE.md`.
 - **Pi model selection** is a second field `piModel` (`provider/model`) beside
-  the `harness` enum — never a composite — detected from `pi --list-models`
-  (stderr) + `~/.pi/agent/models.json`, applied per spawn as `--model` by
-  `buildPiModelFlag` (`backend/src/agentCommandBuilder.ts`); Lattice never
-  writes Pi's `settings.json`. **The model half may contain further slashes**
+  the `harness` enum — never a composite — applied per spawn as `--model` by
+  `buildPiModelFlag` (`backend/src/agentCommandBuilder.ts`).
+  **The model half may contain further slashes**
   (an OpenAI-compatible server reports e.g.
   `my-vllm/meta-llama/Llama-3.1-8B-Instruct`), **and the frontend mirror
   `PI_MODEL_RE` (`frontend/src/harnesses.ts`) must stay in lockstep with the
   backend pattern: a pattern either side rejects has its `--model` flag
   *silently dropped*, so the session runs Pi's default model instead of the
-  chosen one.** Endpoints (`globalSettings.piProviders`) are reconciled into
-  models.json and auto-discovered — `backend/src/piModels/CLAUDE.md`. Gotchas
-  not yet there: only currently-served models are discoverable; thinking-level
-  probing caps at `thinkingProbeModelLimit` (25), looser than the aggregator
-  cutoff (5); a `$VAR` / `!command` `apiKey` always fails its probe (keeps its
-  last models — configure by hand); duplicate model ids across endpoints get a
-  `(provider)` label suffix on the colliding rows only.
+  chosen one.** Probes never interpolate `$VAR` / `${VAR}` or execute `!command`
+  in `apiKey` or `headers`; unauthenticated endpoints or literal custom auth
+  headers can still succeed. Discovery and Pi-config management:
+  `backend/src/piModels/CLAUDE.md`.
 - **Tasks store** is in-memory keyed by project with debounced JSON persistence;
   `~/.lattice/projects.json` is consulted lazily so Stop-hook callbacks resolve
   task ids across sessions (`backend/src/taskCache/`).

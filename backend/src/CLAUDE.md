@@ -159,10 +159,17 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 runs `src/__tests__/*.test.ts`).
 
 `tsc` only emits `.js` for `.ts`. Non-TS runtime assets under `src/` (currently
-`workflowRuns/create-task-template.cjs`, read at boot by `renderHelperScript`,
-and both `latticeApiDocs/LATTICE_API.template.md` +
-`latticeApiDocs/LATTICE_API_RECIPES.template.md`, read by `latticeApiDocs.ts`)
+`workflowRuns/create-task-template.cjs` and both
+`latticeApiDocs/LATTICE_API.template.md` +
+`latticeApiDocs/LATTICE_API_RECIPES.template.md`)
 are copied into `dist/` by `scripts/copy-assets.mjs`, run from **both**
 `npm run build` and `npm run dev` (`scripts/dev.mjs`, right after the initial
 `tsc`). New asset → add it to `copy-assets.mjs`'s list (one place, both paths).
-Forgetting it crashes the backend on boot with `ENOENT … dist/…`.
+Missing the helper asset crashes backend boot with `ENOENT … dist/…` because
+`renderHelperScript.ts` reads it synchronously at module initialization.
+`latticeApiDocs.ts` loads templates lazily, trying the dist-adjacent path then
+the source-tree fallback; if neither yields a valid template, it warns once
+about disabled generation, caches `null`, and disables that file's generation
+for the process lifetime. Missing API-doc templates degrade docs without
+failing import; `refreshLatticeApiDocs` also catches generation failures so
+a spawn remains possible.

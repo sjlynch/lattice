@@ -199,23 +199,29 @@ of this into `~/.pi/agent/models.json`, plus the curated "Pi — X" model-menu
 checklist. (A keyless endpoint is written with `apiKey: "local"` so Pi doesn't
 reject the whole file — see `backend/src/piModels.ts`.) `PiTab`'s draft state
 lives in three focused hooks in `usePiEndpoints.ts`: `useEndpointState` (the
-endpoint list + `touched` flag + `patch`/`add`/`remove`, and a shared `mutate`
-primitive the editors reuse for their compat/header/model/detect edits;
-`add` derives the next `endpoint-N` id from the current list via
-`nextEndpointId` so a fresh row never re-mints a saved id), `useProbeDetection`
-(per-endpoint `probing`/`detected`/`probeError` + the `/api/pi-endpoints/probe`
-flow, reporting `{id, contextWindow?}` entries back via an `onDetected`
-callback — a reachable endpoint that lists nothing reports that as an error
-rather than blinking silently — plus `dropEndpoint(id)` to forget a removed
-endpoint's state; a generation counter bumped by `reset()` (every dialog open)
-and on unmount drops a probe from an earlier session, so a slow Detect started
-before a Cancel can't land after reopen and clobber the curated models on the
-next unrelated Save — `piProbeStaleSession.test.ts`), and `usePiEndpointEditors(endpoints,
-probe, providers)` (the per-endpoint field editors — `updateCompat`,
-the header mutators sharing one `mutateHeaderEntries` body, `toggleEndpointModel`,
-`detectModels` — extracted out of `PiTab.tsx`; a probe result is applied to its
-endpoint by id when it resolves — `applyDetectedModels` — never by the row index
-captured at click time). **All per-endpoint transient
+endpoint list + `touched` flag + `patch`/`add`/`remove`; `add` uses
+`nextEndpointId` to avoid re-minting a saved id). Its shared `mutate` tracks row
+request identity synchronously, exposed by `getProvider`/`requestToken`/
+`isCurrentRequest`: changes to `id`/`baseUrl`/`apiKey`/`headers`/`api` or row
+removal invalidate an in-flight probe immediately, including A → B → A before
+the next render; metadata edits and surviving rows shifted to another index
+retain identity. `useProbeDetection` owns per-endpoint
+`probing`/`detected`/`probeError` and the `/api/pi-endpoints/probe` flow,
+reporting `{id, contextWindow?}` entries via `onDetected` (a reachable endpoint
+listing nothing reports an error). Its Settings-session generation, bumped by
+`reset()` on every dialog open and on unmount, combines with a per-detect token
+and the row-current predicate to ignore stale successes, errors, detected-model
+application and `finally`/busy cleanup. `dropEndpoint(id)` clears transient
+state and invalidates pending work on request edits/removal; a prior request
+cannot clear a newer request's busy state or populate a removed-and-reused id.
+The session fence still prevents a slow Detect from before Cancel landing after
+reopen and clobbering curated models on an unrelated Save.
+`usePiEndpointEditors(endpoints, probe, providers)` owns the compat/header/model/
+detect handlers through the shared `mutate`. Manual Detect forwards a snapshot
+of explicit custom headers via `probePiEndpoint` in `api/settings.ts`;
+`applyDetectedModels` requires the current row request token, never just the
+same endpoint id or the row index captured at click time. These lifetimes are
+pinned by `__tests__/piProbeStaleSession.test.ts`. **All per-endpoint transient
 state — `useProbeDetection`'s three maps and `PiTab`'s `advancedOpen` — is keyed
 by the endpoint's stable `ep.id`, not its array index** (the React `key` is
 `ep.id` too), so removing a non-last endpoint never misattributes a survivor's
