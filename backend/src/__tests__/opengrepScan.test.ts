@@ -154,19 +154,27 @@ test('one scan per project: a concurrent request is refused with OpengrepScanBus
   });
 });
 
-test('abortOpengrepScan kills the running scan, frees the busy slot at once, and stores nothing', async () => {
+test('abortOpengrepScan kills the running scan, frees the busy slot at once, and stores nothing', { timeout: 10_000 }, async () => {
   await installFakePack();
   await withProject(async (project) => {
     const calls: SpawnCall[] = [];
+    let markSpawned!: () => void;
+    let spawned = new Promise<void>((resolve) => { markSpawned = resolve; });
     // A fake engine that only returns once the caller's signal fires.
     const spawn = async (command: string, args: string[], o: { cwd?: string; timeoutMs: number; signal?: AbortSignal }): Promise<SpawnWithTimeoutResult> => {
       calls.push({ command, args, cwd: o.cwd });
-      await new Promise<void>((r) => o.signal!.addEventListener('abort', () => r(), { once: true }));
+      await new Promise<void>((resolve) => {
+        if (o.signal!.aborted) resolve();
+        else o.signal!.addEventListener('abort', () => resolve(), { once: true });
+        markSpawned();
+      });
       return { code: null, stdout: '', stderr: '', combined: '', timedOut: false, aborted: true, error: null };
     };
     const deps = { resolve: async () => ENGINE, spawn };
     const scan = runOpengrepScan({ project, packIds: ['qodana-mit'] }, deps);
-    await new Promise((r) => setTimeout(r, 20));
+    // Filesystem setup can exceed 20 ms under suite load. Cancel only after
+    // the fake engine has installed its listener, so this tests a running scan.
+    await spawned;
     assert.equal(isAnyOpengrepScanRunning(), true);
     assert.equal(abortOpengrepScan(project), true);
     await assert.rejects(scan, OpengrepScanAbortedError);
@@ -177,8 +185,9 @@ test('abortOpengrepScan kills the running scan, frees the busy slot at once, and
 
     // A caller-supplied signal works the same way.
     const ctrl = new AbortController();
+    spawned = new Promise<void>((resolve) => { markSpawned = resolve; });
     const second = runOpengrepScan({ project, packIds: ['qodana-mit'], signal: ctrl.signal }, deps);
-    await new Promise((r) => setTimeout(r, 20));
+    await spawned;
     ctrl.abort();
     await assert.rejects(second, OpengrepScanAbortedError);
     // …and a scan can run again afterwards.
