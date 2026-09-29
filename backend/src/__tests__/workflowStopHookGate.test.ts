@@ -123,19 +123,30 @@ test('a premature Stop while a subagent is live does not advance until quiescent
   }
 });
 
-test('repeated/duplicate Stops advance the step exactly once', async () => {
+test('repeated/duplicate Stops advance the step exactly once', async (t) => {
+  // Real sleeps can overshoot the settle window under full-suite load, so
+  // control both the polling timers and the clock used to measure silence.
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
   const runId = 'gate-dup';
   const agentId = workflowStepAgentId(runId, 0);
   let advanced = 0;
   try {
     seedRun(runId, 0);
     requestStopHookStepComplete(runId, 0, () => { advanced += 1; }, { settleMs: 40, pollMs: 10 });
-    await sleep(15);
+    t.mock.timers.tick(15);
     // A second Stop fire for the same step extends the window but starts no
     // second poll loop.
     requestStopHookStepComplete(runId, 0, () => { advanced += 1; }, { settleMs: 40, pollMs: 10 });
-    await sleep(160);
+    t.mock.timers.tick(35);
+    await Promise.resolve();
+    assert.equal(advanced, 0, 'the duplicate Stop extends the original settle window');
+    t.mock.timers.tick(10);
+    await Promise.resolve();
+    await Promise.resolve(); // let the successful advance clear its gate
     assert.equal(advanced, 1, 'exactly one advance despite two Stop fires');
+    t.mock.timers.tick(160);
+    await Promise.resolve();
+    assert.equal(advanced, 1, 'no later poll advances the step a second time');
   } finally {
     cancelStopHookGate(runId);
     forgetAgentQuiescence(agentId);
@@ -161,16 +172,19 @@ test('a late Stop for an already-advanced step is ignored', async () => {
   }
 });
 
-test('cancelStopHookGate stops a pending advance', async () => {
+test('cancelStopHookGate stops a pending advance', async (t) => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
   const runId = 'gate-cancel';
   const agentId = workflowStepAgentId(runId, 0);
   let advanced = 0;
   try {
     seedRun(runId, 0);
     requestStopHookStepComplete(runId, 0, () => { advanced += 1; }, { settleMs: 40, pollMs: 10 });
-    await sleep(15);
+    t.mock.timers.tick(15);
+    assert.equal(advanced, 0, 'cancel while the advance is still pending');
     cancelStopHookGate(runId);
-    await sleep(120);
+    t.mock.timers.tick(120);
+    await Promise.resolve();
     assert.equal(advanced, 0, 'a cancelled gate never fires its advance');
   } finally {
     cancelStopHookGate(runId);
