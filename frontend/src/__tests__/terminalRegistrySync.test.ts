@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { TerminalRecord } from '../api/types/terminalTabs';
+import type { RestoreSummary, TerminalRecord } from '../api/types/terminalTabs';
 import type { TerminalSpec } from '../terminal/terminalTypes';
 import {
   applyTerminalTabsEvent,
+  applyRestoreSummary,
   mergeRegistryTabs,
   recordToSpec,
   registeredOrder,
@@ -98,6 +99,91 @@ test('mergeRegistryTabs keeps a registered tab created after the snapshot was re
   // Once the registry lists it, the record wins (no duplicate).
   const later = mergeRegistryTabs(merged, [rec({ id: 'a' }), rec({ id: 'fresh' })], P, new Set(['fresh']));
   assert.deepEqual(later.map((t) => t.id), ['a', 'fresh']);
+});
+
+test('an older snapshot preserves updated, failed and remotely added tabs, including pane state', () => {
+  const original = [
+    spec({ id: 'a', registered: true, serverId: 'srv_old', status: 'dead' }),
+    spec({ id: 'failed', registered: true, serverId: 'srv_failed' }),
+    spec({ id: 'foreign', projectPath: OTHER, registered: true }),
+  ];
+  let current = applyTerminalTabsEvent(original, {
+    type: 'restored', projectPath: P, mode: 'relaunched',
+    record: rec({ id: 'a', serverId: 'srv_new', label: 'new label' }),
+  });
+  current = applyTerminalTabsEvent(current, {
+    type: 'restore-failed', projectPath: P, id: 'failed', reason: 'no capacity',
+  });
+  current = applyTerminalTabsEvent(current, { type: 'upsert', projectPath: P, record: rec({ id: 'remote' }) });
+  current = current.map((t) => t.id === 'a' ? { ...t, status: 'live' as const } : t);
+  const merged = mergeRegistryTabs(current, [rec({ id: 'a', serverId: 'srv_old' }), rec({ id: 'failed' })], P,
+    null, new Set(['a', 'failed', 'remote']));
+  for (const id of ['a', 'failed', 'remote', 'foreign']) {
+    assert.strictEqual(merged.find((t) => t.id === id), current.find((t) => t.id === id));
+  }
+  assert.equal(merged.find((t) => t.id === 'a')?.relaunchNonce, 1);
+  assert.equal(merged.find((t) => t.id === 'failed')?.restore, 'failed');
+});
+
+test('an older snapshot cannot resurrect removed tabs or erase final output', () => {
+  let current = [spec({ id: 'a', registered: true }), spec({ id: 'exited', registered: true, serverId: 'srv_exited' })];
+  current = applyTerminalTabsEvent(current, { type: 'removed', projectPath: P, id: 'a' });
+  current = applyTerminalTabsEvent(current, { type: 'ended', projectPath: P, id: 'exited', ended: { at: 2, reason: 'exit', exitCode: 7 } });
+  const merged = mergeRegistryTabs(current, [rec({ id: 'a' }), rec({ id: 'exited' })], P,
+    null, new Set(['a', 'exited']));
+  assert.deepEqual(merged.map((t) => t.id), ['exited']);
+  assert.strictEqual(merged[0], current[0]);
+  assert.equal(merged[0]?.exitCode, 7);
+});
+
+test('an older snapshot deduplicates fallback panes using the newer registry pty', () => {
+  const current = [
+    spec({ id: 'a', registered: true, serverId: 'srv_new' }),
+    spec({ id: 'new-duplicate', serverId: 'srv_new' }),
+    spec({ id: 'old-fallback', serverId: 'srv_old' }),
+  ];
+  const merged = mergeRegistryTabs(current, [rec({ id: 'a', serverId: 'srv_old' })], P, null, new Set(['a']));
+  assert.deepEqual(merged.map((t) => t.id), ['a', 'old-fallback']);
+});
+
+test('restore summaries clear only the requested stale pty and preserve newer outcomes', () => {
+  const original = [
+    spec({ id: 'queued', registered: true, serverId: 'srv_stale', status: 'dead' }),
+    spec({ id: 'restored', registered: true, serverId: 'srv_old' }),
+    spec({ id: 'failed', registered: true, serverId: 'srv_failed' }),
+    spec({ id: 'changed-locally', registered: true, serverId: 'srv_old_local' }),
+    spec({ id: 'retry', registered: true, restore: 'failed', restoreReason: 'earlier attempt failed' }),
+    spec({ id: 'foreign', registered: true, projectPath: OTHER, serverId: 'srv_foreign' }),
+  ];
+  const requestedServerIds = new Map(original.map((t) => [t.id, t.serverId]));
+  let current = applyTerminalTabsEvent(original, {
+    type: 'restored', projectPath: P, record: rec({ id: 'restored', serverId: 'srv_new' }), mode: 'relaunched',
+  });
+  current = applyTerminalTabsEvent(current, { type: 'restore-failed', projectPath: P, id: 'failed', reason: 'boom' });
+  current = current.map((t) => t.id === 'changed-locally' ? { ...t, serverId: 'srv_local_new' } : t);
+  const summary: RestoreSummary = { status: 'ok', adopted: 0, queued: 6, dropped: [], relaunchedIds: original.map((t) => t.id) };
+  const reconciled = applyRestoreSummary(current, summary, P, requestedServerIds, new Set(['restored', 'failed']));
+  assert.equal(reconciled[0]?.serverId, undefined);
+  assert.equal(reconciled[0]?.restore, 'pending');
+  assert.equal(reconciled[0]?.restored, true);
+  for (const id of ['restored', 'failed', 'changed-locally', 'foreign']) {
+    assert.strictEqual(reconciled.find((t) => t.id === id), current.find((t) => t.id === id));
+  }
+  assert.equal(reconciled.find((t) => t.id === 'retry')?.restore, 'pending');
+  assert.equal(reconciled.find((t) => t.id === 'retry')?.restoreReason, undefined);
+});
+
+test('restore summaries retain pending state from the queue upsert while marking the tab restored', () => {
+  const original = [spec({ id: 'queued', registered: true, serverId: 'srv_stale' })];
+  const current = applyTerminalTabsEvent(original, {
+    type: 'upsert', projectPath: P, record: rec({ id: 'queued', serverId: undefined, relaunching: true }),
+  });
+  const summary: RestoreSummary = { status: 'ok', adopted: 0, queued: 1, dropped: [], relaunchedIds: ['queued'] };
+  const reconciled = applyRestoreSummary(current, summary, P, new Map([['queued', 'srv_stale']]), new Set(['queued']));
+  assert.equal(reconciled[0]?.restore, 'pending');
+  assert.equal(reconciled[0]?.serverId, undefined);
+  assert.equal(reconciled[0]?.restored, true);
+  assert.equal(reconciled[0]?.relaunchNonce, current[0]?.relaunchNonce);
 });
 
 test('upsert adds unknown live records, updates known ones, ignores unknown ended ones', () => {

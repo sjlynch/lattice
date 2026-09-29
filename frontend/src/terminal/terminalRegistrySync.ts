@@ -4,7 +4,7 @@
 // which pty backs each; the local list keeps transient per-pane state
 // (connection status) and any unregistered fallback tabs.
 
-import type { TerminalRecord, TerminalTabsEvent } from '../api/types/terminalTabs';
+import type { RestoreSummary, TerminalRecord, TerminalTabsEvent } from '../api/types/terminalTabs';
 import { normalizeDirPath } from './terminalScope';
 import type { TerminalSpec } from './terminalTypes';
 
@@ -62,35 +62,69 @@ function sameProject(a: string | undefined, b: string): boolean {
 // registry order), keep unregistered local tabs unless a record already owns
 // their pty, and leave every other project's tabs untouched. `keepIds` are
 // registered tabs created AFTER the snapshot was requested (the snapshot
-// predates them); they are kept when the records don't list them.
+// predates them); they are kept when the records don't list them. `changedIds`
+// were edited by registry events while an HTTP snapshot was in flight: their
+// current specs (including absence after removal) win over that snapshot.
 export function mergeRegistryTabs(
   terminals: TerminalSpec[],
   records: TerminalRecord[],
   projectPath: string,
   keepIds: ReadonlySet<string> | null = null,
+  changedIds: ReadonlySet<string> | null = null,
 ): TerminalSpec[] {
   const prevById = new Map(terminals.map((t) => [t.id, t] as const));
-  const recordIds = new Set(records.map((r) => r.id));
-  const recordServerIds = new Set(records.map((r) => r.serverId).filter(Boolean));
   // `records` is the registry's answer for THIS project (the fetch and the WS
   // subscription are both project-scoped), so every one is projected.
-  const projected = records.map((r) => recordToSpec(r, prevById.get(r.id)));
+  const projected = records.flatMap((r) => {
+    const prev = prevById.get(r.id);
+    if (changedIds?.has(r.id)) return prev ? [prev] : [];
+    return [recordToSpec(r, prev)];
+  });
+  const recordIds = new Set(projected.map((t) => t.id));
+  const newerRegistered = terminals.filter((t) =>
+    t.registered && sameProject(t.projectPath, projectPath) && !recordIds.has(t.id)
+    && (keepIds?.has(t.id) || changedIds?.has(t.id)),
+  );
+  const recordServerIds = new Set([...projected, ...newerRegistered].map((t) => t.serverId).filter(Boolean));
   const others: TerminalSpec[] = [];
   const localUnregistered: TerminalSpec[] = [];
-  const newerRegistered: TerminalSpec[] = [];
   for (const t of terminals) {
     if (!sameProject(t.projectPath, projectPath)) {
       others.push(t);
       continue;
     }
     if (t.registered) {
-      if (keepIds?.has(t.id) && !recordIds.has(t.id)) newerRegistered.push(t);
       continue; // otherwise superseded by the registry's view
     }
     if (t.serverId && recordServerIds.has(t.serverId)) continue; // a record owns this pty
     localUnregistered.push(t);
   }
   return [...others, ...projected, ...newerRegistered, ...localUnregistered];
+}
+
+// The restore acknowledgement describes tabs queued earlier, not their state
+// when the response arrives. Only clear the pty captured at request time, and
+// preserve state from newer registry events (especially success/failure).
+export function applyRestoreSummary(
+  terminals: TerminalSpec[],
+  summary: RestoreSummary,
+  projectPath: string,
+  requestedServerIds: ReadonlyMap<string, string | undefined>,
+  changedIds: ReadonlySet<string>,
+  snapshotChanged = false,
+): TerminalSpec[] {
+  const relaunched = new Set(summary.relaunchedIds ?? []);
+  return terminals.map((t) => {
+    if (!t.registered || !sameProject(t.projectPath, projectPath) || !relaunched.has(t.id)) return t;
+    if (!requestedServerIds.has(t.id)) return t;
+    // The queue upsert may already have removed the dead pty. The summary
+    // can still add its marker without changing that newer pending state.
+    if (!t.serverId && t.restore === 'pending') return t.restored ? t : { ...t, restored: true };
+    if (changedIds.has(t.id)) return t;
+    if (snapshotChanged && t.restore === 'failed') return t;
+    if (t.serverId !== requestedServerIds.get(t.id)) return t;
+    return { ...t, restored: true, serverId: undefined, restore: 'pending', restoreReason: undefined };
+  });
 }
 
 // Apply one live registry event to the list. `restore-summary` and `hello`

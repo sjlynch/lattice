@@ -102,7 +102,7 @@ export function TerminalsProvider({ children, activeFolder, restoreMode }: Provi
     setLastRestore,
     restorePrompt,
     addedDuringFetchRef,
-  } = useTerminalRegistrySync({ activeFolder, restoreMode, setTerminals, activeFolderRef });
+  } = useTerminalRegistrySync({ activeFolder, restoreMode, setTerminals, terminalsRef, activeFolderRef });
 
   // ---- decorations → registry -------------------------------------------
 

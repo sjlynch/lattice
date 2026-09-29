@@ -52,12 +52,22 @@ side effect can each be reasoned about (and changed) on their own.
   booting) and the WS `hello` snapshot also gates the auto-restore, so a slow
   fetch never leaves pending tabs unmountable. `mergeRegistryTabs` takes the
   ids of registered tabs created while a snapshot was in flight (`keepIds`)
-  and keeps them when the older snapshot doesn't list them.
+  and keeps them when the older snapshot doesn't list them. Its `changedIds`
+  fence preserves the current spec or removal for tabs changed by intervening
+  registry events, including additions from another browser tab.
 - `useTerminalRegistrySync.ts` — the React side of the above, called by
   `TerminalsProvider`: the registry fetch + `/ws/terminal-tabs` subscription
   effect, the once-per-project auto-restore effect, `runRestore`, and the
   `lastRestore` / `restorePrompt` state; returns `addedDuringFetchRef` for
   `addTerminal`. Every race fix described above lives (and is commented) there.
+  Each HTTP request captures the subscription's event generation. A newer
+  WS `hello` supersedes an older list response entirely; other events fence
+  individual ids, including removals. `applyRestoreSummary` clears only the
+  pty captured in `terminalsRef` at restore start and preserves newer success
+  or failure, while still marking queued tabs pending if WS events were missed.
+  A subscription lifetime also fences responses across project switches and
+  revisits. Restore acknowledgements advance tab generations so an older list
+  cannot undo their pending state when the socket missed the queue event.
 - `terminalState.ts` — barrel that re-exports the pure functions from the two
   modules below, so `./terminalState` stays the stable import surface for
   `TerminalsContext` and the tests.
