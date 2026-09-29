@@ -34,7 +34,7 @@ function setup(t: TestContext) {
     }),
     installGlobal('fetch', ((url: string, init?: { method?: string }) => {
       if (init?.method === 'DELETE') deletes.push(url);
-      return Promise.resolve({ ok: true, json: () => Promise.resolve(null) });
+      return Promise.resolve(Response.json(init?.method === 'DELETE' ? { ok: true } : null));
     }) as unknown as typeof fetch),
   ];
   let ctx: Ctx | null = null;

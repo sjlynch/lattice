@@ -238,6 +238,11 @@ disposed in the `finally`).
   cancel (or an `errored` run) that lands first keeps its state — the timeout
   never turns a cancel into `errored`. `PushStepDeps.pushTimeoutMs` overrides
   the bound for tests (`__tests__/workflowPushStepCancel.test.ts`).
+- **`step-spawned` carries the registry `terminalId`** (from the spawn, or
+  `findTerminalId` by `serverId` for an adopted session). The push tab closes
+  when `/done`'s scratch cleanup kills the pty (`owner-finished`), and that
+  close matches only the registry record's tab; without the id the frontend
+  minted a separate unregistered tab that never closed.
 - **The step forgets its push run** (`forgetPushRun` in its `finally`). The
   Task Board's push is forgotten by its UI poller's DELETE; nothing polls a
   workflow push, so without this every one stayed in the registry for the life

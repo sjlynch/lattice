@@ -209,7 +209,7 @@ function deps(over: Partial<RestoreDeps> = {}): RestoreDeps {
     listLiveSessions: async () => [],
     createSession: async () => { throw new Error('unexpected relaunch'); },
     killSession: proxyKillSession,
-    enqueue: ((args: { thunk: () => Promise<void> }) => ({ queued: false, done: args.thunk() })) as RestoreDeps['enqueue'],
+    enqueue: (args) => ({ queued: false, done: args.thunk(args.signal ?? new AbortController().signal) }),
     getTask: async () => null,
     getUserSettings: async () => ({}),
     detectInterruption: async () => ({ interruption: 'unknown', turn: 'unknown', busy: 'unknown', transcriptExists: false }),

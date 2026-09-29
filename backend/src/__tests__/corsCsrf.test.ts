@@ -60,8 +60,8 @@ test('Pi endpoint probes do not resolve env-var apiKey hints', async () => {
   let authorization: string | undefined;
   process.env.SECRET_TEST_KEY = 'super-secret-value';
   globalThis.fetch = (async (_input: RequestInfo | URL, init?: RequestInit) => {
-    const headers = init?.headers as Record<string, string> | undefined;
-    authorization = headers?.Authorization;
+    const headers = new Headers(init?.headers);
+    authorization = headers.get('Authorization') ?? undefined;
     return new Response(JSON.stringify({ data: [{ id: 'model-a' }] }), {
       status: 200,
       headers: { 'Content-Type': 'application/json' },

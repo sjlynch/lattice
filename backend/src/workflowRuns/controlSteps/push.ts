@@ -22,6 +22,7 @@ import {
 import { pushAgentId } from '../../pushRuns/stopHook.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
 import { proxyKillSession } from '../../terminalProxy.js';
+import { terminalRegistry } from '../../terminalRegistry/index.js';
 import type { Workflow } from '../../workflows.js';
 import { notify, subscribe, type WorkflowRun } from '../state.js';
 import { emitControlProgress, waitForLaneEmpty } from './shared.js';
@@ -70,6 +71,10 @@ export type PushStepDeps = {
   // `/done` landed — e.g. replayed after a restart before this re-dispatch).
   // Optional so test doubles can omit it.
   findCompletedPushRun?: (runId: string, stepIndex: number) => { id: string } | undefined;
+  // The durable terminal-registry record id backing a pty. An adopted session
+  // (re-dispatch after a restart) carries no `terminalId`, so the step looks
+  // it up to surface the SAME tab. Optional so test doubles can omit it.
+  findTerminalId?: (projectPath: string, serverId: string) => Promise<string | undefined>;
 };
 
 function describeTimeout(ms: number): string {
@@ -95,6 +100,11 @@ function findLivePushSession(runId: string, stepIndex: number): StartedPushSessi
   return run ? attachedPushSession(run) : undefined;
 }
 
+async function findTerminalId(projectPath: string, serverId: string): Promise<string | undefined> {
+  const records = await terminalRegistry.list(projectPath);
+  return records.find((r) => r.serverId === serverId)?.id;
+}
+
 const productionDeps: PushStepDeps = {
   startPushSession,
   getPushRun,
@@ -106,6 +116,7 @@ const productionDeps: PushStepDeps = {
   forgetPushRun,
   findLivePushSession,
   findCompletedPushRun: findCompletedPushRunForWorkflowStep,
+  findTerminalId,
 };
 
 // Re-dispatch after a backend restart (recovery/workflowRunResume.ts): the
@@ -321,6 +332,15 @@ export async function runPushStep(
 
     // Surface the push terminal exactly like the Task Board cloud icon does:
     // emit a step-spawned event so useWorkflowRuns lazy-mounts a terminal tab.
+    // `terminalId` is load-bearing: it makes the tab the registry's record, so
+    // the `owner-finished` end the push `/done` cleanup emits closes it. Without
+    // it the frontend minted a separate unregistered tab that no registry event
+    // matched, and the push tab lingered after every other step's closed.
+    const terminalId = session.terminalId ?? (session.serverId && deps.findTerminalId
+      ? await deps.findTerminalId(wf.projectPath, session.serverId).catch(() => undefined)
+      : undefined);
+    // The cancel subscriber already killed the attached session during that await.
+    if (watch.cancelled || run.status !== 'running') return;
     notify({
       type: 'step-spawned',
       runId: run.id,
@@ -329,6 +349,7 @@ export async function runPushStep(
       command: session.command,
       cwd: session.cwd,
       serverId: session.serverId,
+      ...(terminalId ? { terminalId } : {}),
     });
 
     // Race condition guard: the Stop hook could conceivably fire between
