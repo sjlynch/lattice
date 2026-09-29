@@ -70,6 +70,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 
 - `claudeHookBody.ts` — shared parsing of Claude-shaped hook POST bodies.
 - `hookFiles.ts` — which file(s) a hook body names, per harness (Claude `file_path`; Codex `apply_patch` headers + existence-checked shell reads).
+- `codexCodeActivity.ts` — reads literal shell/patch arguments from hosted Codex `exec` scripts without executing JavaScript; used by the worktree activity fallback in `terminalRegistry/codexTaskActivity.ts`.
 - `activityHook.ts` — route-neutral decode into file activity or `SubagentStart`/`SubagentStop` lifecycle, shared by all three activity routes.
 - `taskActivityEvents.ts` — `task-activity` pub/sub for worktree agents (`routes/tasks/activity.ts` → `/ws/tasks`).
 - `agentSessions.ts` — presence registry for non-worktree / project-instrumented sessions (register at spawn, unregister at callback) → `/ws/agent-sessions`.

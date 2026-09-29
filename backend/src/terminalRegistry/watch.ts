@@ -18,6 +18,7 @@ import { probeTerminalServer } from '../terminalServerLifecycle.js';
 import { proxyListSessionsOrNull } from '../terminalServerClient/sessions.js';
 import { subscribeTerminalActivity } from '../terminalActivity.js';
 import { terminalRegistry } from './store.js';
+import { pollCodexTaskActivity } from './codexTaskActivity.js';
 
 const WATCH_INTERVAL_MS = 3_000;
 
@@ -104,7 +105,10 @@ export function startTerminalRegistryWatch(): void {
     void (async () => {
       try {
         const live = await readLiveSessions();
-        if (live) await reconcileExitedTerminals(live);
+        if (live) {
+          await reconcileExitedTerminals(live);
+          await pollCodexTaskActivity(live);
+        }
       } catch (err) {
         console.warn('[terminal-registry] watch tick failed:', err);
       } finally {

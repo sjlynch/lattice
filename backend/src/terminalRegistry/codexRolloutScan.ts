@@ -6,7 +6,8 @@ import path from 'node:path';
 import { codexSessionsDir } from './harnessPaths.js';
 import { listCodexDayDirs } from './sessionFiles.js';
 
-const FIRST_LINE_BYTES = 8_192;
+const FIRST_LINE_CHUNK_BYTES = 8_192;
+const MAX_FIRST_LINE_BYTES = 256 * 1024;
 const MAX_SCAN_DAYS = 120;
 const MIN_SCAN_DAYS = 2;
 const SCAN_PADDING_DAYS = 2;
@@ -36,11 +37,23 @@ async function readFirstLine(file: string): Promise<string | null> {
   let handle: fs.FileHandle | null = null;
   try {
     handle = await fs.open(file, 'r');
-    const buf = Buffer.alloc(FIRST_LINE_BYTES);
-    const { bytesRead } = await handle.read(buf, 0, buf.length, 0);
-    const text = buf.subarray(0, bytesRead).toString('utf8');
-    const nl = text.indexOf('\n');
-    return nl >= 0 ? text.slice(0, nl) : text;
+    // Recent Codex session_meta rows also carry base_instructions. A single
+    // 8 KB read truncated those rows (23 KB observed in 0.159), so JSON.parse
+    // failed on every discovery poll and the conversation was never pinned.
+    // Read only through the first newline, with a hard bound on total IO.
+    const chunks: Buffer[] = [];
+    let offset = 0;
+    while (offset < MAX_FIRST_LINE_BYTES) {
+      const buf = Buffer.alloc(Math.min(FIRST_LINE_CHUNK_BYTES, MAX_FIRST_LINE_BYTES - offset));
+      const { bytesRead } = await handle.read(buf, 0, buf.length, offset);
+      if (bytesRead === 0) return Buffer.concat(chunks).toString('utf8');
+      const bytes = buf.subarray(0, bytesRead);
+      const newline = bytes.indexOf(10);
+      chunks.push(newline >= 0 ? bytes.subarray(0, newline) : bytes);
+      if (newline >= 0) return Buffer.concat(chunks).toString('utf8');
+      offset += bytesRead;
+    }
+    return null; // oversized or still-incomplete metadata; no partial identity
   } catch {
     return null;
   } finally {

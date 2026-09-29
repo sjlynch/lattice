@@ -104,6 +104,20 @@ from.
   discovery coordinator. `codexDiscovery.ts` keeps candidate selection,
   registry mutation and polling, and re-exports the scan/parser/cache-reset
   functions and `CodexRolloutMeta` so existing imports keep working.
+  The metadata reader grows in 8 KB chunks through the first newline, up to
+  256 KB: current Codex metadata includes base instructions and routinely
+  exceeds one chunk. A truncated JSON row cannot pin a conversation.
+- `codexTaskActivity.ts` — display-only graph fallback for live task/merge Codex
+  sessions using the hosted JavaScript runner, whose nested shell/patch calls
+  can bypass CLI hooks. The existing 3-second registry watch tails only the
+  pinned session's rollout (bounded to 256 KB per read), extracts literal
+  `tools.exec_command` / `tools.apply_patch` arguments through
+  `../codexCodeActivity.ts`, and reuses the task activity decoder's existence
+  checks and worktree-to-project mapping. Partial rows wait for a newline;
+  unchanged files emit nothing. Close, ambiguous identity, completed tasks,
+  and replacement PTYs suppress activity; replay before a relaunch's timestamp
+  is ignored. Native tool calls keep using hooks. This reader never changes
+  task state or controls a PTY.
 - `harnessPaths.ts` — where each harness keeps transcripts (verified on
   Windows): Claude `~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl`, Pi
   `~/.pi/agent/sessions/--<cwd, [/\:] → '-'>--/<ts>_<id>.jsonl`, Codex rollouts.

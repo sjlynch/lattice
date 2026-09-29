@@ -321,7 +321,10 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   label; subagents are satellites with their own labels (`showSubagentLabels`
   graph setting, off by default, prefixes the `agent_type`). Claude hooks, Codex
   `.codex/hooks.json` and the Pi `lattice-activity.ts` extension all decode in
-  `backend/src/activityHook.ts`. Non-worktree sessions are colored by harness like
+  `backend/src/activityHook.ts`. Hosted Codex task sessions also use a bounded,
+  read-only rollout fallback (`backend/src/terminalRegistry/codexTaskActivity.ts`)
+  when their nested JavaScript tool calls bypass CLI hooks. Non-worktree
+  sessions are colored by harness like
   terminal ones where the harness is known — workflow steps (the step's
   effective harness) — and fixed orange otherwise (push / QA / post-merge;
   `backend/src/agentSessions.ts`).
