@@ -27,6 +27,7 @@ test('dispatchRejected moves an in-flight entry back to the FRONT of the queue',
     'the rejected entry is requeued ahead of later entries (FIFO retry)',
   );
   assert.equal(next.running, true, 'the queue stays running so it can retry');
+  assert.deepEqual(next.deferredRetry, { entryId: 'q1' });
 });
 
 test('dispatchRejected preserves the entry override so the retry uses the same harness/model', () => {
@@ -54,7 +55,7 @@ test('dispatchRejected for an unknown/attached entry is a no-op', () => {
 // End-to-end через the scheduler: the requeued entry waits behind the still-
 // active external run, then dispatches once that run finishes — never two at
 // once.
-test('a rejected entry waits for the active run, then dispatches on runFinished', () => {
+test('after the retry delay, a rejected entry still waits for the active run', () => {
   // Queue running with one entry dispatched (in-flight) while a manual run is
   // active server-side.
   const q = scenario(
@@ -71,16 +72,18 @@ test('a rejected entry waits for the active run, then dispatches on runFinished'
   assert.deepEqual(q.queuedIds(), ['q1'], 'it sits at the head of the queue');
   assert.equal(q.state.running, true);
 
+  q.step({ type: 'retryReady', entryId: 'q1' });
+  assert.equal(q.state.deferredRetry, null);
+  assert.deepEqual(q.startIds(), [], 'delay expiry does not bypass an occupied slot');
+
   // The active run finishes and leaves activeRuns.
   q.externalActive(0).runFinished('manual-run');
   assert.deepEqual(q.startIds(), ['q1'], 'q1 dispatches once the slot frees');
   assert.deepEqual(q.state.started, [started('q1', 'wf1', null)]);
 });
 
-test('a rejected entry re-dispatches immediately when the slot is already free', () => {
-  // Edge race: the blocking run finished before the 409 round-trip returned, so
-  // by the time dispatchRejected fires the slot is genuinely empty — the entry
-  // should retry right away rather than stall.
+test('a rejected entry defers even when the active-run snapshot looks empty', () => {
+  // Empty activeRuns cannot distinguish a free slot from a stale socket view.
   const q = scenario(
     queueState({
       running: true,
@@ -89,5 +92,41 @@ test('a rejected entry re-dispatches immediately when the slot is already free',
   ).externalActive(0);
 
   q.dispatchRejected('q1');
-  assert.deepEqual(q.startIds(), ['q1'], 'retry fires immediately when nothing occupies the slot');
+  assert.deepEqual(q.startIds(), [], 'no retry at HTTP round-trip speed');
+  assert.deepEqual(q.queuedIds(), ['q1']);
+  q.runFinished('manual-run');
+  assert.deepEqual(q.startIds(), [], 'lifecycle events do not shorten the retry delay');
+  q.step({ type: 'retryReady', entryId: 'other' });
+  assert.deepEqual(q.startIds(), [], 'another entry cannot release the retry');
+  q.step({ type: 'retryReady', entryId: 'q1' });
+  assert.deepEqual(q.startIds(), ['q1'], 'retry eventually proceeds without a socket event');
+  q.step({ type: 'retryReady', entryId: 'q1' });
+  assert.deepEqual(q.startIds(), [], 'duplicate retry cannot dispatch a second request');
+});
+
+test('Stop clears a deferred retry and late busy responses leave the queue stopped', () => {
+  const q = scenario().enqueue('q1', 'wf1').enqueue('q2', 'wf2').startQueue();
+  q.dispatchRejected('q1').stopQueue();
+  assert.equal(q.state.deferredRetry, null);
+  q.step({ type: 'retryReady', entryId: 'q1' });
+  assert.deepEqual(q.startIds(), []);
+  assert.deepEqual(q.queuedIds(), ['q1', 'q2']);
+
+  q.startQueue().stopQueue().dispatchRejected('q1');
+  assert.equal(q.state.running, false);
+  assert.equal(q.state.deferredRetry, null);
+  assert.deepEqual(q.startIds(), []);
+  assert.deepEqual(q.queuedIds(), ['q1', 'q2']);
+});
+
+test('removing or clearing deferred entries cancels their admission block', () => {
+  const q = scenario().enqueue('q1', 'wf1').enqueue('q2', 'wf2').startQueue();
+  q.dispatchRejected('q1').step({ type: 'removeFromQueue', entryId: 'q1' });
+  assert.equal(q.state.deferredRetry, null);
+  assert.deepEqual(q.startIds(), ['q2']);
+  q.dispatchRejected('q2').step({ type: 'clearQueue' });
+  assert.equal(q.state.deferredRetry, null);
+  assert.equal(q.state.running, false);
+  q.step({ type: 'retryReady', entryId: 'q2' });
+  assert.deepEqual(q.startIds(), []);
 });

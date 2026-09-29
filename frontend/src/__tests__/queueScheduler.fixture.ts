@@ -15,10 +15,10 @@
 //   • `step()` = reduce + read pendingStarts + report autoStop in one shot; the
 //     `starts` it returns are the entries the caller must actually dispatch.
 //   • pre-finished race: a runFinished whose runId hasn't been attached yet is
-//     buffered in `preFinishedRunIds` (bounded), then consumed by the matching
-//     workflowStarted so a late /run resolve retires the entry instead of
-//     attaching a dead id.
-import type { WorkflowQueueEntry, WorkflowRunHarnessOverride } from '../api/index.ts';
+//     buffered with its status in `preFinishedRuns` (bounded), then consumed
+//     by the matching workflowStarted so a late /run resolve retires the entry
+//     instead of attaching a dead id.
+import type { WorkflowQueueEntry, WorkflowRunHarnessOverride, WorkflowRunStatus } from '../api/index.ts';
 import {
   initialQueueState,
   reduceQueue,
@@ -51,7 +51,8 @@ export function queueState(overrides: Partial<QueueState> = {}): QueueState {
     queued: [],
     running: false,
     started: [],
-    preFinishedRunIds: [],
+    preFinishedRuns: [],
+    deferredRetry: null,
     ...overrides,
   };
 }
@@ -135,8 +136,8 @@ export class QueueScenario {
     return this.step({ type: 'dispatchRejected', entryId });
   }
 
-  runFinished(runId: string): this {
-    return this.step({ type: 'runFinished', runId });
+  runFinished(runId: string, status?: WorkflowRunStatus): this {
+    return this.step({ type: 'runFinished', runId, status });
   }
 
   queuedIds(): string[] {

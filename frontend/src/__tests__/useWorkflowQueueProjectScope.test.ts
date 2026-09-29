@@ -190,13 +190,15 @@ test('queue state does not leak across a project switch', async () => {
       running: latestState!.running,
       queued: latestState!.queued,
       started: latestState!.started,
-      preFinishedRunIds: latestState!.preFinishedRunIds,
+      preFinishedRuns: latestState!.preFinishedRuns,
+      deferredRetry: latestState!.deferredRetry,
     },
     {
       running: false,
       queued: [],
       started: [],
-      preFinishedRunIds: [],
+      preFinishedRuns: [],
+      deferredRetry: null,
     },
     "switching projects must reset the queue to its pristine per-project state",
   );
