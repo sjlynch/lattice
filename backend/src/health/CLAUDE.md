@@ -7,7 +7,8 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 
 ## Files
 
-- `parser.ts` — grammar load/cache; `grammarKeyForExt` maps extensions to grammars
+- `parser.ts` — grammar load/cache; `GRAMMARS` registers keys, WASM filenames,
+  and extensions, deriving both `grammarKeyForExt` and the WASM loader map
 - `nodeKinds/` — per-language node-kind sets (function/branch/loop/etc.):
   `index.ts` (`nodeKindsFor`) + `base.ts` plus one file per language
   (`typescript.ts`, `python.ts`, `go.ts`, `csharp.ts`, `java.ts`, `ruby.ts`,
@@ -144,5 +145,23 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 
 Adding a smell: update `types.ts` (id + label), emit it from `walker/` or
 `universal/smells.ts`, and add a `scoreModel.ts` component if it gates the
-score. Adding a language: add to `grammarKeyForExt` in `parser.ts` + a
-`NodeKinds` factory in `nodeKinds/`.
+score.
+
+Adding a language (AST metrics):
+
+1. Extend `GrammarKey` and add a `GRAMMARS` entry in `parser.ts` with the
+   available WASM filename and extension aliases. Both extension lookups are
+   derived from that table.
+2. Provide a `NodeKinds` factory in `nodeKinds/`, then import and dispatch it
+   in `nodeKinds/index.ts` (`buildNodeKinds`, used by `nodeKindsFor`).
+3. Align `languageForExt` in `analyze/language.ts` and `HealthLanguage` in
+   `types.ts` so emitted language metadata matches the registered extensions.
+
+AST metrics do not automatically enable cross-file import/reachability
+analysis; import extraction (`walker/`), resolution, root detection, and
+dead-code eligibility (`crossFile/`) need separate support (see above).
+Changes to cached analysis output require a `CACHE_VERSION` bump in
+`cachePaths.ts`; see the cache-coupling note above.
+
+Commands from `backend/`: `npm run build` (build), `npm test` (tests),
+`npx tsc --noEmit` (type-check).
