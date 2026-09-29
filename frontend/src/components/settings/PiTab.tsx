@@ -207,6 +207,9 @@ export const PiTab = forwardRef<PiTabHandle, Props>(function PiTab(
         patterns={modelMenu.patterns}
         selected={modelMenu.selected}
         alwaysShown={alwaysShownPatterns(providers, modelMenu.patterns)}
+        loaded={modelMenu.loaded}
+        loadError={modelMenu.loadError}
+        onRetry={modelMenu.retry}
         onToggle={modelMenu.toggle}
       />
     </>

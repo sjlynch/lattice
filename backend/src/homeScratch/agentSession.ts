@@ -44,6 +44,7 @@ export type HomeScratchAgentSessionSpec = {
 
 export type StartHomeScratchAgentSessionArgs = {
   projectPath: string;
+  signal?: AbortSignal;
   installHooks: (ctx: HomeScratchSessionContext) => Promise<void>;
   renderInstructions: (
     ctx: HomeScratchSessionContext,
@@ -74,6 +75,7 @@ export function createHomeScratchAgentSession(
     startHomeScratchAgentSession({
       paths: spec.paths,
       projectPath: args.projectPath,
+      signal: args.signal,
       instructionsFileName: spec.instructionsFileName,
       installHooks: args.installHooks,
       renderInstructions: args.renderInstructions,

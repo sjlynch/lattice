@@ -211,7 +211,8 @@ and waits for its Stop hook. `runPushStep` is a short sequence over two local
 helpers: `adoptOrDrain` (the completed-run / live-session re-dispatch
 short-circuits, else the drain) and `createPushSessionWatch` (owns the session
 ids, the `cancelled` / `timedOut` flags, the `done` promise, both subscribers,
-the timeout and the single `killAndAbandon()`; disposed in the `finally`).
+the timeout, admission AbortController and the single `killAndAbandon()`;
+disposed in the `finally`).
 
 - **Push-only brief (R2)**: the step calls
   `startPushSession(project, origin, { brief: 'workflow' })`, which renders the
@@ -241,14 +242,18 @@ the timeout and the single `killAndAbandon()`; disposed in the `finally`).
   Task Board's push is forgotten by its UI poller's DELETE; nothing polls a
   workflow push, so without this every one stayed in the registry for the life
   of the process. The registry never forgets a still-`running` run.
-- **Cancel/spawn race (do not regress)**: cancelling the run *while*
-  `startPushSession` is in flight runs the cancel handler with
-  `sessionServerId` still `undefined`, so it kills nothing. A `cancelled` flag
-  is set, and a **post-spawn re-check** (`cancelled || run.status !== 'running'`)
-  kills the resolved `session.serverId` and returns without emitting
-  `step-spawned` / `'push complete'` — otherwise a cancelled push still runs
-  `git push` to completion and orphans the pty. Mirrors the existing post-spawn
-  "already `done`" guard. Covered by `__tests__/workflowPushStepCancel.test.ts`.
+- **Cancel/admission race (do not regress)**: the watch owns an AbortController
+  passed through `startPushSession` and the homeScratch adapters to
+  `queuedCreateSession`. Cancellation and timeout withdraw a pending request,
+  so startup settles and scratch cleanup completes without capacity returning.
+  If PTY creation already started, startup waits for its response and confirmed
+  reclamation before rejecting; never race and abandon the startup promise.
+  Cancellation remains cancelled; a timeout rejects with the push timeout
+  message so the worker errors the run and releases its lock without advancing.
+  The **post-spawn re-check** remains necessary for cancellation after admission
+  delivered the PTY but before `attach`: it awaits the kill and emits neither
+  `step-spawned` nor `'push complete'`. Covered by
+  `__tests__/workflowPushStepCancel.test.ts`.
 - **Re-dispatch attaches, never double-pushes.** A backend restart kills the
   step (it is re-dispatched by `recovery/workflowRunResume.ts`) but not its
   push session, which lives in the detached terminal-server. The session is
