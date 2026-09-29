@@ -3,6 +3,7 @@
 // Keep in sync with restartPolicy.mjs.
 
 import type { LockHoldersReport, RunLock } from './runLocks.mjs';
+import type { RestartOutputBaseline } from './restartOutputState.mjs';
 
 // run.lock discovery moved to runLocks.mjs; restartPolicy.mjs re-exports it.
 export {
@@ -87,6 +88,6 @@ export function createRestartPolicy(args?: {
   startDeferredPoll(): void;
   stopDeferredPoll(): void;
   onCompileSucceeded(): void;
-  onBackendSpawned(candidate?: { mtime: number | null; content: string | null; compileSequence: number }): void;
-  captureDistBaseline(): { mtime: number | null; content: string | null; compileSequence: number };
+  onBackendSpawned(candidate?: RestartOutputBaseline): void;
+  captureDistBaseline(): RestartOutputBaseline;
 };
