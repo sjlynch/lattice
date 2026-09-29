@@ -20,8 +20,9 @@ from.
 - `store.ts` — `TerminalRegistryStore` (a `ProjectStateManager` subclass) over
   `~/.lattice/per-project/<hash>/terminals.json` (versioned envelope, atomic
   write, every field re-validated on read, long-ended records pruned). The
-  BACKEND is the sole creator of records (`proxyCreateSession` →
-  `recordSpawnedTerminal` in `terminalServerClient/createSession.ts`); the
+  BACKEND is the sole creator of records (`proxyCreateSession` in
+  `terminalServerClient/createSession.ts` → `recordSpawnedTerminal` in
+  `terminalServerClient/recordSpawn.ts`); the
   frontend only patches decorations. `end()` REMOVES a record for
   `exit` / `closed` / `killed` / `owner-finished` and KEEPS it (with the
   marker) for `cwd-missing` / `restore-failed` so the UI can show why.
@@ -91,12 +92,18 @@ from.
   since its thread may predate the tab. A later relaunch retains that creation
   floor and advances the write bound. An in-flight scan must discard evidence
   if the record changed PTYs / discovery provenance while it read the files.
+- `codexRolloutScan.ts` — owns `session_meta` parsing, bounded rollout reads,
+  day-directory scanning and the shared listing / metadata caches. Depends
+  only on `harnessPaths.ts` and `sessionFiles.ts`, never the registry store or
+  discovery coordinator. `codexDiscovery.ts` keeps candidate selection,
+  registry mutation and polling, and re-exports the scan/parser/cache-reset
+  functions and `CodexRolloutMeta` so existing imports keep working.
 - `harnessPaths.ts` — where each harness keeps transcripts (verified on
   Windows): Claude `~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl`, Pi
   `~/.pi/agent/sessions/--<cwd, [/\:] → '-'>--/<ts>_<id>.jsonl`, Codex rollouts.
 - `sessionFiles.ts` — the IO over those paths (`readTail`, Claude status /
   conversation scan, Pi/Codex file finders, `listCodexDayDirs`), shared by
-  `interruption.ts` (which re-exports it) and `codexDiscovery.ts`.
+  `interruption.ts` (which re-exports it) and `codexRolloutScan.ts`.
 
 ## Relaunch
 

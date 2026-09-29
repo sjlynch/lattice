@@ -128,12 +128,16 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   so metric saves skip the recount. `useMetricsIgnoreRefresh` — refresh when the
   LOC/health ignore-ext set changes. `useRefMirror` / `refresh.ts` — small helpers.
 - `useAgentOverlay` — hook half of the Agent Presence Layer: owns the
-  `AgentOverlay` (`../agentOverlay`) lifecycle, merges in-progress *Claude* tasks
-  (`/ws/tasks`) + non-worktree agent-session presence (`/ws/agent-sessions`) into
-  its node set, routes `task-activity`/`agent-activity` beam + subagent-lifecycle
+  `AgentOverlay` (`../agentOverlay`) lifecycle, merges in-progress Claude, Codex,
+  and Pi tasks (`/ws/tasks`) + non-worktree agent-session presence
+  (`/ws/agent-sessions`) into its node set, routes
+  `task-activity`/`agent-activity` beam + subagent-lifecycle
   frames, and drives the per-frame `tick` off the scene frame driver — holding the
   idle controller's `agents` reason only while `tick` reports motion. See the APL
   notes in `../CLAUDE.md`.
+- `agentOverlayEvents` — descriptor projection/equality and activity/lifecycle
+  routing using the hook's existing buffer, timestamp, and kick/refresh callbacks;
+  subscriptions, pending replay, and render-loop ownership stay in the hook.
 
 ## Render-vs-physics splits (settings effects, all guarded)
 
