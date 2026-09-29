@@ -1,8 +1,8 @@
 // Filesystem side of the Pi completion extension: install/update the
 // `.pi/extensions/lattice-complete.ts` file on disk and read back the sentinel
-// it writes. Rendering lives in `template.ts`; the public types and the
-// `renderPiCompletionExtension` composition live in `../piExtension.ts`, which
-// re-exports the functions here.
+// it writes. Types, defaults, and renderer composition live in `renderer.ts`,
+// which uses the source assembly in `template.ts`. `../piExtension.ts`
+// re-exports the public surface.
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
@@ -13,7 +13,7 @@ import {
   defaultPiSentinelFileName,
   renderPiCompletionExtension,
   type PiExtensionSite,
-} from '../piExtension.js';
+} from './renderer.js';
 
 // Whether the extension already on disk matches what we'd write. Pulled out so
 // the "don't dirty `git status` on a no-op reconciliation" check reads as one
