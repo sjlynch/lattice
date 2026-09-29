@@ -205,17 +205,18 @@ async function reconcileLocked(): Promise<void> {
   for (const id of prevManaged) {
     if (!desiredIds.has(id)) delete existing[id];
   }
-  // Upsert the managed providers (Lattice owns these ids). Preserve advanced
-  // fields the endpoint form doesn't capture (e.g. a `compat.thinkingFormat`
-  // hint, custom `headers`) when re-managing an id that already had them — so
-  // taking a hand-tuned provider under UI management never silently drops them.
+  // Upsert the managed providers (Lattice owns these ids). Absent advanced
+  // fields preserve hand-written configuration on adoption; explicit empty maps
+  // clear it. Persisted empty maps prevent later sweeps from restoring overrides.
   for (const p of providers) {
     const built = buildModelsJsonProvider(p);
+    if (p.compat && Object.keys(p.compat).length === 0) delete built.compat;
+    if (p.headers && Object.keys(p.headers).length === 0) delete built.headers;
     const prev = existing[p.id];
     if (prev && typeof prev === 'object') {
       const pv = prev as Record<string, unknown>;
-      if (built.compat === undefined && pv.compat) built.compat = pv.compat;
-      if (built.headers === undefined && pv.headers) built.headers = pv.headers;
+      if (p.compat === undefined && pv.compat) built.compat = pv.compat;
+      if (p.headers === undefined && pv.headers) built.headers = pv.headers;
     }
     existing[p.id] = built;
   }

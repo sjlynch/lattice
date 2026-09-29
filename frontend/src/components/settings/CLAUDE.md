@@ -232,12 +232,12 @@ missing from the list; a failed load shows an error and disables "Add endpoint")
 `usePiModelMenuDraft` — and renders through focused pieces: `PiEndpointCard`
 (one managed endpoint — id/baseUrl/key/detect/model checklist + the Advanced
 toggle) wrapping `PiEndpointAdvanced` (compat + custom headers), and `PiModelMenu`
-(the curated-menu checklist). Pure sanitization/derivation lives in
-`piTabUtils.ts` (`cleanHeaders`, `entriesToHeaders`, `compatString`,
-`sanitizeProvidersForSave` = the `getPiProvidersPatch` body — which also dedupes
-duplicate ids so a hand-typed collision can't clobber models.json on reconcile —
-`nextEndpointId`, `dropEndpointKey`, `collectModelUniverse` = the saved∪draft
-pattern set) so the components stay thin and the save semantics stay testable.
+(the curated-menu checklist). `piTabUtils.ts` remains the compatibility barrel
+for pure helpers in `piTabUtils/`: `headers.ts` owns cleanup and ordered row
+edits; `providers.ts` owns compatibility edits, save gating/sanitization, endpoint
+ids and transient-state removal; `models.ts` owns probe application and model/menu
+derivation. Saves retain explicit empty maps to clear advanced overrides while
+absent fields preserve hand-written configuration on adoption.
 The card/advanced/menu pieces get index-pre-bound callbacks; all mutation still
 flows through `useEndpointState`'s `mutate`.
 
