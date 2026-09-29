@@ -21,9 +21,9 @@ that says "I'm done" was lost.
 
 1. **Hook side** — `script.ts` renders `~/.lattice/bin/lattice-callback.cjs`
    (plain CommonJS, no deps; regenerated at boot and on every hook install, so
-   it always matches this backend). Every Claude Stop hook
-   (`claudeStopHook.ts`) and Codex Stop hook (`codexStopHook.ts`) runs
-   `node <script> <url>`. The script writes an outbox entry FIRST, then POSTs
+   it always matches this backend). Claude Stop hooks (`claudeStopHook.ts`)
+   and Codex Stop hooks (`codexStopHook.ts`) prefer `node <script> <url>`
+   (fallbacks below). The script writes an outbox entry FIRST, then POSTs
    with retries for `CALLBACK_HOOK_BUDGET_MS` (45 s); a definitive answer (2xx,
    or a 4xx other than 408/429) removes the entry. When the budget runs out
    it rewrites its own entry with `holdUntil: now`, handing it to the drain at
@@ -81,11 +81,21 @@ that says "I'm done" was lost.
   (`OUTBOX_MAX_AGE_MS`) are dropped.
 - **Fallbacks**: the Claude command is `node "<script>" "<url>" || <retrying
   curl>` — the curl only runs when node can't run the script at all. Codex
-  whitespace-splits its hook command with no shell, so a script path containing
-  whitespace falls back to the retrying curl there (`codexCallbackCommands`).
+  0.144.1 on Windows was observed to whitespace-split hook commands and spawn
+  argv directly without a shell; 0.157 on Windows ran hooks through PowerShell
+  5.1. `script.ts`'s `codexCallbackCommands` retains compatibility with the
+  legacy direct-argv path (no quotes or `||`): use the Node outbox script when
+  its path is whitespace-free, otherwise use retrying curl. This conservative
+  policy does not imply PowerShell cannot quote a path. Windows uses `cmd /c`
+  for either command to resolve `node` / `curl.exe`. See
+  [`codexStopHook.ts`](../codexStopHook.ts) for the observations and the separate
+  activity-hook `-d@-` / bare `@-` PowerShell parsing footgun.
 - The model-explicit completion curls in the briefs (`LATTICE_TASK.md`,
   `WORKFLOW_STEP.md`, merge / QA / post-merge / stash templates) carry
   `--retry … --retry-connrefused` for the same reason; they have no outbox.
+
+From `backend/`: build `npm run build`; test `npm test`; type-check
+`npx tsc --noEmit`.
 
 Tests: `__tests__/callbackOutbox.test.ts` runs the real generated script and
 the real generated Pi extension against a local HTTP server (delivered,

@@ -6,6 +6,28 @@ the HTTP/`/ws/terminal` plumbing on top of it. **Not** the frontend
 `frontend/src/terminal/` dir (xterm UI state) — this is the server side that
 owns the node-pty processes.
 
+## Codex launch defaults
+
+The main backend owns these defaults in
+[`withCodexActivityTitle`](../codexTerminalActivity.ts), injected through
+[`terminalServerClient/spawnBody.ts`](../terminalServerClient/spawnBody.ts)
+for pre-spawns and [`terminalWsRelay.ts`](../terminalWsRelay.ts) for connects
+without a session id. It inserts per-launch `tui.terminal_title=['status']`
+and `tui.terminal_resize_reflow_max_rows=CODEX_RESIZE_REFLOW_MAX_ROWS` (500)
+right after the executable. Injection is idempotent, upgrades earlier
+title-only commands on relaunch, and leaves later explicit user overrides
+effective without writing user Codex config.
+
+Lattice can inherit `WT_SESSION` from its dev server. Codex's observed Windows
+Terminal default re-emits up to 9001 transcript rows on each resize, taking
+minutes through PTY → relay → xterm. The cap and frontend resize debounce
+prevent that regression.
+
+Codex Working state follows its status title rather than animated idle output;
+[`../terminalActivity.ts`](../terminalActivity.ts) owns classification. Preserve
+live PTYs: these defaults apply on launch/relaunch, never by killing sessions
+to upgrade them.
+
 ## Files
 
 - `sessionTypes.ts` — `Session` (id, pty, scrollback, size, cwd, shell,
@@ -19,13 +41,10 @@ owns the node-pty processes.
   synchronized-redraw controls repeatedly while waiting for input. Raw output
   still reaches scrollback/subscribers unchanged, and `lastOutputAt` retains
   its raw-byte meaning for existing liveness consumers. Zero text timestamp
-  means no printable output yet. Codex's welcome screen also emits real text:
-  the main backend uses its explicit status title, never printable recency, to
-  classify Codex. `isGround` lets the backend relay skip title parsing for plain
-  output while preserving pending split escape sequences. The main backend
-  adds the status-title CLI default at creation and can derive titles from
-  existing browser streams if an old executor lacks the native field. Never
-  kill live sessions just to activate an activity-display update.
+  means no printable output yet. `isGround` lets the backend relay skip title
+  parsing for plain output while preserving pending split escape sequences.
+  The main backend can derive titles from existing browser streams if an old
+  executor lacks the native field (`../terminalActivityRelay.ts`).
 - `sessionStore.ts` — **the single source of truth**: the module-singleton
   `Map<id, Session>`. `getSession` / `addSession` / `deleteSession` (disposes
   the session's scrollback at the one deletion point) / `sessionCount` /
@@ -211,3 +230,8 @@ owns the node-pty processes.
 - **kill / pty exit:** `killSession` or the pty `onExit` handler →
   `broadcastToSubscribers` (`exit`) → `deleteSession` (which disposes the
   scrollback).
+
+## Commands
+
+From `backend/`: `npm run build` (compile/copy assets), `npm test` (backend
+tests), `npx tsc --noEmit` (type-check).
