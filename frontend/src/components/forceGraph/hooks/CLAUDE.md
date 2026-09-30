@@ -8,15 +8,31 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 
 ## Init & data
 
-- `useForceGraphInitialization` — mounts `ForceGraph3D` once; lifecycle wiring
-  only (accessor closures delegate to `nodeObjectFactory`, scene/camera to
-  `sceneSetup`). Sets the d3 cooldown bounds and wires the frame/motion drivers.
-  Construction runs in a `try` and reports a WebGL failure through
-  `onRendererFailure` instead of throwing out of the layout effect (that throw
-  reached the error boundary and blanked the graph subtree); it also forwards
+- `useForceGraphInitialization` — once-mounted layout effect supplying
+  `ForceGraph3D` construction/configuration and resource registration to the
+  lifecycle helper below. Accessor closures read live refs via
+  `nodeObjectFactory`; scene/camera setup delegates to `sceneSetup`. Sets d3
+  cooldown bounds, wires frame/motion drivers, and forwards
   `webglcontextlost`/`webglcontextrestored`, waking the idle loop on restore.
-  Those three callbacks must be identity-stable — the effect mounts once and
-  captures them. See `../CLAUDE.md` → `rendererStatus.ts`.
+  `onRendererFailure`, `onContextLost`, and `onContextRestored` must be
+  identity-stable: the effect mounts once and captures them. See
+  `../CLAUDE.md` → `rendererStatus.ts`.
+- `forceGraphInitializationLifecycle.ts` — `initializeForceGraphLifecycle`
+  owns partial setup failures and normal unmount. Captures the returned graph
+  before any configuration setter can throw; records cleanup slots immediately
+  as resources are acquired. Both paths share an idempotent teardown, attempting
+  every acquired cleanup once even if one throws, in this order: context-lost
+  listener → context-restored listener → frame subscription → idle controller →
+  resize observer → label registries → graph `_destructor` →
+  `graphRef.current = null`. Failed setup also clears the retry container with
+  `replaceChildren()` before reporting the original renderer error through
+  `onRendererFailure`; cleanup faults cannot replace it. Normal unmount propagates
+  the first cleanup error only after all remaining attempts. A constructor that
+  throws provides no returned instance to own or destroy. Shared label resources
+  are released through `clearAllLabelRegistries`, never ad hoc per-node disposal.
+  See [lifecycle tests](../../../__tests__/forceGraphInitializationLifecycle.test.ts)
+  for configuration/registration fault injection, cleanup order/idempotence, and
+  retry-container behavior.
 - `useRadialTidyLayout` — the on-load untangler. Fires once per project on first
   data populate (and on demand via the returned `runLayout`, wired to the Spread
   tab's "Untangle now" button): seeds each node at its radial tidy-tree X/Z
@@ -186,3 +202,8 @@ current values — a pre-population refresh/reheat is a byte-identical wake):
   default, so a default layout is untouched.
 - **`linkWidth`** / **`pixelRatio`** → render-only prop + `wakeForRefresh`, no
   reheat. `batchedLinks`/`batchedNodes` are owned by their hooks, not effects.
+
+## Commands
+
+From `frontend/`: `npm run build` (build), `npm test` (tests), `npx tsc -b`
+(type-check). See the [frontend command guide](../../../CLAUDE.md#build-type-check--tests).
