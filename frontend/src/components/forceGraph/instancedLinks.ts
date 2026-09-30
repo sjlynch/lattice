@@ -268,6 +268,20 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
     if (gate.shouldSync()) syncPositions();
   }
 
+  function releaseResources(): void {
+    if (lineSegments) {
+      scene.remove(lineSegments);
+      lineSegments = null;
+    }
+    geometry?.dispose();
+    geometry = null;
+    material?.dispose();
+    material = null;
+    positions = new Float32Array(0);
+    links = [];
+    needsRecapture = false;
+  }
+
   function setEnabled(on: boolean): void {
     if (on === enabled) return;
     enabled = on;
@@ -283,24 +297,16 @@ export function createInstancedLinks(graph: ForceGraph3DInstance): InstancedLink
       // Restore the library's default per-link line rendering.
       g.linkThreeObject(null);
       gate.detach();
-      if (lineSegments) lineSegments.visible = false;
+      // Disabled rebuilds are skipped, so release the captured graph references
+      // along with the inactive renderer's owned buffers.
+      releaseResources();
       wakeInstancedRefresh(graph);
     }
   }
 
   function dispose(): void {
     gate.detach();
-    if (lineSegments) {
-      scene.remove(lineSegments);
-      lineSegments = null;
-    }
-    geometry?.dispose();
-    geometry = null;
-    material?.dispose();
-    material = null;
-    positions = new Float32Array(0);
-    links = [];
-    needsRecapture = false;
+    releaseResources();
     // Only clear the stamp if it's still ours — a StrictMode remount creates the
     // replacement controller before this teardown runs.
     const holder = graph as unknown as WithInstancedLinks;
