@@ -7,8 +7,11 @@ Halstead token counts and a Maintainability Index, and folded into a composite
 
 ## Files
 
-- `parser.ts` — grammar load/cache; `GRAMMARS` registers keys, WASM filenames,
-  and extensions, deriving both `grammarKeyForExt` and the WASM loader map
+- `parser.ts` — shared runtime/grammar loads; `GRAMMARS` registers keys, WASM
+  filenames, and extensions, deriving `grammarKeyForExt` and the loader map.
+  Rejected initialization/load promises are evicted so later calls retry.
+  One parser per grammar is pooled for the process/worker lifetime; callers
+  of `getParser` must never call `.delete()` on the shared parser.
 - `nodeKinds/` — per-language node-kind sets (function/branch/loop/etc.):
   `index.ts` (`nodeKindsFor`) + `base.ts` plus one file per language
   (`typescript.ts`, `python.ts`, `go.ts`, `csharp.ts`, `java.ts`, `ruby.ts`,
@@ -34,7 +37,13 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   regex-vs-division disambiguation), and `smells.ts` (regex/heuristic
   fallback-language smells)
 - `analyze.ts` + `analyze/` — top-level `analyzeFile` entry point +
-  `computeFromTree` orchestrator. Delegates to:
+  `computeFromTree` orchestrator. `analyzeFile` owns every successfully returned
+  parse tree and calls `tree.delete()` in `finally` after computation, even if
+  `computeFromTree` throws. Published metrics/cache results must retain no
+  AST/tree/node handles. For worker/watchdog boundaries see
+  [watcher/CLAUDE.md](./watcher/CLAUDE.md) and
+  [scanner/CLAUDE.md](../scanner/CLAUDE.md); backend WASM/worker memory concerns
+  are distinct from browser-renderer OOM symptoms. Delegates to:
   - `analyze/language.ts` — `languageForExt` (extension → `HealthLanguage`)
   - `analyze/fallback.ts` — `analyzeFallback` + `DEFAULT_METRICS` (used for
     unsupported languages, oversize files, parser/parse failures)
@@ -58,19 +67,14 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   out of `computeScore` (orphan status is a signal, not a penalty). Roots come
   from the scan (`scanner/scan.ts`) and the watcher (`crossFileAnalyzer.ts`);
   the `D` overlay consumes the result.
-  - **Resolver accuracy (TS-first).** The dominant false-dead cause is dropped
-    edges. `resolveImport.ts` therefore: maps NodeNext `.js`/`.mjs`/`.cjs`/`.jsx`
-    specifiers to their TS twins (`./types.js` → `types.ts`) — without this a
-    `"module":"NodeNext"` backend loses ~every internal edge; resolves
-    `baseUrl`-relative bare imports via a `tsconfig.ts` catch-all alias (bare
-    specifiers only — relative imports always resolve against the importer);
-    and the walker captures `export … from` re-exports + string-literal dynamic
-    `import()`/`require()` (`walker/importEdges.ts`, delegated from
-    `walker/visitors.ts`) so barrels and lazy routes aren't orphaned. Python:
-    every name of `import a, b as c` plus the `pkg.name` submodule candidate
-    of each `from pkg import name` is captured, and a bare dotted spec is
-    resolved against the importer's ancestor dirs (`resolveImport/pythonImports.ts`)
-    instead of being dropped as an external package.
+  - **Resolver accuracy (TS-first).** `resolveImport.ts` maps NodeNext
+    `.js`/`.mjs`/`.cjs`/`.jsx` imports to TS twins and resolves `baseUrl` bare
+    imports via `tsconfig.ts` (relative imports stay importer-relative).
+    `walker/importEdges.ts` captures re-exports, string-literal
+    `import()`/`require()`, all names in Python `import a, b as c`, and
+    `pkg.name` candidates for `from pkg import name`. Python dotted imports
+    resolve against importer ancestors. See
+    [crossFile/CLAUDE.md](./crossFile/CLAUDE.md) for the resolver module map.
   - **Entry-point roots** (`roots.ts`): conventional filenames (`index`/`main`/
     `*.config.*`/tests/`.d.ts`), standalone process/CLI entries (`*-server`,
     `*.worker`, files under a `scripts/`|`tools/` dir — spawned by path, never
@@ -78,17 +82,16 @@ Halstead token counts and a Maintainability Index, and folded into a composite
     all in-tree `package.json`s (`main`/`module`/`source`/`bin`/`exports` + file
     refs inside `scripts`).
   - **Dead-eligible languages** (`RESOLVABLE_IMPORT_EXTS` in `roots.ts`): only
-    genuine importable source modules (`.ts/.tsx/.js/.jsx/.py/.pyi`) are
-    confidently flagged `dead` when unreachable. `.mjs`/`.cjs` are excluded —
-    in TS-first projects they're overwhelmingly tooling/runtime assets loaded
-    by path (e.g. a `.cjs` template `fs.readFile`-d, invisible to import
-    analysis), so an unreachable one is `uncertain`, never red. (The general
-    fix — capturing string-literal fs/path references as weak reachability
-    edges — is the future enhancement for non-TS asset accuracy.)
-  - **Confidence guard** (`graph.ts`): if >70% of resolvable non-root files come
-    back dead (the fingerprint of a resolver gap, not a real dead codebase),
-    every `dead` is downgraded to `uncertain` and `scan.ts` logs a warning — a
-    resolver blind spot can never paint a whole project red.
+    unreachable `.ts/.tsx/.js/.jsx/.py/.pyi` modules can be `dead`.
+    Unreachable `.mjs`/`.cjs` remain `uncertain`: tooling/runtime assets loaded
+    by path lack modeled import edges.
+  - **Confidence guard** (`crossFile/deadCode.ts`, `classifyDeadCode`): applies
+    only with ≥20 resolvable non-root files and `dead / resolvable > 0.7`.
+    The population includes reachable and unreachable eligible files, excluding
+    roots; `dead` counts files initially classified `dead`. On a trip, every
+    `dead` becomes `uncertain`, `deadCodeStats.downgraded` is true, and
+    `scanner/scan.ts` logs a warning. Fewer than 20 files or exactly 70% dead
+    do not trip it.
   - **Cache coupling:** import extraction feeds the `(mtime,size)`-keyed health
     cache, which does NOT invalidate on analyzer-logic changes. Any change to
     edge capture / resolution MUST bump `CACHE_VERSION` in `cachePaths.ts` or
