@@ -4,10 +4,11 @@ import * as THREE from 'three';
 import {
   writeLinkSegments,
   createInstancedLinks,
+  getInstancedLinks,
 } from '../components/forceGraph/instancedLinks.ts';
 
 type Vec = { x: number; y: number; z: number };
-type Link = { source: Vec; target: Vec };
+type Link = { source: Vec | string; target: Vec | string };
 
 // Minimal stand-in for the bits of the ForceGraph3D instance the controller
 // reads. `graphData().links` is swappable so a test can simulate a full
@@ -15,13 +16,15 @@ type Link = { source: Vec; target: Vec };
 function makeMockGraph(initial: Link[]) {
   const scene = new THREE.Scene();
   let links = initial;
+  let visibility: unknown = undefined; // → every link visible
+  const linkThreeObjectCalls: unknown[] = [];
   const graph = {
     scene: () => scene,
     graphData: () => ({ links, nodes: [] }),
-    linkVisibility: () => undefined, // → every link visible
+    linkVisibility: () => visibility,
     linkColor: () => '#f0f0f0',
     linkOpacity: () => 1,
-    linkThreeObject: () => {},
+    linkThreeObject: (value: unknown) => { linkThreeObjectCalls.push(value); },
     // node-motion driver sinks (gate.attach subscribes through these)
     onEngineTick: () => {},
     onNodeDrag: () => {},
@@ -33,6 +36,8 @@ function makeMockGraph(initial: Link[]) {
     setLinks: (l: Link[]) => {
       links = l;
     },
+    setLinkVisibility: (value: unknown) => { visibility = value; },
+    linkThreeObjectCalls,
     batched: () =>
       scene.children.find(
         (o) => o.userData['lattice:batchedLinks'],
@@ -74,6 +79,132 @@ test('rebuild re-captures the link array after a graphData swap', () => {
   // Reads the post-swap objects, not the orphaned pre-swap ones.
   assert.deepEqual([...posAfter.array].slice(0, 6), [10, 0, 0, 20, 0, 0]);
 
+  ctrl.dispose();
+});
+
+test('disabling releases owned resources once and keeps the controller until final dispose', () => {
+  const mock = makeMockGraph(makeLinks(1));
+  const ctrl = createInstancedLinks(mock.graph);
+  ctrl.setEnabled(true);
+
+  const batch = mock.batched()!;
+  const material = batch.material as THREE.LineBasicMaterial;
+  let geometryDisposes = 0;
+  let materialDisposes = 0;
+  batch.geometry.addEventListener('dispose', () => { geometryDisposes++; });
+  material.addEventListener('dispose', () => { materialDisposes++; });
+
+  ctrl.setEnabled(false);
+  assert.equal(mock.batched(), undefined, 'inactive batch removed from the scene');
+  assert.equal(batch.parent, null);
+  assert.equal(geometryDisposes, 1);
+  assert.equal(materialDisposes, 1);
+  assert.equal(mock.linkThreeObjectCalls[1], null, 'per-link rendering restored');
+  assert.equal(getInstancedLinks(mock.graph), ctrl, 'temporary disable keeps the stamp');
+
+  ctrl.setEnabled(false);
+  ctrl.rebuild();
+  ctrl.onFrame();
+  assert.equal(mock.batched(), undefined, 'disabled hooks do not recreate the batch');
+  assert.equal(mock.linkThreeObjectCalls.length, 2, 'repeated disable is a no-op');
+  ctrl.dispose();
+  ctrl.dispose();
+  assert.equal(geometryDisposes, 1, 'final disposal does not free geometry again');
+  assert.equal(materialDisposes, 1, 'final disposal does not free material again');
+  assert.equal(getInstancedLinks(mock.graph), null, 'final dispose clears the stamp');
+});
+
+test('re-enabling recreates resources from current links and preserves buffer growth slack', () => {
+  const mock = makeMockGraph(makeLinks(1));
+  const ctrl = createInstancedLinks(mock.graph);
+  ctrl.setEnabled(true);
+  const oldBatch = mock.batched()!;
+  const oldAttribute = oldBatch.geometry.getAttribute('position');
+  const oldMaterial = oldBatch.material as THREE.LineBasicMaterial;
+  ctrl.setEnabled(false);
+
+  mock.setLinks([
+    { source: { x: 10, y: 11, z: 12 }, target: { x: 20, y: 21, z: 22 } },
+  ]);
+  ctrl.rebuild();
+  ctrl.onFrame();
+  assert.equal(mock.batched(), undefined, 'a disabled graph swap allocates no batch');
+  ctrl.setEnabled(true);
+
+  const batch = mock.batched()!;
+  const attribute = batch.geometry.getAttribute('position');
+  const material = batch.material as THREE.LineBasicMaterial;
+  assert.notEqual(batch, oldBatch);
+  assert.notEqual(batch.geometry, oldBatch.geometry);
+  assert.notEqual(material, oldMaterial);
+  assert.notEqual(attribute.array, oldAttribute.array, 'position buffer recreated');
+  assert.deepEqual([...attribute.array].slice(0, 6), [10, 11, 12, 20, 21, 22]);
+  assert.equal(batch.geometry.drawRange.count, 2);
+  assert.equal(batch.visible, true);
+  assert.equal(batch.renderOrder, oldBatch.renderOrder);
+  assert.equal(batch.frustumCulled, false);
+  assert.equal(material.color.getHex(), oldMaterial.color.getHex());
+  assert.equal(material.opacity, oldMaterial.opacity);
+  assert.equal(material.transparent, oldMaterial.transparent);
+  assert.equal(material.depthWrite, oldMaterial.depthWrite);
+
+  const disposedAttributes: unknown[] = [];
+  batch.geometry.addEventListener('dispose', () => {
+    disposedAttributes.push(batch.geometry.getAttribute('position'));
+  });
+  mock.setLinks(makeLinks(400));
+  ctrl.rebuild();
+  const grownAttribute = batch.geometry.getAttribute('position');
+  assert.deepEqual(disposedAttributes, [attribute], 'old buffer freed before replacement');
+  assert.notEqual(grownAttribute, attribute);
+  assert.ok(grownAttribute.array.length >= 420 * 6, 'growth reserves capacity slack');
+
+  mock.setLinks(makeLinks(420));
+  ctrl.rebuild();
+  assert.equal(batch.geometry.getAttribute('position'), grownAttribute);
+  assert.equal(disposedAttributes.length, 1, 'within-capacity rebuild reuses the buffer');
+  ctrl.dispose();
+  assert.deepEqual(disposedAttributes, [attribute, grownAttribute]);
+});
+
+test('re-enabling collapses unhydrated endpoints and re-captures visibility after hydration', () => {
+  const mock = makeMockGraph(makeLinks(1));
+  const ctrl = createInstancedLinks(mock.graph);
+  ctrl.setEnabled(true);
+  ctrl.setEnabled(false);
+
+  const source = { x: 1, y: 2, z: 3 };
+  const shown = { x: 4, y: 5, z: 6 };
+  const hidden = { x: 7, y: 8, z: 9 };
+  const links: Link[] = [
+    { source: 'source', target: shown },
+    { source, target: 'shown' },
+    { source: 'source', target: 'hidden' },
+  ];
+  mock.setLinks(links);
+  mock.setLinkVisibility((link: Link) => link.target !== hidden);
+  ctrl.setEnabled(true);
+
+  const batch = mock.batched()!;
+  const attribute = batch.geometry.getAttribute('position');
+  assert.equal(batch.geometry.drawRange.count, 6);
+  assert.deepEqual([...attribute.array].slice(0, 18), [
+    4, 5, 6, 4, 5, 6, // unhydrated source collapses onto target
+    1, 2, 3, 1, 2, 3, // unhydrated target collapses onto source
+    0, 0, 0, 0, 0, 0, // both endpoints unhydrated collapse at origin
+  ]);
+
+  // The library's digest hydrates the current links in place.
+  links[0].source = source;
+  links[1].target = shown;
+  links[2].source = source;
+  links[2].target = hidden;
+  ctrl.onFrame();
+  assert.equal(batch.geometry.drawRange.count, 4, 'hydrated hidden link dropped');
+  assert.deepEqual([...attribute.array].slice(0, 12), [
+    1, 2, 3, 4, 5, 6,
+    1, 2, 3, 4, 5, 6,
+  ]);
   ctrl.dispose();
 });
 
