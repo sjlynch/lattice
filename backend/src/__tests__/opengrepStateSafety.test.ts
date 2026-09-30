@@ -115,6 +115,7 @@ test('digest drill-down accepts an absolute file path inside the project', () =>
     errors: [],
     partiallyParsed: [],
     scannedFiles: 1,
+    scannedPaths: ['src/a.ts'],
     skippedRules: 0,
   };
   const record = { id: 'og_1', project, startedAt: 0 } as unknown as OpengrepScanRecord;

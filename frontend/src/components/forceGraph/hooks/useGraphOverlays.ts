@@ -9,6 +9,7 @@ import { useHealthOverlay } from './useHealthOverlay';
 import { useLabelsOverlay } from './useLabelsOverlay';
 import { useLocOverlay } from './useLocOverlay';
 import { useOverlayPins } from './useOverlayPins';
+import { useSecurityOverlay } from './useSecurityOverlay';
 
 type UseGraphOverlaysArgs = {
   activeFolder: string;
@@ -44,6 +45,7 @@ export function useGraphOverlays({
     activeFolder,
     graphRef,
   );
+  const { security, securityModeRef, securityFilesRef } = useSecurityOverlay(activeFolder, graphRef);
 
   // Live "is a health/loc/dead view showing" flag, shared by the timeline (skip
   // its scrub delta) and the filter (hide ghosts + ignored-ext files). Assigned
@@ -82,7 +84,7 @@ export function useGraphOverlays({
   // Keep the shared flag current for the timeline/filter effects that read it
   // live. Assigning during render (rather than in an effect) means the value is
   // already correct when those hooks' refresh-driven accessors next run.
-  const metricOverlayActive = healthMode || locMode || deadMode;
+  const metricOverlayActive = security.active || healthMode || locMode || deadMode;
   metricOverlayActiveRef.current = metricOverlayActive;
 
   const labels = useLabelsOverlay(
@@ -102,12 +104,16 @@ export function useGraphOverlays({
     metricsIgnoredExtsRef,
     metricOverlayActiveRef,
     settings.showLinks,
+    securityModeRef,
   );
 
   return {
     settings,
     setSettings,
     settingsRef,
+    security,
+    securityModeRef,
+    securityFilesRef,
     history,
     range,
     setRange,

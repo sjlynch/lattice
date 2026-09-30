@@ -93,9 +93,79 @@ export type OpengrepScanEnvelope = {
   markdown?: string;
 };
 
-export async function fetchOpengrepStatus(project?: string): Promise<OpengrepStatus> {
+export type OpengrepGraphFile = {
+  path: string;
+  severity: OpengrepSeverity | null;
+  findings: number;
+  incomplete: boolean;
+};
+
+export type OpengrepGraphResult = {
+  canonicalProject: string;
+  scan: OpengrepScanRecord;
+  files: OpengrepGraphFile[];
+  shown: number;
+  errors: number;
+  partiallyParsed: number;
+  skippedRules: number;
+};
+
+// Called only by the Security chip. A long scan hands back its id, then GETs
+// poll that exact scan; neither polling nor a failed request re-POSTs a scan.
+export async function runOpengrepGraphScan(
+  project: string,
+  signal: AbortSignal,
+): Promise<OpengrepGraphResult> {
+  const started = await asJson<OpengrepScanEnvelope | { scanId: string; status: 'running' }>(
+    await fetch('/api/opengrep/scan', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ project, async: true }),
+      signal,
+    }),
+  );
+  const id = 'scanId' in started ? started.scanId : started.scan.id;
+  const params = new URLSearchParams({ project, format: 'graph' });
+  const deadline = Date.now() + 12 * 60_000;
+  while (true) {
+    signal.throwIfAborted();
+    const response = await fetch(`/api/opengrep/scans/${encodeURIComponent(id)}?${params}`, { signal });
+    if (response.status !== 202) return asJson<OpengrepGraphResult>(response);
+    if (Date.now() >= deadline) throw new Error('The security scan is still running. Check Settings → Tools for its status.');
+    await new Promise<void>((resolve, reject) => {
+      signal.throwIfAborted();
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(signal.reason);
+      };
+      const timer = setTimeout(() => {
+        signal.removeEventListener('abort', onAbort);
+        resolve();
+      }, 1500);
+      signal.addEventListener('abort', onAbort, { once: true });
+    });
+  }
+}
+
+const statusListeners = new Set<(status: OpengrepStatus) => void>();
+let statusRequestSequence = 0;
+
+// Settings' installation polling also updates availability in the graph.
+export function subscribeOpengrepStatus(listener: (status: OpengrepStatus) => void): () => void {
+  statusListeners.add(listener);
+  return () => { statusListeners.delete(listener); };
+}
+
+export async function fetchOpengrepStatus(project?: string, signal?: AbortSignal): Promise<OpengrepStatus> {
+  const sequence = ++statusRequestSequence;
   const q = project ? `?project=${encodeURIComponent(project)}` : '';
-  return asJson<OpengrepStatus>(await fetch(`/api/opengrep/status${q}`));
+  const status = await asJson<OpengrepStatus>(await fetch(`/api/opengrep/status${q}`, { signal }));
+  // A status request started before an installation refresh must not publish
+  // its older answer after that refresh. Callers still get their own response.
+  if (sequence === statusRequestSequence && !signal?.aborted) {
+    for (const listener of statusListeners) listener(status);
+  }
+  return status;
 }
 
 export async function startOpengrepInstall(): Promise<{ job: OpengrepInstallJob }> {

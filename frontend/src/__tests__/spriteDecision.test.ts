@@ -18,6 +18,7 @@ type Flags = Partial<{
   loc: boolean;
   health: boolean;
   dead: boolean;
+  security: boolean;
   label: boolean;
   batched: boolean;
   selected: string[];
@@ -39,6 +40,8 @@ function refsFor(f: Flags): NodeObjectRefs {
     locModeRef: { current: f.loc ?? false },
     healthModeRef: { current: f.health ?? false },
     deadModeRef: { current: f.dead ?? false },
+    securityModeRef: { current: f.security ?? false },
+    securityFilesRef: { current: null },
     labelModeRef: { current: f.label ?? false },
     labelShiftRef: { current: false },
     labelLevelRef: { current: 1 },
@@ -83,6 +86,13 @@ const NONE: SpriteDecision = {
 };
 
 const rows: { name: string; node: GraphNode; flags: Flags; want: SpriteDecision }[] = [
+  {
+    name: 'security overrides pinned metrics, suppresses rings/labels, and stays visible when batched',
+    node: jsonFile,
+    flags: { security: true, health: true, loc: true, dead: true, batched: true,
+      label: true, ignoredExts: ['.json'], changes: [['x.json', 'modified']] },
+    want: { ...NONE, baseKind: 'security' },
+  },
   {
     name: 'plain file, no overlays → base sprite, nothing attached',
     node: tsFile,

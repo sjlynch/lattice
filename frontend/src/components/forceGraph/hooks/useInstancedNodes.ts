@@ -22,6 +22,7 @@ export function useInstancedNodes(
     healthModeRef: MutableRefObject<boolean>;
     locModeRef: MutableRefObject<boolean>;
     deadModeRef: MutableRefObject<boolean>;
+    securityModeRef: MutableRefObject<boolean>;
   },
   // Bumped by useGraphDataSync on every full graphData() swap (which replaces
   // the node object array the controller captures per styleKey). Some swaps —
@@ -40,6 +41,7 @@ export function useInstancedNodes(
 ) {
   const ctrlRef = useRef<InstancedNodes | null>(null);
   const mountedRef = useRef(false);
+  const securityActive = modeRefs.securityModeRef.current;
 
   // Create the controller + per-frame subscription once (init runs in a layout
   // effect, so graphRef.current is set by the time this passive effect fires).
@@ -51,7 +53,8 @@ export function useInstancedNodes(
       isBaseView: () =>
         !modeRefs.healthModeRef.current &&
         !modeRefs.locModeRef.current &&
-        !modeRefs.deadModeRef.current,
+        !modeRefs.deadModeRef.current &&
+        !modeRefs.securityModeRef.current,
     });
     ctrlRef.current = ctrl;
     const off = onFrame(graph, () => ctrl.onFrame());
@@ -92,5 +95,6 @@ export function useInstancedNodes(
     settings.dirNodeSize,
     dataGeneration,
     metricOverlayActive,
+    securityActive,
   ]);
 }

@@ -74,6 +74,7 @@ export {
   scanProjectWithDigest,
   startProjectScanWithDigest,
   digestOfStoredScan,
+  graphOfStoredScan,
   loadEffectiveConfig,
   addOpengrepIgnores,
   type OpengrepIgnoreResult,

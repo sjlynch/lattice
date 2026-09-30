@@ -37,6 +37,8 @@ function makeRefs(): NodeObjectRefs {
     locModeRef: { current: false },
     healthModeRef: { current: false },
     deadModeRef: { current: false },
+    securityModeRef: { current: false },
+    securityFilesRef: { current: null },
     labelModeRef: { current: false },
     labelShiftRef: { current: false },
     labelLevelRef: { current: 1 },

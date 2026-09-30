@@ -52,6 +52,7 @@ type UseGraphViewChromeModelArgs = {
   contextMenu: GraphViewOverlaysProps['contextMenu']['position'];
   search: HudSearchProps;
   pinned: OverlayPins;
+  security: GraphViewOverlaysProps['overlayKey']['security'];
   togglePin: (key: OverlayPinKey) => void;
   dragRect: GraphViewOverlaysProps['drag']['dragRect'];
   openMenuItem: GraphViewOverlaysProps['contextMenu']['onPick'];
@@ -84,6 +85,7 @@ export function useGraphViewChromeModel({
   contextMenu,
   search,
   pinned,
+  security,
   togglePin,
   dragRect,
   openMenuItem,
@@ -132,10 +134,10 @@ export function useGraphViewChromeModel({
         loading,
         hasData: !!data,
         counts,
-        healthMode: modes.healthMode,
-        locMode: modes.locMode,
-        deadMode: modes.deadMode,
-        labelMode: modes.labelMode,
+        healthMode: modes.healthMode && !security.active,
+        locMode: modes.locMode && !security.active,
+        deadMode: modes.deadMode && !security.active,
+        labelMode: modes.labelMode && !security.active,
         labelLevel: modes.labelLevel,
         maxDepth: modes.labelShift ? maxDepthRef.current : maxDirDepthRef.current,
         selectionCount: selected.size,
@@ -143,7 +145,7 @@ export function useGraphViewChromeModel({
         // so it doesn't sit over the menu. Gating (rather than a one-shot
         // clear) also keeps it from flickering back if the raycaster re-hovers
         // the still-under-cursor node while the menu is up.
-        hoverNode: contextMenu ? null : hoverNode,
+        hoverNode: contextMenu || security.active ? null : hoverNode,
         ...search,
       },
       overlayKey: {
@@ -151,6 +153,7 @@ export function useGraphViewChromeModel({
         pinned,
         active: overlayActive,
         onTogglePin: togglePin,
+        security,
       },
       timeline: {
         show: hasTimeline,

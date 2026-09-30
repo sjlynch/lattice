@@ -41,6 +41,8 @@ export type ParsedOpengrepOutput = {
   errors: OpengrepRunError[];
   partiallyParsed: string[];
   scannedFiles: number;
+  // Project-relative paths actually visited by the engine (graph coverage).
+  scannedPaths: string[];
   skippedRules: number;
 };
 
@@ -100,7 +102,7 @@ function toRelativePath(abs: string, projectPath: string): string {
   const p = norm(projectPath);
   const lower = process.platform === 'win32';
   const prefixed = lower ? a.toLowerCase().startsWith(`${p.toLowerCase()}/`) : a.startsWith(`${p}/`);
-  return prefixed ? a.slice(p.length + 1) : a;
+  return (prefixed ? a.slice(p.length + 1) : a).replace(/^(?:\.\/)+/, '');
 }
 
 function normalizeSeverity(s: unknown): OpengrepSeverity {
@@ -173,6 +175,9 @@ export function parseOpengrepJson(raw: unknown, projectPath: string): ParsedOpen
     errors,
     partiallyParsed: [...partiallyParsed].sort(),
     scannedFiles: Array.isArray(r.paths?.scanned) ? r.paths!.scanned!.length : 0,
+    scannedPaths: Array.isArray(r.paths?.scanned)
+      ? r.paths.scanned.filter((p): p is string => typeof p === 'string').map((p) => toRelativePath(p, projectPath))
+      : [],
     skippedRules: Array.isArray(r.skipped_rules) ? r.skipped_rules.length : 0,
   };
 }

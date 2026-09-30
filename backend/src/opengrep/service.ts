@@ -34,6 +34,7 @@ import {
 } from './settings.js';
 import { readOpengrepState } from './state.js';
 import { OPENGREP_VERSION } from './versions.js';
+import { buildOpengrepGraph } from './graph.js';
 
 export type OpengrepStatus = {
   available: boolean;
@@ -221,6 +222,18 @@ export async function digestOfStoredScan(
   const config = await loadEffectiveConfig(canonical);
   const { digest, markdown } = digestFor(stored.parsed, stored.record, config, ctx);
   return { record: stored.record, digest, markdown, config };
+}
+
+// Read only: the graph starts scans explicitly through POST /scan, then polls
+// its exact id. Loading this snapshot never starts or refreshes a scan.
+export async function graphOfStoredScan(project: string, id: string) {
+  const canonical = canonicalProjectPath(project);
+  const scanId = id === 'latest' ? (await latestOpengrepScan(canonical))?.id : id;
+  if (!scanId) return null;
+  const stored = await readOpengrepScan(canonical, scanId);
+  if (!stored) return null;
+  const config = await loadEffectiveConfig(canonical);
+  return buildOpengrepGraph(stored.parsed, stored.record, config.filter);
 }
 
 export type OpengrepIgnoreResult = {

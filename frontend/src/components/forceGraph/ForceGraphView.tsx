@@ -171,6 +171,9 @@ function ForceGraphViewCoordinator({
     healthModeRef,
     deadMode,
     deadModeRef,
+    security,
+    securityModeRef,
+    securityFilesRef,
     labelMode,
     labelModeRef,
     labelShift,
@@ -213,6 +216,8 @@ function ForceGraphViewCoordinator({
     locModeRef,
     healthModeRef,
     deadModeRef,
+    securityModeRef,
+    securityFilesRef,
     labelModeRef,
     labelShiftRef,
     labelLevelRef,
@@ -236,7 +241,7 @@ function ForceGraphViewCoordinator({
   // graph down to the metric signal — hiding ghost nodes + metrics-ignored files
   // and suppressing change-rings — so the batched-link buffer must re-capture
   // its visible set when this flips (see useBatchedLinks).
-  const metricOverlayActive = healthMode || locMode || deadMode;
+  const metricOverlayActive = security.active || healthMode || locMode || deadMode;
 
   const resetSelection = useCallback(() => setSelected(new Set()), []);
 
@@ -276,6 +281,7 @@ function ForceGraphViewCoordinator({
     dataGeneration,
     metricOverlayActive,
     settings.showLinks,
+    security.active,
   );
 
   // Batched node rendering: draw the base node shapes as a few instanced meshes
@@ -289,7 +295,7 @@ function ForceGraphViewCoordinator({
     settings.batchedNodes,
     hiddenExts,
     settings,
-    { settingsRef, healthModeRef, locModeRef, deadModeRef },
+    { settingsRef, healthModeRef, locModeRef, deadModeRef, securityModeRef },
     dataGeneration,
     metricOverlayActive,
   );
@@ -431,6 +437,7 @@ function ForceGraphViewCoordinator({
       onSearchNextMatch: goNextMatch,
     },
     pinned,
+    security,
     togglePin,
     dragRect,
     openMenuItem,

@@ -195,7 +195,7 @@ test('render: a top-severity group too big for the budget is trimmed, not droppe
     });
   }
   const d = buildDigest(
-    { version: '1', findings, errors: [], partiallyParsed: [], scannedFiles: 61, skippedRules: 0 },
+    { version: '1', findings, errors: [], partiallyParsed: [], scannedFiles: 61, scannedPaths: [], skippedRules: 0 },
     { severityFloor: 'INFO', ignoreRuleIds: [], ignoreFingerprints: [] },
   );
   assert.equal(d.groups[0].ruleId, 'pack.big.rule');

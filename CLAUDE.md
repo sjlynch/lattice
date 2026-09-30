@@ -194,7 +194,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | DELETE | `/api/opengrep/rules/:packId` | Remove a rule pack (**409** while a scan runs) |
 | POST | `/api/opengrep/scan` | `{project, targets?, includeMarkdown?}` run a scan (**409** `busy`/`not-installed`/`no-rules`, **400** `bad-target`) |
 | GET | `/api/opengrep/scans?project=` | Recent scan records |
-| GET | `/api/opengrep/scans/:id?project=&format=md&…` | One scan (`latest` ok) as the filtered agent digest |
+| GET | `/api/opengrep/scans/:id?project=&format=md&…` | One scan (`latest` ok) as the filtered agent digest; `format=graph` gives per-file severity and coverage |
 | POST | `/api/opengrep/ignore` | `{project, ruleIds?, fingerprints?}` append to the project's Opengrep ignore lists |
 | GET | `/api/project-env?project=` | Detected package-manager envs + "don't reinstall" notes |
 | GET | `/api/projects` | Known project roots + hashes |
@@ -316,6 +316,14 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   `userSettings.deadCodeEntryGlobs`), also served to agents at
   `/api/health/dead-code`. Camera/sprite/filtering rules (OrbitControls, +Y
   up, `nodeVisibility` filtering): `frontend/src/components/forceGraph/CLAUDE.md`.
+  The **Security** chip appears only after a usable OpenGrep engine is detected
+  (managed or external). Availability refreshes on focus/return and during
+  installation; status reads never start scans. It runs OpenGrep only on explicit activation, with an
+  in-chip spinner and completed scan time. Its colors take precedence over
+  H/Z/D, hide ghosts but keep metrics-ignored config files visible, and use
+  the configured severity/ignore filters. Gray means unscanned or incomplete.
+  No scans on graph load, file changes or project switches; disable/re-enable
+  explicitly starts a fresh scan.
 - **Agent overlay (graph).** Every in-progress agent (Claude, Codex, Pi) is a
   node with TTL-fading focus beams to the files it touches and a current-file
   label; subagents are satellites with their own labels (`showSubagentLabels`

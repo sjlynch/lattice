@@ -48,6 +48,7 @@ export const DEFAULT_DIGEST_FILTER: DigestFilter = {
 };
 
 export type DigestOccurrence = {
+  severity: OpengrepSeverity;
   line: number;
   endLine: number;
   snippet: string;
@@ -142,6 +143,7 @@ export function buildDigest(parsed: ParsedOpengrepOutput, filter: DigestFilter =
       fileIndex.set(f.path, file);
     }
     file.occurrences.push({
+      severity: f.severity,
       line: f.line,
       endLine: f.endLine,
       snippet: f.snippet,

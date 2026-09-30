@@ -69,3 +69,30 @@
   background: rgba(0, 0, 0, 0.22);
   border-color: rgba(255, 255, 255, 0.25);
 }
+.graph-overlay-chip:disabled { cursor: wait; }
+.graph-security-spinner {
+  width: 12px;
+  height: 12px;
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: currentColor;
+}
+.graph-security-message {
+  flex-basis: 100%;
+  color: var(--danger);
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 17, 21, 0.9);
+}
+.graph-security-legend {
+  pointer-events: auto;
+  display: flex;
+  flex-wrap: wrap;
+  flex-basis: 100%;
+  gap: 8px;
+  color: var(--text-secondary);
+  font-size: 11px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  background: rgba(15, 17, 21, 0.9);
+}

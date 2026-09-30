@@ -56,7 +56,19 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   Background failures retain the last good history and scrubber range.
 - `useGraphOverlays` — composes `useGraphSettings` + `useGitTimeline` +
   `useLocOverlay` + `useHealthOverlay` + `useDeadCodeOverlay` + `useLabelsOverlay`
-  + `useGraphFilter` into one setup point.
+  + `useSecurityOverlay` + `useGraphFilter` into one setup point.
+- `useSecurityOverlay` — explicit Security chip activation starts one OpenGrep
+  scan, polls its exact id, and refreshes colors without reheating the layout.
+  Shows a chip spinner and completed duration. No scan effect, persistence,
+  shortcut or automatic retry. Project-scoped results and request identity fence
+  late completion; project change/unmount abort waiting without cancelling an
+  already accepted backend scan. Toggling off and back on starts a fresh scan.
+- `useOpengrepAvailability` — hides Security until `status.available` confirms
+  a usable engine (managed or PATH). Reads status on mount and window focus/tab
+  return, shares Settings' status responses, and polls only during an engine
+  installation so completion is noticed even if Settings closes. Failed reads
+  retain last confirmed availability. Cleanup aborts HTTP and removes listeners
+  and timers. Availability changes never start a scan.
 - `useHoldKeyMode` — the shared hold-key chord lifecycle (keydown/keyup/blur/
   visibilitychange + text-input guard) behind every overlay. `momentaryLetterMode`
   builds H/Z/D/W handlers; Alt supplies bespoke ones. Reuse this for new overlays.
@@ -75,6 +87,8 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   live, re-evaluated by the view-toggle refresh. The same flag short-circuits
   `useGitTimeline`'s scrub delta (no rings/ghosts painted while a view is held)
   and drives a `useBatchedLinks` re-capture (drop links to the hidden nodes).
+  Security hides ghosts but keeps metrics-ignored config/prose files visible;
+  its own flag also recaptures batched buffers when another metric view is pinned.
 
 ## Search, selection, drag, hover
 

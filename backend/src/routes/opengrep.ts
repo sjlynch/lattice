@@ -18,6 +18,7 @@ import {
   digestOfStoredScan,
   findRulePackDef,
   getOpengrepStatus,
+  graphOfStoredScan,
   installRulePack,
   isAnyOpengrepScanRunning,
   isRulePackInstalling,
@@ -254,7 +255,8 @@ export function buildOpengrepRouter(): Router {
   });
 
   // One stored scan (`latest` allowed). `format=md` returns the digest as
-  // text/markdown; the default JSON envelope carries the digest counts and,
+  // text/markdown; `format=graph` returns complete filtered per-file colors and
+  // scan coverage. The default JSON envelope carries the digest counts and,
   // with `include=markdown`, the digest text too. The id of a scan started with
   // `async: true` that is still running answers `202 {status: 'running'}`; one
   // that failed answers the status/code its POST would have (409 `no-rules`,
@@ -278,11 +280,16 @@ export function buildOpengrepRouter(): Router {
       const m = statusFor(run.error) ?? { status: 500, code: 'scan-failed' };
       return res.status(m.status).json({ error: run.error.message, code: m.code, scanId: id });
     }
+    const format = str((req.query as Record<string, unknown>).format);
+    if (format === 'graph') {
+      const graph = await graphOfStoredScan(project, id);
+      if (!graph) return res.status(404).json({ error: `no Opengrep scan ${id} for this project` });
+      return res.json(graph);
+    }
     const ctx = renderContextFromQuery(req.query as Record<string, unknown>);
     ctx.drillDownHint ??= STORED_SCAN_DRILL_DOWN_HINT;
     const result = await digestOfStoredScan(project, id === 'latest' ? undefined : id, ctx);
     if (!result) return res.status(404).json({ error: `no Opengrep scan ${id} for this project` });
-    const format = str((req.query as Record<string, unknown>).format);
     if (format === 'md' || format === 'markdown') {
       res.type('text/markdown; charset=utf-8').send(result.markdown);
       return;

@@ -95,7 +95,7 @@ label physics in `labelPhysics/CLAUDE.md`.
   sprite, hide-if-batched, attach change-ring/label/halo sibling children).
   Handed to `nodeThreeObject`.
 - `spriteDecision.ts` — `decideSpriteState`: the pure ghost/health/loc/dead/base
-  decision tree (recolor precedence health > loc > dead > base) returning a
+  decision tree (recolor precedence security > health > loc > dead > base) returning a
   plain, THREE-free `SpriteDecision` (baseKind + hide-when-batched + which
   ring/label/halo to attach). While a metric view (health/LOC/dead-code) is active
   it suppresses the change-ring + label (they obscure the coloring); ghosts +
@@ -112,6 +112,12 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `locOverlay` / `healthOverlay` / `deadCodeOverlay` / `labelsOverlay` — overlay
   configs + per-overlay registries. `deadCodeOverlay` is a pure recolor;
   `labelsOverlay.applyNodeLabelState` is the per-node Alt name-label toggle.
+- `securityOverlay` — pure per-file OpenGrep recolor preserving language shapes;
+  path lookup normalizes Windows casing/separators. ERROR red, WARNING yellow,
+  INFO blue, completely visited files with no shown findings green, unscanned
+  or incomplete gray. `useSecurityOverlay` starts scans only from the Security
+  chip; no automatic refresh scans. Security keeps config files visible even
+  when their extensions are on the health/LOC metrics-ignore list.
 - `labelTexture` / `labelSpriteResources` / `floatingLabelSprite` /
   `metricOverlayFactory` — shared, module-owned (refcount-guarded)
   label-texture/sprite/connector caches. `labelSpriteResources` holds the four

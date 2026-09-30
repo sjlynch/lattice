@@ -27,6 +27,8 @@ export function useBatchedLinks(
   // The "Show links" setting. useGraphFilter folds it into `linkVisibility`;
   // the batched buffer only re-reads that on rebuild, so it's a rebuild dep.
   showLinks: boolean,
+  // Security restores config files even when another metric overlay is pinned.
+  securityActive: boolean,
 ) {
   const ctrlRef = useRef<InstancedLinks | null>(null);
 
@@ -57,5 +59,5 @@ export function useBatchedLinks(
   useEffect(() => {
     if (!enabled) return;
     ctrlRef.current?.rebuild();
-  }, [enabled, hiddenExts, dataGeneration, metricOverlayActive, showLinks]);
+  }, [enabled, hiddenExts, dataGeneration, metricOverlayActive, showLinks, securityActive]);
 }

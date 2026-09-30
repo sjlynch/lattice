@@ -39,6 +39,7 @@ export function useGraphFilter(
   // Graph settings → Rendering → "Show links". Off hides every link; the
   // links still exist for the simulation, only their drawing is filtered.
   showLinks: boolean,
+  securityModeRef: MutableRefObject<boolean>,
 ) {
   useEffect(() => {
     if (!graphRef.current) return;
@@ -57,7 +58,9 @@ export function useGraphFilter(
       if (hiddenExts.has(key)) return false;
       // Metrics-ignored extensions (.json etc.) carry no health/loc/dead signal,
       // so drop them while a metric view is active.
-      if (metricView && metricsIgnoredExtsRef.current.has(key)) return false;
+      // Security rules can cover config/prose too; the health/LOC ignore list
+      // must not hide those findings while the Security chip owns the colors.
+      if (metricView && !securityModeRef.current && metricsIgnoredExtsRef.current.has(key)) return false;
       return true;
     }
     graphRef.current
@@ -88,5 +91,6 @@ export function useGraphFilter(
     metricsIgnoredExtsRef,
     metricOverlayActiveRef,
     showLinks,
+    securityModeRef,
   ]);
 }

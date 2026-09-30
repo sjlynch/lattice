@@ -4,9 +4,9 @@ import type { NodeObjectRefs } from './nodeObjectFactory';
 import { isGhost, readRelForward } from './timelineDiff';
 
 // Which sprite the node's base composite is built from. Precedence for the
-// recolor overlays is health > loc > dead > base; `ghost` short-circuits the
+// recolor overlays is security > health > loc > dead > base; `ghost` short-circuits the
 // whole tree (deleted-file disc + optional halo, nothing else).
-export type SpriteBaseKind = 'ghost' | 'health' | 'loc' | 'dead' | 'base';
+export type SpriteBaseKind = 'ghost' | 'security' | 'health' | 'loc' | 'dead' | 'base';
 
 // A plain, THREE-free description of what a node's object should contain in the
 // current overlay/selection frame. `decideSpriteState` computes it by reading
@@ -67,7 +67,9 @@ export function decideSpriteState(
     refs.metricsIgnoredExtsRef.current.has(node.ext);
 
   let baseKind: SpriteBaseKind;
-  if (refs.healthModeRef.current && !ignored) {
+  if (refs.securityModeRef.current) {
+    baseKind = 'security';
+  } else if (refs.healthModeRef.current && !ignored) {
     baseKind = 'health';
   } else if (refs.locModeRef.current && !ignored) {
     baseKind = 'loc';
@@ -84,6 +86,7 @@ export function decideSpriteState(
   // sprite. These views strip the graph down to just the metric signal, so the
   // batched-hide, change-ring, and label gates below all key off it.
   const metricOverlayActive =
+    refs.securityModeRef.current ||
     refs.healthModeRef.current ||
     refs.locModeRef.current ||
     refs.deadModeRef.current;

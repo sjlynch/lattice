@@ -7,8 +7,9 @@ process, and its findings handed to agents as a size-bounded markdown
 `opengrep` tool ticked (the scan runs before the harness spawns and the digest
 lands beside `WORKFLOW_STEP.md`), and the `opengrep_scan` /
 `opengrep_findings` MCP tools + `/api/opengrep/*` routes for any session.
-Graph overlays and QA-lane baseline diffs were deliberately left out; the
-storage is fingerprint-keyed so they can be added later without rework.
+The graph's Security chip also starts an explicit scan and colors files from
+its stored results. It never scans on graph load, file changes or a timer.
+QA-lane baseline diffs remain unimplemented.
 
 ## Licence boundary (read before adding anything here)
 
@@ -177,7 +178,12 @@ licence text + a source pointer) — keep it a runtime download.
   without the `opengrep:` prefix. `digest.ts` itself holds the filter/build
   step and re-exports the two modules below, so callers import only it.
 - `parseOutput.ts` — pure parse step: `parseOpengrepJson`, the finding/error
-  types, and the `shortFingerprint` / `fingerprintMatches` / `ruleMatches` matchers.
+  types (including normalized `scannedPaths` for coverage), and the
+  `shortFingerprint` / `fingerprintMatches` / `ruleMatches` matchers.
+- `graph.ts` — complete filtered per-file findings and highest severity,
+  independent of markdown caps. Visited files with no shown findings can be
+  green; partial parsing, file errors, skipped rules and engine failures keep
+  coverage uncertain. Unvisited files never appear clean.
 - `renderDigest.ts` — pure markdown step: `renderDigestMarkdown` (header →
   budgeted sections → tail) with its budget knobs as named constants.
 - `settings.ts` — `globalSettings.opengrep.packs` (per-pack enable, machine-
@@ -189,7 +195,8 @@ licence text + a source pointer) — keep it a runtime download.
   `startProjectScanWithDigest` (the id at once + the digest result as `done`;
   its caller MUST observe `done`, or a failing scan is an unhandled rejection),
   `digestOfStoredScan` (with `rule` / `file` / `severity` / budget overrides
-  for drill-down). Routes, MCP tools and the workflow pre-run hook call only
+  for drill-down), `graphOfStoredScan` (read-only, exact stored scan id).
+  Routes, MCP tools and the workflow pre-run hook call only
   this.
 
 ## Consumers
@@ -203,7 +210,9 @@ licence text + a source pointer) — keep it a runtime download.
   a failed one with the status/code its POST would have had; after a backend
   restart the id is unknown (404 — the restart killed the engine). The
   synchronous form (the Settings button) is unchanged; one scan per project
-  either way.
+  either way. `GET /scans/:id?format=graph` returns the complete filtered
+  per-file snapshot for the Security graph overlay, with the same 202/failure
+  polling semantics.
 - `latticeMcp/createServer.ts` — `opengrep_scan`, `opengrep_findings` (every
   session; both return the digest markdown, never raw JSON — `opengrep_scan`
   uses the async form and polls, because Node's fetch drops a response after
@@ -227,6 +236,10 @@ licence text + a source pointer) — keep it a runtime download.
   engine / no rules / busy / failed scan does NOT fail the step: the token
   becomes a one-paragraph explanation and the step runs.
 - Settings → Tools tab (`frontend/src/components/settings/ToolsTab.tsx`).
+- Graph Security chip (`frontend/src/components/forceGraph/hooks/useSecurityOverlay.ts`):
+  POST only on activation, spinner while polling that scan id, duration on
+  completion. Disable/re-enable explicitly starts a new scan. Project changes
+  and unmount abort HTTP waiting; an accepted backend scan may finish normally.
 
 ## Tests
 

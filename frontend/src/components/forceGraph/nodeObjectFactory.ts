@@ -1,6 +1,6 @@
 import type { MutableRefObject } from 'react';
 import * as THREE from 'three';
-import type { GraphNode, ScanResult } from '../../api';
+import type { GraphNode, OpengrepGraphFile, ScanResult } from '../../api';
 import { deletedSprite, setNodeChangeRing, type ChangeKind } from './changeRing';
 import { spriteForDeadCode } from './deadCodeOverlay';
 import type { GraphSettings } from './graphSettings';
@@ -8,6 +8,7 @@ import { setNodeHalo } from './halo';
 import { spriteForHealth } from './healthOverlay';
 import { applyNodeLabelState } from './labelsOverlay';
 import { spriteForLoc } from './locOverlay';
+import { spriteForSecurity } from './securityOverlay';
 import { baseSizeFor } from './mountedNodes';
 import { decideSpriteState } from './spriteDecision';
 import { spriteFor } from './sprites';
@@ -24,6 +25,8 @@ export type NodeObjectRefs = {
   locModeRef: MutableRefObject<boolean>;
   healthModeRef: MutableRefObject<boolean>;
   deadModeRef: MutableRefObject<boolean>;
+  securityModeRef: MutableRefObject<boolean>;
+  securityFilesRef: MutableRefObject<ReadonlyMap<string, OpengrepGraphFile> | null>;
   labelModeRef: MutableRefObject<boolean>;
   // Whether Shift is also held — gates file-node labels. Alt alone shows
   // only directory names.
@@ -87,11 +90,14 @@ export function buildNodeObject(node: GraphNode, refs: NodeObjectRefs): THREE.Ob
     return root;
   }
 
-  // Recolor precedence (health > loc > dead > base) was resolved into
+  // Recolor precedence (security > health > loc > dead > base) was resolved into
   // `d.baseKind`; build the matching sprite. The overlay materials themselves
   // are cached inside the individual overlay modules.
   let base: THREE.Object3D;
   switch (d.baseKind) {
+    case 'security':
+      base = spriteForSecurity(node, s, refs.securityFilesRef.current);
+      break;
     case 'health':
       base = spriteForHealth(node, s);
       break;
