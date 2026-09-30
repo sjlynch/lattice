@@ -282,9 +282,13 @@ render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
 - **Label-registry teardown (GPU-buffer-leak guard).** Label/connector resources
   are module-owned + refcount-guarded: balance every `buildMeasuredLabelTexture`
   with a `releaseLabelTexture`; eviction skips in-use (refcount>0) textures and
-  evicts free ones (O(1), via the cache's `free` set) back down to the cap after
-  an over-cap burst; the repulsion scratch list is reset when an overlay stops so
-  it doesn't pin the last frame's sprites; route
+  evicts free ones (O(1), via the cache's `free` set) back down to the cap as
+  labels are released after an over-cap burst, even if the overlay stays off
+  and no new texture is built. Eviction/owner teardown also zeroes each owned
+  label canvas's dimensions to release native pixel storage without waiting
+  for GC; free entries retained for reuse and live/shared labels keep their
+  pixels. The repulsion scratch list is reset when an
+  overlay stops so it doesn't pin the last frame's sprites; route
   every teardown through `clearAllLabelRegistries` (never `.clear()` a registry).
   Each connector gets its own `clone()`d geometry — the only thing
   `disposeLabelEntry` frees; `AgentOverlay.destroy` frees the agent-label cache.

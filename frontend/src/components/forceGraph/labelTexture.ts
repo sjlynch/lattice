@@ -30,6 +30,9 @@ export type LabelTextureCache = {
   // eviction is O(1) instead of a scan over every in-use entry — which made
   // building N labels O(N²) once the cache had grown past its cap.
   free: Set<string>;
+  // Remember the owner's cap so teardown can reclaim an over-cap burst even
+  // if the overlay stays off and no subsequent build happens.
+  maxEntries: number;
 };
 
 export type LabelTextureOptions = {
@@ -50,6 +53,7 @@ export function createLabelTextureCache(): LabelTextureCache {
     refs: new Map<string, number>(),
     keyOf: new WeakMap<MeasuredLabelTexture, string>(),
     free: new Set<string>(),
+    maxEntries: Infinity,
   };
 }
 
@@ -73,8 +77,20 @@ function measuredTextWidth(metrics: TextMetrics): number {
   return Math.ceil(actual > 0 ? actual : metrics.width);
 }
 
-// Make room for one new entry: evict the OLDEST free (refcount 0) entries until
-// the cache is below maxEntries or nothing free is left. In-use entries are
+function disposeMeasuredLabelTexture(tex: MeasuredLabelTexture): void {
+  disposeLabelMaterial(tex);
+  tex.dispose();
+  // THREE.dispose releases GPU storage, but the owned canvas still holds its
+  // native pixel buffer until GC. Tiny JS wrappers can leave gigabytes of
+  // discarded pixels waiting for collection during label churn. Reset only
+  // on eviction/owner teardown; cached or still-mounted labels need the image.
+  tex.image.width = 0;
+  tex.image.height = 0;
+}
+
+// Evict the OLDEST free (refcount 0) entries until the cache is at maxEntries
+// or nothing free is left. Builds reserve one slot; releases trim to the cap
+// immediately, without waiting for another cache miss. In-use entries are
 // never touched, so a mounted texture is never disposed; if every entry is in
 // use the cache grows past maxEntries until labels are released — correctness
 // beats the soft cap. Evicting down to the cap (not just one slot) matters after
@@ -84,15 +100,14 @@ function measuredTextWidth(metrics: TextMetrics): number {
 // keyed by, and only useful with, that one texture).
 function evictFreeEntries(cache: LabelTextureCache, maxEntries: number): void {
   for (const key of cache.free) {
-    if (cache.byKey.size < maxEntries) return;
+    if (cache.byKey.size <= maxEntries) return;
     cache.free.delete(key);
     const tex = cache.byKey.get(key);
     cache.byKey.delete(key);
     cache.refs.delete(key);
     if (!tex) continue;
     cache.keyOf.delete(tex);
-    disposeLabelMaterial(tex);
-    tex.dispose();
+    disposeMeasuredLabelTexture(tex);
   }
 }
 
@@ -102,6 +117,7 @@ export function buildMeasuredLabelTexture(
   color: string,
   options: LabelTextureOptions,
 ): MeasuredLabelTexture {
+  cache.maxEntries = options.maxEntries;
   const key = `${text}|${color}`;
   const cached = cache.byKey.get(key);
   if (cached) {
@@ -141,7 +157,7 @@ export function buildMeasuredLabelTexture(
     maxV: options.maxV ?? 0.88,
   };
 
-  evictFreeEntries(cache, options.maxEntries);
+  evictFreeEntries(cache, options.maxEntries - 1);
   cache.byKey.set(key, tex);
   cache.keyOf.set(tex, key);
   cache.refs.set(key, 1);
@@ -163,6 +179,7 @@ export function releaseLabelTexture(
   if (n <= 1) {
     cache.refs.delete(key);
     cache.free.add(key);
+    evictFreeEntries(cache, cache.maxEntries);
   } else {
     cache.refs.set(key, n - 1);
   }
@@ -173,11 +190,11 @@ export function releaseLabelTexture(
 // destroy), where the whole label set is going away at once.
 export function disposeLabelTextureCache(cache: LabelTextureCache): void {
   for (const tex of cache.byKey.values()) {
-    disposeLabelMaterial(tex);
-    tex.dispose();
+    disposeMeasuredLabelTexture(tex);
   }
   cache.byKey.clear();
   cache.refs.clear();
   cache.free.clear();
-  // keyOf is a WeakMap — its entries drop as the textures are GC'd.
+  // A late release of an old texture must not touch a rebuilt entry's refs.
+  cache.keyOf = new WeakMap<MeasuredLabelTexture, string>();
 }

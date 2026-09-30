@@ -38,6 +38,7 @@ THREE.Material.prototype.dispose = function (this: object) {
 import {
   buildMeasuredLabelTexture,
   createLabelTextureCache,
+  disposeLabelTextureCache,
   releaseLabelTexture,
   type LabelTextureOptions,
 } from '../components/forceGraph/labelTexture.ts';
@@ -138,6 +139,101 @@ test('a miss after a released over-cap burst evicts back down to maxEntries', ()
   assert.ok(!disposedTextures.has(burst[11]), 'a re-referenced entry is never evicted');
 });
 
+test('closing a large label overlay reclaims excess textures without another cache miss', () => {
+  disposedTextures.clear();
+  disposedMaterials.clear();
+  const cache = createLabelTextureCache();
+  const opts = OPTS(256);
+  const burst = [];
+  for (let i = 0; i < 2000; i++) {
+    const tex = buildMeasuredLabelTexture(cache, `large-project-file-${i}.ts`, '#ffffff', opts);
+    const sprite = makeFloatingLabelSprite(tex, 3, SPRITE_CONFIG);
+    burst.push({ tex, mat: sprite.material });
+  }
+  assert.equal(cache.byKey.size, 2000, 'all mounted labels remain available');
+  assert.equal(disposedTextures.size, 0);
+
+  // Toggling Alt off (or leaving the project) releases the labels and then
+  // does no further builds. Idle memory must return to the cache's cap now.
+  for (const { tex } of burst) releaseLabelTexture(cache, tex);
+  assert.equal(cache.byKey.size, 256, 'inactive cache immediately returns to its cap');
+  assert.equal(cache.free.size, 256);
+  assert.equal(cache.refs.size, 0);
+  assert.equal(disposedTextures.size, 1744);
+  assert.equal(disposedMaterials.size, 1744);
+  for (const { tex, mat } of burst.slice(0, 1744)) {
+    assert.ok(disposedTextures.has(tex), 'excess texture disposed');
+    assert.ok(disposedMaterials.has(mat), 'paired material disposed');
+    assert.equal(tex.image.width * tex.image.height, 0, 'evicted canvas pixels released');
+  }
+  for (const { tex } of burst.slice(1744)) {
+    assert.ok(tex.image.width * tex.image.height > 0, 'cached labels keep their pixels');
+  }
+});
+
+test('release-time eviction preserves labels still used by another sprite', () => {
+  disposedTextures.clear();
+  const cache = createLabelTextureCache();
+  const opts = OPTS(4);
+  const shared = buildMeasuredLabelTexture(cache, 'shared', '#ffffff', opts);
+  assert.equal(buildMeasuredLabelTexture(cache, 'shared', '#ffffff', opts), shared);
+  const burst = Array.from({ length: 12 }, (_, i) =>
+    buildMeasuredLabelTexture(cache, `burst${i}`, '#ffffff', opts));
+
+  releaseLabelTexture(cache, shared);
+  for (const tex of burst) releaseLabelTexture(cache, tex);
+  assert.equal(cache.byKey.size, 4, 'released overflow reclaimed');
+  assert.ok(!disposedTextures.has(shared), 'the other sprite keeps its texture alive');
+  assert.ok(shared.image.width * shared.image.height > 0, 'shared label pixels remain usable');
+  assert.equal(cache.refs.get(cache.keyOf.get(shared)!), 1);
+  // A duplicate teardown after eviction is harmless.
+  releaseLabelTexture(cache, burst[0]);
+  assert.equal(cache.byKey.size, 4);
+});
+
+test('cached label pixels survive reuse and are released only on eviction', () => {
+  const cache = createLabelTextureCache();
+  const opts = OPTS(1);
+  const original = buildMeasuredLabelTexture(cache, 'original', '#ffffff', opts);
+  const dimensions = [original.image.width, original.image.height];
+  releaseLabelTexture(cache, original);
+  assert.deepEqual([original.image.width, original.image.height], dimensions);
+
+  const reused = buildMeasuredLabelTexture(cache, 'original', '#ffffff', opts);
+  assert.equal(reused, original);
+  assert.deepEqual([reused.image.width, reused.image.height], dimensions);
+  releaseLabelTexture(cache, reused);
+
+  const replacement = buildMeasuredLabelTexture(cache, 'replacement', '#ffffff', opts);
+  assert.equal(original.image.width * original.image.height, 0, 'eviction frees native pixel storage');
+  assert.ok(replacement.image.width * replacement.image.height > 0, 'new label remains drawable');
+  releaseLabelTexture(cache, original);
+  assert.ok(replacement.image.width * replacement.image.height > 0, 'late release cannot clear another label');
+});
+
+test('owner teardown releases all canvas pixels and the cache can be rebuilt', () => {
+  const cache = createLabelTextureCache();
+  const opts = OPTS(4);
+  const active = buildMeasuredLabelTexture(cache, 'active', '#ffffff', opts);
+  const inactive = buildMeasuredLabelTexture(cache, 'inactive', '#ffffff', opts);
+  releaseLabelTexture(cache, inactive);
+
+  disposeLabelTextureCache(cache);
+  assert.equal(active.image.width * active.image.height, 0);
+  assert.equal(inactive.image.width * inactive.image.height, 0);
+  assert.equal(cache.byKey.size, 0);
+  assert.equal(cache.refs.size, 0);
+  assert.equal(cache.free.size, 0);
+  disposeLabelTextureCache(cache);
+  releaseLabelTexture(cache, active);
+
+  const rebuilt = buildMeasuredLabelTexture(cache, 'active', '#ffffff', opts);
+  assert.notEqual(rebuilt, active);
+  assert.ok(rebuilt.image.width * rebuilt.image.height > 0, 'rebuilt label has fresh pixels');
+  releaseLabelTexture(cache, active);
+  assert.equal(cache.refs.get(cache.keyOf.get(rebuilt)!), 1);
+});
+
 test('AgentOverlay.destroy disposes agent label textures + materials', () => {
   disposedTextures.clear();
   disposedMaterials.clear();
@@ -175,4 +271,5 @@ test('AgentOverlay.destroy disposes agent label textures + materials', () => {
 
   assert.ok(disposedTextures.has(labelTex), 'destroy disposes the agent label texture');
   assert.ok(disposedMaterials.has(labelMat), 'destroy disposes the paired material');
+  assert.equal(labelTex.image.width * labelTex.image.height, 0, 'destroy frees native canvas pixels');
 });
