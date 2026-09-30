@@ -38,11 +38,15 @@ snaps to rest once force + speed stay under threshold for `REST_FRAMES`.
   variants that let the hot loop skip `Math.hypot`), `REST_FRAMES`, and the
   zero-distance jitter epsilons.
 - `integration.ts` — per-label velocity/rest integration, connector
-  re-anchoring, and the `stateMap` WeakMap (velocity keyed on the sprite, so a
-  dropped registry entry GCs its state automatically). `integrateLabelState`
-  uses squared magnitudes to avoid two `hypot`s per label per frame.
+  re-anchoring, and the sprite-keyed `stateMap` WeakMap. The WeakMap itself does
+  not retain sprite keys; collection still depends on releasing other strong
+  references, including scene ownership and the last-frame scratch `entries`.
+  Dropping a registry entry alone does not guarantee collection.
+  `integrateLabelState` uses squared magnitudes to avoid two `hypot`s per label
+  per frame.
 - `repel.ts` — the per-frame `repelLabels` entry point (the tick above), tying
-  scratch buffers + grid + integration together.
+  scratch buffers + grid + integration together. If the registry is empty
+  after stale-entry cleanup, calls `resetRepulsionScratch()` and returns `true`.
 - `spatialGrid.ts` — uniform grid (cell = `minDist`) + pairwise phase: each
   label only checks its 3×3 neighbourhood (O(N·k), not O(N²)). Cells are keyed
   by a packed **integer** `(cx + BIAS) * STRIDE + (cz + BIAS)` so the hot loop
@@ -55,8 +59,27 @@ snaps to rest once force + speed stay under threshold for `REST_FRAMES`.
   keyed `cellGrid` Map + its recycled `bucketPool`. `ensureCapacity(n)` grows
   them all in lockstep; the typed arrays are live `let` exports, so consumers
   must read them fresh after `ensureCapacity` rather than caching the reference.
+  `resetRepulsionScratch()` clears `entries` immediately, dropping last-frame
+  label/line references while retaining typed-array capacity and grid/bucket
+  reuse. Keep these buffers reusable rather than rebuilding arrays each frame.
+
+The stop callback in `../labelRepulsionFrames.ts` also calls
+`resetRepulsionScratch()`: once an overlay stops, there may never be another
+frame to overwrite/trim `entries`. Releasing scratch references does not dispose
+resources. Per-label connector geometry disposal and shared/refcounted
+texture/material ownership belong to overlay teardown; follow
+`clearAllLabelRegistries` and the [parent teardown invariant](../CLAUDE.md#load-bearing-invariants-do-not-violate).
 
 ## Tests
 
-`src/__tests__/labelRepulsion.test.ts` asserts on force/integration results
-(not key form), so the integer-key and scratch-buffer changes stay green.
+- `frontend/src/__tests__/repulsionScratchReset.test.ts` — a live tick fills
+  `entries`; an empty registry tick returns `true` and releases all scratch
+  entry references (no forced-GC or GPU-disposal assertion).
+- `frontend/src/__tests__/labelRepulsion.test.ts` — deterministic zero-distance
+  jitter/pairwise forces, rest integration, and connector endpoint epsilon
+  updates; asserts behavior rather than grid-key form.
+
+## Commands
+
+From `frontend/`: `npm run build` (build), `npm test` (tests), `npx tsc -b`
+(type-check).
