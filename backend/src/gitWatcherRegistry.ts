@@ -107,8 +107,15 @@ export function createProjectWatcherRegistry<S extends ProjectWatcherSlot<V>, V>
   ): Promise<() => void> {
     const root = canonicalProjectPath(projectRoot);
     const slot = await ensure(root);
+    const alreadyRegistered = slot.subscribers.has(cb);
     slot.subscribers.add(cb);
-    cb(slot.current);
+    try {
+      cb(slot.current);
+    } catch (err) {
+      // Roll back only this call's acquisition, keeping any earlier registration.
+      if (!alreadyRegistered) slot.subscribers.delete(cb);
+      throw err;
+    }
     return () => {
       slot.subscribers.delete(cb);
     };
