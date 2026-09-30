@@ -2,6 +2,8 @@ import type { WebSocket } from 'ws';
 import {
   MAX_INITIAL_SNAPSHOT_LOADS,
   PROJECT_WS_HIGH_WATER_BYTES,
+  PROJECT_WS_MAX_PENDING_EVENTS,
+  PROJECT_WS_MAX_PENDING_BYTES,
   type ProjectWsOptions,
   type Unsubscribe,
 } from './projectEndpointContracts.js';
@@ -28,28 +30,60 @@ export function handleProjectConnection<TEvent>(
 
   let unsub: Unsubscribe | null = null;
   let closed = false;
-  ws.on('close', () => {
-    closed = true;
-    if (unsub) {
-      unsub();
-      unsub = null;
-    }
-  });
+  let loading = options.initial !== undefined;
+  let dirty = false;
+  let lastSnapshotEvent: { event: TEvent; bytes: number } | null = null;
+  const pending: TEvent[] = [];
+  let pendingBytes = 0;
 
-  const forward = (event: TEvent): void => {
-    if (ws.readyState !== ws.OPEN) return;
-    if (ws.bufferedAmount > PROJECT_WS_HIGH_WATER_BYTES) {
-      // terminate() moves readyState off OPEN at once, so this logs once
-      // per connection; 'close' then tears the subscription down.
-      console.warn(
-        `[ws] dropping slow client for ${project}: ${ws.bufferedAmount} bytes unsent ` +
-          `(> ${PROJECT_WS_HIGH_WATER_BYTES}); it will reconnect for a fresh snapshot`,
-      );
+  const cleanup = (): void => {
+    if (closed) return;
+    closed = true;
+    loading = false;
+    dirty = false;
+    pending.length = 0;
+    pendingBytes = 0;
+    lastSnapshotEvent = null;
+    // Release references and detach ownership before invoking user cleanup,
+    // which may itself trigger close or a final subscription callback.
+    const unsubscribe = unsub;
+    unsub = null;
+    unsubscribe?.();
+  };
+  ws.on('close', cleanup);
+
+  const closeConnection = (): void => {
+    if (closed) return;
+    try {
+      cleanup();
+    } finally {
+      ws.close();
+    }
+  };
+
+  const terminateSlowClient = (reason: string): void => {
+    if (closed) return;
+    console.warn(
+      `[ws] dropping slow client for ${project}: ${reason}; ` +
+        'it will reconnect for a fresh snapshot',
+    );
+    try {
+      cleanup();
+    } finally {
       try {
         ws.terminate();
       } catch {
         /* ignore */
       }
+    }
+  };
+
+  const forward = (event: TEvent): void => {
+    if (closed || ws.readyState !== ws.OPEN) return;
+    if (ws.bufferedAmount > PROJECT_WS_HIGH_WATER_BYTES) {
+      terminateSlowClient(
+        `${ws.bufferedAmount} bytes unsent (> ${PROJECT_WS_HIGH_WATER_BYTES})`,
+      );
       return;
     }
     ws.send(serialize(event));
@@ -60,19 +94,34 @@ export function handleProjectConnection<TEvent>(
   // snapshots mark the load `dirty` (→ re-load), deltas queue in `pending`.
   // Nothing is sent before the snapshot, and a snapshot event is never sent
   // after a newer loaded snapshot.
-  let loading = options.initial !== undefined;
-  let dirty = false;
-  let lastSnapshotEvent: { event: TEvent } | null = null;
-  const pending: TEvent[] = [];
-
   const onEvent = (event: TEvent): void => {
+    if (closed || ws.readyState !== ws.OPEN) return;
     if (options.projectFromEvent && options.projectFromEvent(event) !== project) {
       return;
     }
     if (loading) {
-      if (options.isSnapshotEvent?.(event)) {
+      const snapshot = options.isSnapshotEvent?.(event) ?? false;
+      const nextCount = pending.length + 1 + (!snapshot && lastSnapshotEvent ? 1 : 0);
+      if (nextCount > PROJECT_WS_MAX_PENDING_EVENTS) {
+        terminateSlowClient(
+          `${nextCount} handshake events (> ${PROJECT_WS_MAX_PENDING_EVENTS})`,
+        );
+        return;
+      }
+      // Reuse the endpoint's per-WSS serializer/cache, including payload
+      // mapping. Retain events, not a second connection-local string cache.
+      const bytes = Buffer.byteLength(serialize(event), 'utf8');
+      const nextBytes = pendingBytes - (snapshot ? lastSnapshotEvent?.bytes ?? 0 : 0) + bytes;
+      if (nextBytes > PROJECT_WS_MAX_PENDING_BYTES) {
+        terminateSlowClient(
+          `${nextBytes} handshake bytes (> ${PROJECT_WS_MAX_PENDING_BYTES})`,
+        );
+        return;
+      }
+      pendingBytes = nextBytes;
+      if (snapshot) {
         dirty = true;
-        lastSnapshotEvent = { event };
+        lastSnapshotEvent = { event, bytes };
       } else {
         pending.push(event);
       }
@@ -82,10 +131,15 @@ export function handleProjectConnection<TEvent>(
   };
 
   const drainPendingEvents = (): void => {
-    for (const event of pending.splice(0)) forward(event);
+    // Do not copy the queue: cleanup must also release it if a send terminates
+    // or closes the socket partway through this synchronous drain.
+    for (let index = 0; index < pending.length; index++) forward(pending[index]!);
+    pending.length = 0;
+    pendingBytes = 0;
   };
 
   const settleInitialLoad = (payload: unknown, loaded: boolean): void => {
+    if (closed || ws.readyState !== ws.OPEN) return;
     loading = false;
     if (loaded) {
       if (payload !== undefined) sendJson(ws, payload);
@@ -95,6 +149,7 @@ export function handleProjectConnection<TEvent>(
       forward(lastSnapshotEvent.event);
     }
     lastSnapshotEvent = null;
+    pendingBytes = 0;
     drainPendingEvents();
   };
 
@@ -103,15 +158,15 @@ export function handleProjectConnection<TEvent>(
     try {
       nextUnsub = await options.subscribe(onEvent, project);
     } catch {
-      ws.close();
+      closeConnection();
       return;
     }
     if (closed || ws.readyState !== ws.OPEN) {
+      cleanup();
       nextUnsub();
       return;
     }
-    // From here the 'close' handler owns teardown, so a socket that closes
-    // mid-load unsubscribes (no leaked listener).
+    // From here cleanup owns teardown, including close/overflow mid-load.
     unsub = nextUnsub;
     if (!options.initial) return;
 
@@ -121,19 +176,21 @@ export function handleProjectConnection<TEvent>(
     let loaded = false;
     for (let attempt = 0; attempt < MAX_INITIAL_SNAPSHOT_LOADS; attempt++) {
       dirty = false;
+      if (lastSnapshotEvent) pendingBytes -= lastSnapshotEvent.bytes;
       lastSnapshotEvent = null;
       try {
         payload = await options.initial(project);
         loaded = true;
       } catch {
+        if (closed || ws.readyState !== ws.OPEN) return;
         if (options.initialError !== 'ignore') {
-          ws.close();
+          closeConnection();
           return;
         }
         // Keep the last good load (if any) rather than nothing.
         break;
       }
-      if (closed) return;
+      if (closed || ws.readyState !== ws.OPEN) return;
       if (!dirty) break;
     }
 
@@ -141,6 +198,6 @@ export function handleProjectConnection<TEvent>(
   };
 
   attachSubscription().catch(() => {
-    ws.close();
+    closeConnection();
   });
 }

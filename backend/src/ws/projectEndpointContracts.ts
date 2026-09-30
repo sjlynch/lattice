@@ -40,3 +40,11 @@ export const MAX_INITIAL_SNAPSHOT_LOADS = 3;
 // instead of queuing more. The frontend reconnects and gets a fresh snapshot,
 // so nothing is lost. Deliberately high: a healthy client never gets near it.
 export const PROJECT_WS_HIGH_WATER_BYTES = 16 * 1024 * 1024;
+
+// The initial load may stall while bufferedAmount is still zero. Bound the
+// retained handshake events (FIFO transients plus the latest fallback snapshot)
+// by both count and serialized UTF-8 bytes; overflow reconnects for a fresh
+// snapshot instead of silently losing transients. Snapshot replacements reuse
+// their budget rather than counting every invalidation as a retained event.
+export const PROJECT_WS_MAX_PENDING_EVENTS = 4096;
+export const PROJECT_WS_MAX_PENDING_BYTES = 16 * 1024 * 1024;

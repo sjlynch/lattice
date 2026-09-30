@@ -12,6 +12,8 @@ export { sendJson } from './projectConnection.js';
 export {
   MAX_INITIAL_SNAPSHOT_LOADS,
   PROJECT_WS_HIGH_WATER_BYTES,
+  PROJECT_WS_MAX_PENDING_EVENTS,
+  PROJECT_WS_MAX_PENDING_BYTES,
   type MaybePromise,
   type ProjectEventListener,
   type ProjectRunEvent,
