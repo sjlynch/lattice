@@ -3,112 +3,28 @@
 
 import { asJson, deleteJson, postJson } from './http';
 import type { OpengrepSeverity } from './types';
+import type {
+  OpengrepGraphResult,
+  OpengrepInstallJob,
+  OpengrepRulePackStatus,
+  OpengrepScanEnvelope,
+  OpengrepScanRecord,
+  OpengrepStatus,
+} from './types/opengrep';
 
-export type OpengrepInstallJob = {
-  status: 'running' | 'done' | 'failed';
-  phase: 'downloading' | 'verifying' | 'checking';
-  version: string;
-  asset: string;
-  note?: string;
-  receivedBytes: number;
-  totalBytes: number;
-  startedAt: number;
-  finishedAt?: number;
-  error?: string;
-};
+export type {
+  OpengrepInstallJob,
+  OpengrepRulePackJob,
+  OpengrepRulePackStatus,
+  OpengrepScanRecord,
+  OpengrepStatus,
+  OpengrepScanEnvelope,
+  OpengrepGraphFile,
+  OpengrepGraphResult,
+} from './types/opengrep';
 
-export type OpengrepRulePackJob = {
-  status: 'running' | 'done' | 'failed';
-  packId: string;
-  startedAt: number;
-  finishedAt?: number;
-  error?: string;
-};
-
-export type OpengrepRulePackStatus = {
-  id: string;
-  label: string;
-  repo: string;
-  homepage: string;
-  commit: string;
-  licence: string;
-  note: string;
-  defaultEnabled: boolean;
-  dir: string;
-  installed: {
-    commit: string;
-    ruleFiles: number;
-    ruleCount: number;
-    licence: string;
-    installedAt: number;
-  } | null;
-  outdated: boolean;
-  job: OpengrepRulePackJob | null;
-};
-
-export type OpengrepScanRecord = {
-  id: string;
-  project: string;
-  startedAt: number;
-  finishedAt: number;
-  durationMs: number;
-  engine: { version: string; source: 'path' | 'managed' };
-  packIds: string[];
-  rulePaths: string[];
-  targets: string[];
-  exitCode: number | null;
-  findings: number;
-  bySeverity: Record<OpengrepSeverity, number>;
-  scannedFiles: number;
-  errors: number;
-  partiallyParsed: number;
-  jsonFile: string;
-};
-
-export type OpengrepStatus = {
-  available: boolean;
-  engine: { command: string; source: 'path' | 'managed'; version: string } | null;
-  managedVersion: string;
-  managedInstalled: boolean;
-  platformAsset: { asset: string; note?: string } | null;
-  installJob: OpengrepInstallJob | null;
-  packs: OpengrepRulePackStatus[];
-  project?: { path: string; scanning: boolean; lastScan: OpengrepScanRecord | null };
-};
-
-export type OpengrepScanEnvelope = {
-  canonicalProject: string;
-  scan: OpengrepScanRecord;
-  digest: {
-    shown: number;
-    total: number;
-    bySeverity: Record<OpengrepSeverity, number>;
-    rules: number;
-    dropped: { belowFloor: number; ignoredRules: number; ignoredFingerprints: number; duplicates: number };
-    partiallyParsed: number;
-    errors: number;
-    bytes: number;
-  };
-  filter: { severityFloor: OpengrepSeverity; ignoreRuleIds: string[]; ignoreFingerprints: string[] };
-  markdown?: string;
-};
-
-export type OpengrepGraphFile = {
-  path: string;
-  severity: OpengrepSeverity | null;
-  findings: number;
-  incomplete: boolean;
-};
-
-export type OpengrepGraphResult = {
-  canonicalProject: string;
-  scan: OpengrepScanRecord;
-  files: OpengrepGraphFile[];
-  shown: number;
-  errors: number;
-  partiallyParsed: number;
-  skippedRules: number;
-};
+const OPENGREP_GRAPH_SCAN_TIMEOUT_MS = 12 * 60_000;
+const OPENGREP_GRAPH_SCAN_POLL_INTERVAL_MS = 1500;
 
 // Called only by the Security chip. A long scan hands back its id, then GETs
 // poll that exact scan; neither polling nor a failed request re-POSTs a scan.
@@ -126,7 +42,7 @@ export async function runOpengrepGraphScan(
   );
   const id = 'scanId' in started ? started.scanId : started.scan.id;
   const params = new URLSearchParams({ project, format: 'graph' });
-  const deadline = Date.now() + 12 * 60_000;
+  const deadline = Date.now() + OPENGREP_GRAPH_SCAN_TIMEOUT_MS;
   while (true) {
     signal.throwIfAborted();
     const response = await fetch(`/api/opengrep/scans/${encodeURIComponent(id)}?${params}`, { signal });
@@ -141,7 +57,7 @@ export async function runOpengrepGraphScan(
       const timer = setTimeout(() => {
         signal.removeEventListener('abort', onAbort);
         resolve();
-      }, 1500);
+      }, OPENGREP_GRAPH_SCAN_POLL_INTERVAL_MS);
       signal.addEventListener('abort', onAbort, { once: true });
     });
   }
