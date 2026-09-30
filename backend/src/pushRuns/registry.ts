@@ -10,6 +10,8 @@ import {
   readString,
 } from '../homeScratch/persistence.js';
 import { pushPaths } from './paths.js';
+import { normalizeAgentHarness } from '../harnesses.js';
+import { normalizePiModel } from '../agentCommandBuilder.js';
 import type { PushRun } from './types.js';
 
 export type PushRunEvent = OneOffRunRegistryEvent<PushRun>;
@@ -31,7 +33,10 @@ export function deserializePushRun(raw: unknown, owningProject: string): PushRun
     cwd,
     status: 'running',
     createdAt: readNumber(r.createdAt) ?? 0,
+    harness: normalizeAgentHarness(r.harness),
   };
+  if (run.harness === 'pi') run.piModel = normalizePiModel(r.piModel);
+  if (run.harness === 'codex' && typeof r.codexYolo === 'boolean') run.codexYolo = r.codexYolo;
   const serverId = readString(r.serverId);
   if (serverId) run.serverId = serverId;
   const workflowRunId = readString(r.workflowRunId);

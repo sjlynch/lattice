@@ -334,7 +334,7 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   when their nested JavaScript tool calls bypass CLI hooks. Non-worktree
   sessions are colored by harness like
   terminal ones where the harness is known — workflow steps (the step's
-  effective harness) — and fixed orange otherwise (push / QA / post-merge;
+  effective harness), push — and fixed orange otherwise (QA / post-merge;
   `backend/src/agentSessions.ts`).
 - **Any agent session in an opened project** (even one the user started) gets a
   node: project open merges activity hooks into the project's

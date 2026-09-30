@@ -26,7 +26,7 @@ export type AgentSession = {
   startedAt: number;
   // The harness running the session, so the graph can color it (Claude
   // orange, Codex white, Pi blue). Set for project sessions (an agent in a
-  // terminal the user opened) and workflow steps; push / QA / post-merge hook
+  // terminal the user opened), workflow steps and push; QA / post-merge hook
   // sessions leave it unset and keep the fixed orange.
   harness?: AgentHarness;
 };

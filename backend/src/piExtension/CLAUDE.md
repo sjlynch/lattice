@@ -7,7 +7,7 @@ completion even if the model forgets to curl. `../piExtension.ts` is the stable
 public facade; external consumers import from `'../piExtension.js'`. Internal
 modules import their implementation dependencies directly, never the facade.
 
-One renderer feeds all four call-sites — task `/complete`,
+One renderer feeds all five call-sites — task `/complete`, push `/done`,
 workflow-step-complete, post-merge-hook-complete, and
 workflow-customization-complete (the `PiExtensionSite` union) — so all backstops
 share one hardening (retry loop + per-attempt timeout + sentinel audit log).

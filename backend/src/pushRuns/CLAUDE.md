@@ -1,10 +1,12 @@
 # backend/src/pushRuns
 
-One-off Claude sessions for the QA-lane **Push** button (commit pending changes,
+One-off agent sessions for the QA-lane **Push** button (commit pending changes,
 then push) and workflow **Push** (push existing commits only; leave uncommitted
-user work untouched). Both spawn a Claude in throwaway scratch that `cd`s into
+user work untouched). Both spawn an agent in throwaway scratch that `cd`s into
 the project, follows its selected `PUSH_INSTRUCTIONS.md` brief, and calls back
-on Stop. `../pushRuns.ts` is the public shim; served by `routes/pushRuns.ts`
+on completion. Workflow Push uses `effectiveStepHarness` / `effectiveStepPiModel`
+(run override, then step selection); the QA-lane button defaults to Claude.
+`../pushRuns.ts` is the public shim; served by `routes/pushRuns.ts`
 (`/api/push-runs`). Keep the two briefs distinct despite the shared lifecycle.
 
 ## Shared contract (`../homeScratch/`)
@@ -48,7 +50,9 @@ the repo's `.git`-deletion defence layer (see the root `CLAUDE.md`).
   `interactive` queue band, presence-node registration, and cleanup wiring);
   `setupPushSession` is the materialize-only `setupHomeScratchSession`. Only the
   push-specific brief, hook install, and registry record (`recordPushRun`) stay
-  here — passed to the factory's `start` per call. `qaRuns/session.ts` mirrors
+  here — passed to the factory's `start` per call. The spec is built per spawn
+  with the selected harness, normalized Pi model, and project Codex yolo toggle.
+  `qaRuns/session.ts` mirrors
   the lifecycle (its `spec` adds `isQaRun: true`).
   `PushBrief = 'qa-lane' | 'workflow'`: `renderPush` defaults to `qa-lane` and
   resolves the editable `push` template; `workflow` selects `workflow-push`.
@@ -58,8 +62,11 @@ the repo's `.git`-deletion defence layer (see the root `CLAUDE.md`).
   explicitly passes `brief: 'workflow'` to push existing commits without
   staging or committing user work. Keep that explicit: the separate `workflow`
   ownership metadata does not select the brief.
-- `stopHook.ts` — installs the Claude Stop hook (→ `/api/push-runs/:id/done`) +
-  activity hook; defines the stable `pushAgentId`.
+- `stopHook.ts` — installs Claude and Codex Stop hooks and Pi shutdown/activity
+  extensions (→ `/api/push-runs/:id/done`); defines the stable `pushAgentId`.
+  Pi's quit gate is enabled because `/done` kills the session's PTY; `/fork`
+  and `/reload` must preserve it. Pi/Codex briefs also ask for an explicit POST
+  as the last action so Pi does not sit idle after its turn.
 - `instructions.ts` — `renderPushInstructions` interpolates the template
   selected by `session.ts` into `PUSH_INSTRUCTIONS.md`; both `push` and
   `workflow-push` use this renderer. Its standalone default is `push`.
@@ -73,7 +80,9 @@ the repo's `.git`-deletion defence layer (see the root `CLAUDE.md`).
   outbox. A run records its `serverId` and, when a workflow Push step spawned
   it, `workflowRunId` + `workflowStepIndex`: `findRunningPushRunForWorkflowStep`
   is how a Push step re-dispatched after a restart attaches to that session
-  instead of pushing a second time (a `lost` run is never attachable). A push
+  instead of pushing a second time (a `lost` run is never attachable). Harness,
+  Pi model and Codex yolo selection are persisted for attachment and presence.
+  Legacy records without a harness retain their Claude default. A push
   whose genuine `/done` lands after it was settled `lost` is corrected to
   completed (`markPushRunCompleted`), and a re-dispatched Push step whose push
   already FINISHED (its `/done` replayed before the re-dispatch) completes

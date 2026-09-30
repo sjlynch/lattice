@@ -25,6 +25,7 @@ import { proxyKillSession } from '../../terminalProxy.js';
 import { terminalRegistry } from '../../terminalRegistry/index.js';
 import type { Workflow } from '../../workflows.js';
 import { notify, subscribe, type WorkflowRun } from '../state.js';
+import { effectiveStepHarness, effectiveStepPiModel } from '../stepMarkdown.js';
 import { emitControlProgress, waitForLaneEmpty } from './shared.js';
 
 // Upper bound on how long the push step will wait for Claude's Stop hook. The
@@ -311,6 +312,8 @@ export async function runPushStep(
     // re-dispatch after a restart can find it — see `adopted` above.
     const session = adopted ?? await deps.startPushSession(wf.projectPath, backendOrigin, {
       brief: 'workflow',
+      harness: effectiveStepHarness(wf, run, stepIndex),
+      piModel: effectiveStepPiModel(wf, run, stepIndex),
       workflow: { runId: run.id, stepIndex },
       signal: watch.signal,
     });

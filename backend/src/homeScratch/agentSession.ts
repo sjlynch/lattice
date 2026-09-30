@@ -4,12 +4,13 @@ import {
   type StartedHomeScratchSession,
 } from './session.js';
 import { registerAgentSession } from '../agentSessions.js';
+import type { AgentHarness } from '../harnesses.js';
 import type { HomeScratchPaths } from './paths.js';
 
 // Push and QA one-off agent sessions are exact mirrors: both render a
-// feature-specific brief, install a Stop/activity hook, build a fixed claude
+// feature-specific brief, install completion/activity hooks, build an agent
 // launch command, pre-spawn the pty through the spawn queue on the shared
-// `interactive` band, then (on success) record the run and register the orange
+// `interactive` band, then (on success) record the run and register the
 // presence node. `startHomeScratchAgentSession` already owns the spawn lifecycle;
 // this factory captures the remaining mirror boilerplate — the command wrapper,
 // spawn-queue metadata, presence registration, and cleanup wiring — so each
@@ -25,8 +26,10 @@ import type { HomeScratchPaths } from './paths.js';
 export type HomeScratchAgentSessionSpec = {
   paths: HomeScratchPaths;
   instructionsFileName: string;
-  // Fixed launch command for the pre-spawned pty (cwd = scratch).
+  // Launch command for this spec's pre-spawned pty (cwd = scratch).
   command: string;
+  // Harness for presence coloring when the run supports a selection.
+  harness?: AgentHarness;
   // Spawn-queue band tag (e.g. `push-run` / `qa-run`).
   queueKind: string;
   // Spawn-queue dedupe key prefix; the session id is appended (`<prefix>:<id>`).
@@ -91,11 +94,12 @@ export function createHomeScratchAgentSession(
       registryLabel: args.registryLabel ?? spec.presenceLabel,
       onSpawned: ({ id, cwd, serverId }) => {
         args.recordRun({ id, cwd, serverId });
-        // Presence: show an orange Claude node for this non-worktree session.
+        // Presence for this non-worktree session, colored by its harness.
         registerAgentSession({
           agentId: spec.agentId(id),
           projectPath: args.projectPath,
           label: spec.presenceLabel,
+          ...(spec.harness ? { harness: spec.harness } : {}),
         });
       },
       cleanup: spec.cleanup,

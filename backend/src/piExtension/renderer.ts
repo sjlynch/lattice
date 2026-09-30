@@ -6,6 +6,7 @@ import { callbackOutboxEntryPath } from '../callbackOutbox/paths.js';
 
 export type PiExtensionSite =
   | 'task-complete'
+  | 'push-run-done'
   | 'workflow-step-complete'
   | 'post-merge-hook-complete'
   | 'workflow-customization-complete';
@@ -16,8 +17,8 @@ export type PiCompletionExtensionOptions = {
   site: PiExtensionSite;
   /**
    * When `true`, only fire on `event.reason === 'quit'` (or unset). Use for
-   * sites whose callback has a destructive side effect — currently only the
-   * task `/complete` endpoint, which schedules a kill-by-cwd 1s later and
+   * sites whose callback has a destructive side effect — task `/complete`
+   * and push `/done`, which schedule a kill-by-cwd and
    * would yank a `/fork`'d pty out from under an interactive user.
    * Other sites should set this to `false` so abnormal-exit reasons still
    * trigger the callback.

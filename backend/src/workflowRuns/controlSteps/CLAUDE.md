@@ -214,6 +214,11 @@ ids, the `cancelled` / `timedOut` flags, the `done` promise, both subscribers,
 the timeout, admission AbortController and the single `killAndAbandon()`;
 disposed in the `finally`).
 
+- **Harness/model selection**: forwards `effectiveStepHarness` and
+  `effectiveStepPiModel` to the push session, just as agent and Run tests steps
+  do. The run override wins over the step's own selection. Completion hooks,
+  command construction, presence and recovery follow that harness.
+
 - **Push-only brief (R2)**: the step calls
   `startPushSession(project, origin, { brief: 'workflow' })`, which renders the
   `workflow-push` instruction template instead of the QA-lane button's `push`

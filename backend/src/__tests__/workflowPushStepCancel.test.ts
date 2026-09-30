@@ -42,7 +42,7 @@ function makeRun(): WorkflowRun {
 }
 
 function makeWorkflow(): Workflow {
-  return { projectPath: PROJECT } as Workflow;
+  return { projectPath: PROJECT, steps: [{ kind: 'push' }] } as Workflow;
 }
 
 async function waitFor(pred: () => boolean, tries = 100): Promise<void> {

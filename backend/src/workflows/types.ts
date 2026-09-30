@@ -12,8 +12,9 @@ export type WorkflowRunHarnessOverride = WorkflowStepHarness | null;
 //   - 'push' waits for Ready-to-Merge to drain, then spawns a push session
 //     that pushes the commits already on the branch (its own push-only brief,
 //     not the QA-lane button's commit-everything one).
-// These step kinds don't use `prompt` / `harness`; the fields are retained on
-// disk for schema uniformity but ignored at execution time.
+// These step kinds don't use `prompt`. Push uses its harness/model selection
+// (or the run override); Start uses the run override or project task defaults,
+// and Merge drives the existing merge pipeline.
 //
 // 'test' ("Run tests") is an AGENT step with a fixed brief: it spawns the
 // step's harness exactly like 'agent' (same step dir, completion hooks and

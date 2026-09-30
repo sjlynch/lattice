@@ -1,19 +1,18 @@
 import { setupHomeScratchSession } from '../homeScratch/session.js';
 import { createHomeScratchAgentSession } from '../homeScratch/agentSession.js';
-import { buildAgentCommand } from '../agentCommandBuilder.js';
+import { buildAgentCommand, normalizePiModel } from '../agentCommandBuilder.js';
+import { normalizeAgentHarness, type AgentHarness } from '../harnesses.js';
+import { isCodexYoloEnabled } from '../userSettings.js';
 import { renderPushInstructions } from './instructions.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { pushPaths } from './paths.js';
 import { recordPushRun } from './registry.js';
-import { installPushStopHook, pushAgentId } from './stopHook.js';
+import { installPushStopHook, pushAgentId, pushDoneCallbackUrl } from './stopHook.js';
 import { cleanupPushSession } from './cleanup.js';
 import type { PushRun, PushSession } from './types.js';
 
 const PUSH_INSTRUCTIONS_FILE = 'PUSH_INSTRUCTIONS.md';
-const PUSH_COMMAND = buildAgentCommand({
-  harness: 'claude',
-  prompt: 'Please read PUSH_INSTRUCTIONS.md in this directory and follow it.',
-});
+const PUSH_PROMPT = 'Please read PUSH_INSTRUCTIONS.md in this directory and follow it.';
 
 // Which brief the session gets. `qa-lane` (the Task Board cloud icon) commits
 // any pending changes, then pushes. `workflow` (a workflow's Push step) only
@@ -22,18 +21,28 @@ const PUSH_COMMAND = buildAgentCommand({
 // user's own work in progress.
 export type PushBrief = 'qa-lane' | 'workflow';
 
-async function renderPush(projectPath: string, brief: PushBrief = 'qa-lane'): Promise<string> {
+async function renderPush(
+  projectPath: string,
+  id: string,
+  backendOrigin: string,
+  harness: AgentHarness,
+  brief: PushBrief = 'qa-lane',
+): Promise<string> {
   const template = await resolveInstructionTemplate(projectPath, brief === 'workflow' ? 'workflow-push' : 'push');
-  return renderPushInstructions(projectPath, template);
+  return renderPushInstructions(projectPath, template, {
+    harness,
+    callbackUrl: pushDoneCallbackUrl(id, backendOrigin),
+  });
 }
 
 // Materialize the per-session directory in home-scoped scratch: writes the
-// instructions brief and installs the Stop hook so Claude calls
-// /api/push-runs/:id/done on stop. Thin wrapper over the shared
+// instructions brief and installs the harness completion hooks that call
+// /api/push-runs/:id/done. Thin wrapper over the shared
 // `setupHomeScratchSession` builder.
 export async function setupPushSession(
   projectPath: string,
   backendOrigin: string,
+  opts: { harness?: AgentHarness; brief?: PushBrief } = {},
 ): Promise<PushSession> {
   return setupHomeScratchSession({
     paths: pushPaths,
@@ -41,7 +50,8 @@ export async function setupPushSession(
     instructionsFileName: PUSH_INSTRUCTIONS_FILE,
     installHooks: ({ cwd, id }) =>
       installPushStopHook(cwd, id, backendOrigin, projectPath),
-    renderInstructions: () => renderPush(projectPath),
+    renderInstructions: ({ id }) =>
+      renderPush(projectPath, id, backendOrigin, normalizeAgentHarness(opts.harness), opts.brief),
   });
 }
 
@@ -53,21 +63,7 @@ export type StartedPushSession = {
   terminalId?: string;
 };
 
-// The shared mirror skeleton (command, queue metadata, presence node, cleanup).
-// Only the push-specific brief, hook install, and registry record are passed in
-// per call by `startPushSession`.
-const startPushAgentSession = createHomeScratchAgentSession({
-  paths: pushPaths,
-  instructionsFileName: PUSH_INSTRUCTIONS_FILE,
-  command: PUSH_COMMAND,
-  queueKind: 'push-run',
-  dedupeKeyPrefix: 'push',
-  agentId: pushAgentId,
-  presenceLabel: 'push',
-  cleanup: cleanupPushSession,
-});
-
-// Full push-session spawn: materialize the session dir, pre-spawn the Claude
+// Full push-session spawn: materialize the session dir, pre-spawn the selected
 // pty, and record the run. Shared between the /api/push-runs HTTP route and
 // the workflow Push control step so both go through identical setup.
 //
@@ -77,6 +73,8 @@ export async function startPushSession(
   backendOrigin: string,
   opts: {
     brief?: PushBrief;
+    harness?: AgentHarness;
+    piModel?: string;
     // Withdraw a queued admission, or reclaim a terminal already being created.
     signal?: AbortSignal;
     // The workflow Push step that owns this session, recorded (and persisted)
@@ -84,12 +82,26 @@ export async function startPushSession(
     workflow?: { runId: string; stepIndex: number };
   } = {},
 ): Promise<StartedPushSession> {
+  const harness = normalizeAgentHarness(opts.harness);
+  const piModel = harness === 'pi' ? normalizePiModel(opts.piModel) : undefined;
+  const codexYolo = harness === 'codex' ? await isCodexYoloEnabled(projectPath) : undefined;
+  const startPushAgentSession = createHomeScratchAgentSession({
+    paths: pushPaths,
+    instructionsFileName: PUSH_INSTRUCTIONS_FILE,
+    command: buildAgentCommand({ harness, piModel, codexYolo, prompt: PUSH_PROMPT }),
+    harness,
+    queueKind: 'push-run',
+    dedupeKeyPrefix: 'push',
+    agentId: pushAgentId,
+    presenceLabel: 'push',
+    cleanup: cleanupPushSession,
+  });
   const started = await startPushAgentSession({
     projectPath,
     signal: opts.signal,
     installHooks: ({ cwd, id }) =>
       installPushStopHook(cwd, id, backendOrigin, projectPath),
-    renderInstructions: () => renderPush(projectPath, opts.brief),
+    renderInstructions: ({ id }) => renderPush(projectPath, id, backendOrigin, harness, opts.brief),
     recordRun: ({ id, cwd, serverId }) =>
       recordPushRun({
         id,
@@ -97,6 +109,9 @@ export async function startPushSession(
         cwd,
         status: 'running',
         createdAt: Date.now(),
+        harness,
+        ...(piModel ? { piModel } : {}),
+        ...(codexYolo !== undefined ? { codexYolo } : {}),
         serverId,
         ...(opts.workflow
           ? { workflowRunId: opts.workflow.runId, workflowStepIndex: opts.workflow.stepIndex }
@@ -119,7 +134,12 @@ export function attachedPushSession(run: PushRun): StartedPushSession {
   return {
     id: run.id,
     cwd: run.cwd,
-    command: PUSH_COMMAND,
+    command: buildAgentCommand({
+      harness: normalizeAgentHarness(run.harness),
+      piModel: run.piModel,
+      codexYolo: run.codexYolo,
+      prompt: PUSH_PROMPT,
+    }),
     ...(run.serverId ? { serverId: run.serverId } : {}),
   };
 }

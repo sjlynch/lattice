@@ -1,9 +1,15 @@
+import type { AgentHarness } from '../harnesses.js';
+
 export type PushRun = {
   id: string;
   projectPath: string;
   cwd: string;
   status: 'running' | 'done';
   createdAt: number;
+  // Legacy records omitted these fields and ran Claude.
+  harness?: AgentHarness;
+  piModel?: string;
+  codexYolo?: boolean;
   doneAt?: number;
   // The pty running the session (terminal-server id). Persisted so boot
   // recovery can re-attach a session that survived a backend restart.

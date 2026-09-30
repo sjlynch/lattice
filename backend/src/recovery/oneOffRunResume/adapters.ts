@@ -44,7 +44,7 @@ export const pushAdapter: Adapter<PushRun> = {
   restore: (run, alive) => restorePushRun(alive ? run : { ...run, lost: true }),
   isRunning: (id) => getPushRun(id)?.status === 'running',
   onReadopted: (run) =>
-    registerAgentSession({ agentId: pushAgentId(run.id), projectPath: run.projectPath, label: 'push' }),
+    registerAgentSession({ agentId: pushAgentId(run.id), projectPath: run.projectPath, label: 'push', harness: run.harness }),
   settleLost: async (run) => {
     unregisterAgentSession(pushAgentId(run.id));
     markPushRunLost(run.id);
