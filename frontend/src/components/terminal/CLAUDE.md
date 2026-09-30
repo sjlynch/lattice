@@ -18,6 +18,10 @@ CLAUDE.md) — different directory, don't conflate.
   ~16-per-page cap; holding one per terminal made "Run All" blow past it.
   **`serverId` is likewise not a dependency** — only `active` gates the context;
   capturing an id must not churn the GL context.
+- `terminalWebgl.ts` — add-on ownership helpers used by the active-WebGL hook.
+  Publish the ref only after successful activation, and best-effort dispose
+  failed attempts: xterm registers an add-on before `activate` can throw.
+  The injected factory allows lifecycle regression tests without a GPU.
 - `useTerminalConnection.ts` — the `/ws/terminal` WebSocket wiring: React refs,
   effect lifecycle, WebSocket construction, xterm input/resize forwarding, and
   message dispatch. The reconnect state machine is delegated to
