@@ -3,6 +3,7 @@ import type { RefObject } from 'react';
 import type { FitAddon } from '@xterm/addon-fit';
 import { WebglAddon } from '@xterm/addon-webgl';
 import type { Terminal } from '@xterm/xterm';
+import { attachTerminalWebgl, disposeTerminalWebgl } from './terminalWebgl';
 
 type UseActiveTerminalWebglArgs = {
   active: boolean;
@@ -11,15 +12,6 @@ type UseActiveTerminalWebglArgs = {
   webglRef: RefObject<WebglAddon | null>;
   cwd: string;
 };
-
-function disposeWebgl(webglRef: RefObject<WebglAddon | null>) {
-  try {
-    webglRef.current?.dispose();
-  } catch {
-    /* ignore */
-  }
-  webglRef.current = null;
-}
 
 export function useActiveTerminalWebgl({
   active,
@@ -37,21 +29,7 @@ export function useActiveTerminalWebgl({
 
     if (active) {
       if (!webglRef.current) {
-        try {
-          const webgl = new WebglAddon();
-          webgl.onContextLoss(() => {
-            try {
-              webgl.dispose();
-            } catch {
-              /* ignore */
-            }
-            if (webglRef.current === webgl) webglRef.current = null;
-          });
-          term.loadAddon(webgl);
-          webglRef.current = webgl;
-        } catch {
-          // WebGL unavailable / context limit hit — DOM renderer stays.
-        }
+        attachTerminalWebgl<WebglAddon>(term, webglRef, () => new WebglAddon());
       }
       try {
         fitRef.current?.fit();
@@ -59,10 +37,10 @@ export function useActiveTerminalWebgl({
         /* ignore */
       }
       term.focus();
-      return () => disposeWebgl(webglRef);
+      return () => disposeTerminalWebgl(webglRef);
     }
 
-    if (webglRef.current) disposeWebgl(webglRef);
+    if (webglRef.current) disposeTerminalWebgl(webglRef);
     // serverId is intentionally NOT a dependency — capturing a session id must
     // not dispose+reattach the WebGL context (a needless GL-context churn that
     // fights Chrome's per-page cap). Only `active` gates the context.
