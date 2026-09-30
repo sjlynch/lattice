@@ -108,3 +108,32 @@ Selected suites and the contracts they own (not exhaustive):
   or settling the busy/error state of a later project/dialog session. Includes
   A → B → A, close/reopen, unmount, no-project global saves, a concurrent save
   in B, and normal current-session success/error behavior.
+
+### Memory ownership regressions
+
+These suites assert deterministic ownership/disposal contracts with controlled
+doubles and disposal instrumentation, without a real GPU or nondeterministic
+forced-GC timing. Passing them does not establish the cause of the cross-PC
+browser OOM report.
+
+- `sceneFrameDriver.test.ts` / `nodeMotionDriver.test.ts` — unsubscribe releases
+  cached frame/motion/drag callbacks immediately, including the last listener,
+  without another tick. Membership changes preserve the in-flight dispatch
+  snapshot and affect the next event.
+- `instancedLinks.test.ts` — disable removes the captured batch and disposes
+  owned geometry/material resources once; disabled hooks cannot recreate it.
+  Re-enable builds fresh position buffers from current graph objects, and buffer
+  growth disposes the old position attribute before replacement.
+- `forceGraphInitializationLifecycle.test.ts` — injected setup/teardown faults
+  pin acquired-resource rollback order, idempotent destruction, and ref/DOM
+  clearing. Cleanup continues after faults and preserves the original setup error.
+- `terminalWebgl.test.ts` — an injected fake add-on and terminal pin failure-path
+  add-on/listener cleanup, usable DOM fallback, and exactly-once disposal across
+  context loss and teardown.
+- `labelTextureCache.test.ts` — refcounts protect mounted/shared labels;
+  release-time eviction reclaims excess textures, paired materials and canvas
+  pixels without another cache miss. Owner teardown clears the cache and pixels.
+- `labelGeometryLeak.test.ts` — each entry's owned connector geometry is disposed
+  once before registry clear; shared line materials remain intact.
+- `repulsionScratchReset.test.ts` — an empty repulsion tick drops scratch
+  references to the previous labels, without waiting for another non-empty tick.
