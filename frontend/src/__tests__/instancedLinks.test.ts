@@ -114,7 +114,7 @@ test('disabling releases owned resources once and keeps the controller until fin
   assert.equal(getInstancedLinks(mock.graph), null, 'final dispose clears the stamp');
 });
 
-test('re-enabling recreates resources from current links and preserves buffer growth slack', () => {
+test('re-enabling uses current links and growth releases old buffers while reusing slack', () => {
   const mock = makeMockGraph(makeLinks(1));
   const ctrl = createInstancedLinks(mock.graph);
   ctrl.setEnabled(true);
@@ -138,6 +138,7 @@ test('re-enabling recreates resources from current links and preserves buffer gr
   assert.notEqual(batch.geometry, oldBatch.geometry);
   assert.notEqual(material, oldMaterial);
   assert.notEqual(attribute.array, oldAttribute.array, 'position buffer recreated');
+  assert.ok(attribute.array.length >= 6, 'buffer fits the current link');
   assert.deepEqual([...attribute.array].slice(0, 6), [10, 11, 12, 20, 21, 22]);
   assert.equal(batch.geometry.drawRange.count, 2);
   assert.equal(batch.visible, true);
@@ -148,6 +149,9 @@ test('re-enabling recreates resources from current links and preserves buffer gr
   assert.equal(material.transparent, oldMaterial.transparent);
   assert.equal(material.depthWrite, oldMaterial.depthWrite);
 
+  // geometry.dispose() must fire while the old attribute is still installed,
+  // so the renderer can free its GPU buffer before replacement. Growth also
+  // reserves slack so within-capacity rebuilds need no extra release.
   const disposedAttributes: unknown[] = [];
   batch.geometry.addEventListener('dispose', () => {
     disposedAttributes.push(batch.geometry.getAttribute('position'));
@@ -205,48 +209,6 @@ test('re-enabling collapses unhydrated endpoints and re-captures visibility afte
     1, 2, 3, 4, 5, 6,
     1, 2, 3, 4, 5, 6,
   ]);
-  ctrl.dispose();
-});
-
-// BUG 2 regression: growing the visible link set past the buffer must FREE the
-// old position attribute's GPU buffer (via geometry.dispose(), the only route to
-// the renderer's gl.deleteBuffer) before swapping in the larger one — otherwise
-// the prior buffer leaks on the GPU every growth. With CAPACITY_SLACK, a growth
-// reserves headroom so within-capacity rebuilds don't realloc/free at all.
-test('growing the link buffer frees the old GPU buffer (geometry.dispose) with slack', () => {
-  const mock = makeMockGraph(makeLinks(1));
-  const ctrl = createInstancedLinks(mock.graph);
-  ctrl.setEnabled(true); // first allocation — no prior attribute, no free
-
-  const geom = mock.batched()!.geometry;
-  let disposeCount = 0;
-  const realDispose = geom.dispose.bind(geom);
-  geom.dispose = () => {
-    disposeCount++;
-    realDispose();
-  };
-
-  const attr0 = geom.getAttribute('position');
-  const cap0 = attr0.array.length;
-  // Slack means the 1-link buffer already holds many links' worth of floats.
-  assert.ok(cap0 >= 1 * 2 * 3, 'buffer at least fits the visible links');
-
-  // Grow well past the slack capacity → must reallocate AND free the old buffer.
-  mock.setLinks(makeLinks(400));
-  ctrl.rebuild();
-  const attr1 = geom.getAttribute('position');
-  assert.equal(disposeCount, 1, 'old buffer freed exactly once on growth');
-  assert.notEqual(attr1, attr0, 'position attribute replaced on growth');
-  assert.ok(attr1.array.length >= 400 * 2 * 3, 'buffer grew to fit');
-
-  // A rebuild that still fits in the (slack-padded) buffer must NOT realloc/free.
-  mock.setLinks(makeLinks(420));
-  ctrl.rebuild();
-  assert.equal(disposeCount, 1, 'no extra free while within capacity (slack)');
-  assert.equal(geom.getAttribute('position'), attr1, 'same buffer reused');
-
-  // Restore so the controller's own dispose() doesn't double-count, then tear down.
-  geom.dispose = realDispose;
   ctrl.dispose();
 });
 
