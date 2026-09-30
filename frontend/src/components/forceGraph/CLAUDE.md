@@ -191,10 +191,20 @@ label physics in `labelPhysics/CLAUDE.md`.
   ledger, pause/resume duty-cycle engine (deferred-pause microtask +
   re-entrant-resume guard + ~30fps slow-frame throttle), `engine` reason (+
   `isEngineHot()`), `interact` reason.
-- `sceneFrameDriver.ts` — single `scene.onBeforeRender` fan-out; subscribe via
-  `onFrame(graph, cb)` (fires only while the loop runs).
-- `nodeMotionDriver.ts` + `motionSyncGate.ts` — fan-out over engine-tick/drag
-  callbacks + the "re-upload positions this frame?" gate for batched renders.
+- `sceneFrameDriver.ts` (`onFrame`) + `nodeMotionDriver.ts` (`onNodeMotion` /
+  `onNodeDragMove`) — single fan-outs over `scene.onBeforeRender` (only while
+  the loop runs) and engine-tick/drag callbacks. Cached iteration arrays are
+  rebuilt only on membership changes. Unsubscribe must remove membership and
+  replace the relevant cached array immediately, including the final listener:
+  a paused graph may never dispatch another frame. An in-flight dispatch keeps
+  its local snapshot unchanged; additions/removals affect subsequent dispatches,
+  never mutate the snapshot in place. Motion and drag have separate membership,
+  caches and dirty flags; drag listeners run before motion listeners. Leave
+  installed library callbacks callable with no listeners. Regression coverage:
+  [sceneFrameDriver.test.ts](../../__tests__/sceneFrameDriver.test.ts) and
+  [nodeMotionDriver.test.ts](../../__tests__/nodeMotionDriver.test.ts).
+- `motionSyncGate.ts` — the batched-render position-upload gate: node motion,
+  one trailing settle frame, or forced-dirty after a rebuild/re-enable.
 
 **Batched (instanced) renderers**
 - `instancedLinks.ts` / `instancedNodes.ts` (+ `instancedBatching.ts` shared
@@ -202,19 +212,25 @@ label physics in `labelPhysics/CLAUDE.md`.
   interleaved GPU buffers — named column-major matrix/vertex offsets, THREE-free) —
   collapse the library's per-link `Line`s / per-node
   `Group`s into one `LineSegments` / a few `InstancedMesh`es to cut orbit-time
-  draw calls. Default-on; re-upload positions only on node-motion frames;
+  draw calls. Default-on; position uploads follow `motionSyncGate`;
   re-capture object arrays on every `graphData()` swap (`dataGeneration`
   invariant). Driven by `hooks/useBatchedLinks` / `hooks/useInstancedNodes`.
-  `instancedLinks` also stamps its controller onto the graph instance (mirrors
-  `attachIdleController`) — `getInstancedLinks(graph)?.rebuild()` is how a
-  non-React caller forces the visible-link re-read; `changeRingSync` needs it
-  after toggling a ghost. A rebuild that runs before the library's debounced
-  digest has hydrated link endpoints (string ids — `linkVisibility` can't judge
-  those) is re-captured by `onFrame` once they hydrate, or links to hidden
-  ghosts / hidden-ext files stayed drawn. Both controllers also rebuild when a
-  metric view toggles (`metricOverlayActive`): that view hides metrics-ignored
-  files via `nodeVisibility`, so a batched-node rebuild made during it dropped
-  them — and they drew nothing after the view ended.
+  A pre-hydration link capture (string endpoints) must be re-captured by `onFrame`
+  once endpoints hydrate so `linkVisibility` can filter it. Both controllers
+  rebuild on metric-view toggles (`metricOverlayActive`) to re-read the
+  `nodeVisibility` / `linkVisibility` set, including metrics-ignored files.
+- `instancedLinks.ts::setEnabled(false)` restores the library's default link
+  accessor (`linkThreeObject(null)`), detaches the motion subscription, and calls
+  `releaseResources`: remove the `LineSegments` from the scene, dispose the
+  controller-owned geometry/material, clear `positions`, captured `links` and
+  `needsRecapture`. Disabled rebuild/frame hooks allocate nothing; re-enabling
+  rebuilds from current `graphData()`. Disable keeps the graph's controller stamp
+  for `getInstancedLinks(graph)?.rebuild()` (used by `changeRingSync` after ghost
+  toggles); `dispose()` detaches motion, uses the same resource-release path and
+  removes the stamp only if it still belongs to this controller. Shared
+  sprite/label materials retain their separate owners. Regression coverage:
+  [instancedLinks.test.ts](../../__tests__/instancedLinks.test.ts) pins disabling
+  after a populated capture and re-enabling after a graph swap.
 
 **Settings, physics, misc**
 - `graphSettings.ts` — `GraphSettings`/`DEFAULT_SETTINGS`/`loadSettings`; perf
