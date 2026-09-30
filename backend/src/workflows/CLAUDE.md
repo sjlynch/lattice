@@ -10,18 +10,29 @@ imports from `'../workflows.js'`; this directory holds the implementation.
 
 - `types.ts` — `Workflow` / `WorkflowStep` / `WorkflowVariable` /
   `WorkflowSubscriber` shapes and the `WorkflowStepKind` (`agent` | `start` |
-  `merge` | `push` | `test`) / harness enums. `test` is the **Run tests**
-  step: an agent step with a fixed brief (it ignores `prompt`, uses `harness` /
-  `piModel`) plus `timeoutMinutes` (default 60, normalized to an integer in
-  [5, 720], stripped from every other kind) — see `../workflowRuns/CLAUDE.md`
-  (`testStep/`). A kind missing from `STEP_KINDS` in `normalization.ts`
-  silently becomes `agent`, so a new kind must be added there too. The legacy per-step `mode`
+  `merge` | `push` | `test`) / harness enums. `agent` steps spawn their effective
+  harness with authored planning prompts. `test` (**Run tests**) spawns its
+  effective harness with the fixed Run tests brief (ignores `prompt`) and
+  `timeoutMinutes` (default 60, normalized to an integer in [5, 720], stripped
+  from every other kind) — see
+  [testStep/CLAUDE.md](../workflowRuns/testStep/CLAUDE.md).
+  `start`/`merge` control workers drive board orchestration without a
+  step-agent prompt. `push` is dispatched through the control engine but spawns
+  a push session: `workflowRuns/controlSteps/push.ts` passes
+  `effectiveStepHarness` / `effectiveStepPiModel` to `pushRuns/session.ts`, with
+  a run override winning over stored step selection. Push uses the
+  `workflow-push` brief, leaves user WIP untouched, and recovers an existing
+  session with its recorded harness/model — see
+  [controlSteps/CLAUDE.md](../workflowRuns/controlSteps/CLAUDE.md) and
+  [pushRuns/CLAUDE.md](../pushRuns/CLAUDE.md) (also owns the separate QA-lane
+  Push button default). The compact frontend `ControlStepRow` has no harness
+  picker; persisted selection and run overrides can still affect Push.
+  The prompt/harness fields are retained on disk for schema uniformity.
+  A kind missing from `STEP_KINDS` in `normalization.ts` silently becomes
+  `agent`, so a new kind must be added there too. The legacy per-step `mode`
   (`sequential` | `parallel`) is gone — nothing ever read it; it stays optional
   on the type only so pre-removal data type-checks, and `normalizeSteps` strips
-  it. The control-flow kinds
-  (`start`/`merge`/`push`) ignore `prompt`/`harness` at run time and are
-  executed directly against the task pipeline; only `agent` steps spawn a
-  harness. The fields are retained on disk for schema uniformity. `frozen`
+  it. `frozen`
   (the editor's snowflake toggle) is kind-agnostic: the step stays in the
   definition but the run engine skips it — see
   `../workflowRuns/frozenSteps.ts`. `tools` (`WorkflowStepTool[]`, v1 only
@@ -95,3 +106,6 @@ imports from `'../workflows.js'`; this directory holds the implementation.
 `routes/workflows/crud.ts` (definition CRUD). Tests:
 `__tests__/workflows.test.ts`, `__tests__/projectStateManager.test.ts` — both
 import via `'../workflows.js'`.
+
+Backend commands (cwd `backend/`): `npm run build`, `npm test`,
+`npx tsc --noEmit`; see the [command guide](../../CLAUDE.md).
