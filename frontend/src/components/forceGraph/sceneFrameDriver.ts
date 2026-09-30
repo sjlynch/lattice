@@ -26,6 +26,9 @@ type FrameDriver = {
   // per-frame path neither allocates (no `[...set]` every frame) nor risks a
   // mid-iteration mutation: a callback added/removed during dispatch flips
   // `dirty` and is reflected on the NEXT frame, never the in-flight one.
+  // Unsubscribe replaces the cache immediately to release removed callbacks.
+  // An active dispatch owns its local snapshot until it returns; never mutate
+  // that array in place.
   list: FrameCallback[];
   dirty: boolean;
 };
@@ -69,6 +72,7 @@ export function onFrame(graph: object | null, cb: FrameCallback): () => void {
   driver.dirty = true;
   return () => {
     driver.callbacks.delete(cb);
+    driver.list = [];
     driver.dirty = true;
   };
 }
