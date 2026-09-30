@@ -39,6 +39,9 @@ type MotionDriver = {
   listeners: Set<Listener>;
   // Cached iteration array, rebuilt only on membership change — same
   // no-alloc / no-mid-iteration-mutation contract as sceneFrameDriver.
+  // Unsubscribe replaces the cache to release removed callbacks immediately;
+  // an active dispatch owns its local snapshot until it returns. Neither this
+  // array nor dragList may be mutated in place when membership changes.
   list: Listener[];
   dirty: boolean;
   // Listeners that need the drag node + delta (subtree-follow, DAG-Y lock).
@@ -117,6 +120,7 @@ export function onNodeMotion(graph: object | null, cb: Listener): () => void {
   driver.dirty = true;
   return () => {
     driver.listeners.delete(cb);
+    driver.list = [];
     driver.dirty = true;
   };
 }
@@ -134,6 +138,7 @@ export function onNodeDragMove(
   driver.dragDirty = true;
   return () => {
     driver.dragListeners.delete(cb);
+    driver.dragList = [];
     driver.dragDirty = true;
   };
 }
