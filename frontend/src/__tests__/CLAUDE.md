@@ -120,10 +120,21 @@ browser OOM report.
   cached frame/motion/drag callbacks immediately, including the last listener,
   without another tick. Membership changes preserve the in-flight dispatch
   snapshot and affect the next event.
+- `instancedNodes.test.ts` — disposal events pin exactly-once mesh/material
+  release on capacity growth, style filtering, disable and final teardown;
+  within-slack rebuilds reuse buffers. Borrowed sprite textures survive, and the
+  controller-owned shared quad is disposed only at final teardown. Re-enable
+  uses fresh position buffers from current nodes; disable/teardown release
+  motion callbacks immediately, without another tick.
 - `instancedLinks.test.ts` — disable removes the captured batch and disposes
   owned geometry/material resources once; disabled hooks cannot recreate it.
   Re-enable builds fresh position buffers from current graph objects, and buffer
   growth disposes the old position attribute before replacement.
+- `agentOverlayPathIndex.test.ts` — final-agent removal and unused empty
+  reconciliation immediately release indexed nodes, the path map and cached
+  bounds; a remaining sibling preserves them. Clear/destroy are idempotent,
+  and clear permits rebuilding with the same node-array identity. New graph
+  generations supply lookup, bounds, parked placement and beam targets.
 - `forceGraphInitializationLifecycle.test.ts` — injected setup/teardown faults
   pin acquired-resource rollback order, idempotent destruction, and ref/DOM
   clearing. Cleanup continues after faults and preserves the original setup error.
