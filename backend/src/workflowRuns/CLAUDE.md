@@ -2,8 +2,10 @@
 
 Workflow-step runner. The parent `workflowRuns.ts` is a thin orchestration
 facade (start / cancel / advance / `dispatchStep`) over these modules.
-Sequential advancement is driven entirely by Stop-hook / `session_shutdown` /
-explicit-curl callbacks — never by polling task state.
+Agent-step advancement is driven by Stop-hook / `session_shutdown` /
+explicit-curl callbacks, never by task-state polling. Control workers
+reconcile/wait on board state using subscriptions and polling fallbacks, then
+call `completeWorkflowStep` themselves.
 
 ## Modules
 
@@ -65,11 +67,12 @@ explicit-curl callbacks — never by polling task state.
   `/ws/workflow-runs` hello until recovery has re-registered the runs
   (`isWorkflowRecoveryDone` / `whenWorkflowRecoveryDone`).
 
-**Control steps** (`start` / `merge` / `push`, headless)
+**Control steps** (`start` / `merge` / `push`)
 - `controlStep.ts` — `executeControlStep`: lock lifecycle + kind → worker
   (`acquireControlStepLock` → kind runner → release → `settleControlStep`).
 - `runErrored.ts` — `markRunErrored`: shared "error a running run" (status, finishedAt, error, notify, checkpoint); not `failWorkflowRun`.
-- `controlSteps/` — the workers; read [`controlSteps/CLAUDE.md`](./controlSteps/CLAUDE.md).
+- `controlSteps/` — the workers; Push runs through this engine while owning a
+  push harness session. Read [`controlSteps/CLAUDE.md`](./controlSteps/CLAUDE.md).
 
 **Run tests step** (`test`) — `testStep/`; read [`testStep/CLAUDE.md`](./testStep/CLAUDE.md).
 
@@ -106,19 +109,22 @@ explicit-curl callbacks — never by polling task state.
 - A workflow whose steps are *all* frozen is refused before any run record.
 
 **Advancing**
-- Advancement is sequential and **idempotent**: `completeWorkflowStep` claims
-  `currentStepIndex` synchronously before any await, so a duplicate callback is
-  a no-op. The frozen-step skip happens *after* that claim (claim `stepIndex+1`,
-  then re-claim + re-mirror at the step dispatched) — keep that order. Frozen
-  steps are skipped, not removed; a run whose remaining steps are all frozen
-  completes.
-- Completion is claimed by an in-flight promise per run and a persisted
-  `completing` phase before the old terminal ends; the advance awaits any
-  outstanding terminal-create, and the index changes only after the old
-  terminal is reclaimed.
-- **Advancing kills the step's session** (`killWorkflowStepSession`, awaited)
-  *before* the next step dispatches — `codex --yolo` never self-exits.
-  (`workflowStepSpawnFailure.test.ts`.)
+- Advancement is sequential and **idempotent**: `completeWorkflowStep` ignores
+  stale callbacks; duplicates join the in-flight promise keyed by run/step.
+  `advanceCompletedStep` checkpoints `stepPhase: 'completing'` while retaining
+  the finishing `currentStepIndex`. If that initial checkpoint fails, it
+  restores the previous phase for the still-current running step so a later
+  callback can retry.
+- After awaiting terminal handling (below), the advance computes
+  `nextRunnableStepIndex`, then changes/checkpoints the next index with
+  `stepPhase: 'pending'` before dispatch. Frozen steps are skipped, not removed;
+  a run with no runnable steps remaining completes.
+- **Terminal handling precedes the next dispatch.** By default,
+  `killWorkflowStepSession` awaits any outstanding allocation and the kill —
+  `codex --yolo` never self-exits. With project `keepWorkflowStepTerminals`
+  enabled, `releaseWorkflowStepSession` awaits allocation, drops spawn
+  bookkeeping and deliberately leaves the PTY alive for inspection until its
+  tab closes. (`workflowStepSpawnFailure.test.ts`.)
 - **Claude Stop-hook completions are quiescence-gated**, never immediate: a
   `Stop` fires early/repeatedly while subagents run, and advancing on it ran
   steps in parallel. Only the `claude-stop-hook-*` source is gated; the explicit
@@ -138,10 +144,13 @@ explicit-curl callbacks — never by polling task state.
 - The Claude Stop hook is installed for every step regardless of harness.
 
 **Failure / cancellation**
-- Every rejected queued step spawn errors its still-current run (thrown setup /
-  transport included). CAP retries stay pending; a late rejection must preserve
-  a cancellation or a newer step.
-- Cancellation is authoritative: `cancelWorkflowRun` cancels pending
+- A rejected queued spawn for an ordinary planning step errors its still-current
+  run (thrown setup / transport included). Run tests' `onSpawnError` adapter
+  records `not-run` and advances; see [`testStep/CLAUDE.md`](./testStep/CLAUDE.md).
+  CAP retries stay pending; a late rejection must preserve a cancellation or a
+  newer step.
+- Cancellation is authoritative and uses its separate kill path regardless of
+  terminal retention: `cancelWorkflowRun` cancels pending
   `wf-step:<runId>:<step>` queue entries, unregisters the presence node, kills
   any tracked `serverId`, aborts a pre-run scan and a pending stop-hook gate;
   queued thunks re-check run status / current step before and after
@@ -149,9 +158,10 @@ explicit-curl callbacks — never by polling task state.
 - **A terminal transition checkpoints immediately** (`cancelWorkflowRun`,
   `failWorkflowRun`, `markWorkflowStepSpawnErrored`, control-step errors follow
   `notify` with `void checkpointWorkflowRun(run)`), since `notify` only
-  schedules the 100 ms debounced mirror. Setup failures and failed advances go
-  through `failWorkflowRun`. An error landing after the run already left
-  `running` keeps the existing terminal state.
+  schedules the 100 ms debounced mirror. Planning-step setup failures and
+  advance failures after the initial completion checkpoint go through
+  `failWorkflowRun`. An error landing after the run already left `running`
+  keeps the existing terminal state.
 - Control steps: the lock is released **before** `completeStep`, inside a
   restart-drain transition (`../restartDrain/`); the worker is detached, so
   every await it owns — `completeStep` included — is guarded (an unobserved
@@ -177,3 +187,6 @@ explicit-curl callbacks — never by polling task state.
   callbacks get 404 — never acknowledge an unknown run — and
   `/ws/workflow-runs` hellos carry `recovering: true` until an authoritative
   one follows.
+
+Reference commands (cwd `backend/`): `npm run build`, `npm test`,
+`npx tsc --noEmit`.
