@@ -1,10 +1,17 @@
 # backend/src/workflowRuns/controlSteps
 
-The per-kind workers for **headless** workflow steps — `start` / `merge` /
-`push` — that run server-side against Lattice's own task pipeline instead of
-spawning an agent. `../controlStep.ts` is the thin dispatcher (lock lifecycle +
-kind→worker routing); each worker lives here. These files hold subtle,
-easy-to-break timing/lock invariants; read this before touching them.
+The per-kind workers for `start` / `merge` / `push` provide **backend
+orchestration** of Lattice's task pipeline: Start launches task agents, Merge
+drives merge runs that may involve resolver / post-merge sessions, and Push
+launches a harness session with the `workflow-push` brief (see
+[pushRuns](../../pushRuns/CLAUDE.md)). `../controlStep.ts` is the thin dispatcher
+(lock lifecycle + kind→worker routing); each worker lives here. This control
+dispatch is distinct from authored `agent` planning steps that file tasks and
+the fixed-brief Run tests path. Read the timing/lock invariants below before
+touching these workers.
+
+Backend command references (cwd `backend/`): `npm run build`, `npm test`,
+`npx tsc --noEmit`.
 
 ## Lane-transition map
 
@@ -14,10 +21,11 @@ easy-to-break timing/lock invariants; read this before touching them.
 | `merge` | Queued/in-flight runs, In Progress and Ready-to-Merge together, then the post-merge hook (Phase C) and a final task re-check | Ready-to-Merge → QA (via inner merge runs) |
 | `push`  | Ready-to-Merge | pushes `main`'s existing commits to the remote (no lane change, no commit) |
 
-The Run tests step (`test`) is NOT a control step — it spawns an agent through
-the agent-step path (`../testStep/`) — but it holds the same per-project
-run-lock, as `workflow-test:<runId>` (non-lendable), for its whole duration and
-releases it before the next step (typically Push) dispatches.
+The Run tests step (`test`) uses the agent-step path to spawn a fixed-brief
+agent ([testStep](../testStep/CLAUDE.md)), outside the control dispatcher. It
+holds the same per-project run-lock, as `workflow-test:<runId>` (non-lendable),
+for its whole duration and releases it before the next step (typically Push)
+dispatches.
 
 ## Cross-process project run-lock (the load-bearing invariant)
 
@@ -207,9 +215,9 @@ Covered by `__tests__/workflowMergeStepPostMergeHook.test.ts`.
 ## `push.ts` — `runPushStep`
 
 Drains Ready-to-Merge, then spawns a push session (Task Board cloud-icon path)
-and waits for its Stop hook. `runPushStep` is a short sequence over two local
-helpers: `adoptOrDrain` (the completed-run / live-session re-dispatch
-short-circuits, else the drain) and `createPushSessionWatch` (owns the session
+and waits for its `/done` completion callback. `runPushStep` is a short sequence
+over two local helpers: `adoptOrDrain` (the completed-run / live-session
+re-dispatch short-circuits, else the drain) and `createPushSessionWatch` (owns the session
 ids, the `cancelled` / `timedOut` flags, the `done` promise, both subscribers,
 the timeout, admission AbortController and the single `killAndAbandon()`;
 disposed in the `finally`).
@@ -234,9 +242,10 @@ disposed in the `finally`).
   fast `done` / a cancel can't slip past (`createPushSessionWatch` runs before
   the spawn). `sessionServerId` is unknown until `startPushSession` resolves —
   the watch captures it by closure via `attach(session)`.
-- **`PUSH_STEP_TIMEOUT_MS` (15 min)** backstop: if Claude died before its Stop
-  hook fired, the wait would otherwise hang forever — the timer kills the pty,
-  settles the push run (`abandonPushRun`) and the step **throws**
+- **`PUSH_STEP_TIMEOUT_MS` (15 min)** backstop: if the selected harness exits or
+  stalls without its `/done` completion callback landing, the wait would
+  otherwise hang forever — the timer kills the pty, settles the push run
+  (`abandonPushRun`) and the step **throws**
   `push step timed out after 15 minutes`, so `controlStep.ts` **errors the
   run** (it used to report `'push complete'` and advance as if the push had
   landed). A push whose own `/done` already landed is not a timeout, and a user
