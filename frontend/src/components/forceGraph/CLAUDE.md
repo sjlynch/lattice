@@ -175,6 +175,11 @@ label physics in `labelPhysics/CLAUDE.md`.
   `src/__tests__`). `hooks/useAgentOverlay.ts` supplies `showSubagentLabels` to
   `agentOverlay.ts`'s `setSizes`, which updates it each frame;
   `agentOverlayLabels.ts` formats the text.
+  `AgentPathIndex.clear()` releases the indexed nodes array, path map and bounds
+  immediately when the last agent is removed, on empty reconciliation and on
+  destroy; inactive overlays may never receive another frame. A remaining sibling
+  keeps the index, and the next addition rebuilds it through `ensure`. Coverage:
+  [agentOverlayPathIndex.test.ts](../../__tests__/agentOverlayPathIndex.test.ts).
   `agentOverlayLabelLayout.ts` is the **label spreader**: at the end of each tick
   it projects every agent + satellite label onto the camera's image plane
   (depth-normalised), de-overlaps them with the pure `spreadLabelRects` (labels

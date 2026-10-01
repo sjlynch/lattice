@@ -205,6 +205,7 @@ export class AgentOverlay {
 
   destroy(graph: ForceGraph3DInstance): void {
     for (const taskId of [...this.ctx.agents.keys()]) removeAgent(this.ctx, taskId);
+    this.ctx.pathIndex.clear();
     const scene = (graph as unknown as { scene: () => THREE.Scene }).scene();
     scene.remove(this.ctx.group);
     // Dispose every agent label texture + paired material. The cache is module-
