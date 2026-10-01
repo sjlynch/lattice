@@ -2,6 +2,7 @@ import { test, beforeEach, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   subscribeWs,
+  subscribeWsShared,
   wsReconnectDelay,
   WS_RECONNECT_BASE_MS,
   WS_RECONNECT_CAP_MS,
@@ -27,6 +28,12 @@ import {
 let timers: ManualTimers;
 let restoreWs: () => void;
 let restoreWindow: () => void;
+let unsubscribe: (() => void)[];
+
+function trackSubscription(stop: () => void): () => void {
+  unsubscribe.push(stop);
+  return stop;
+}
 
 /** The socket created by the most recent connect(). */
 function latestSocket(): FakeWebSocket {
@@ -46,6 +53,7 @@ function pendingReconnect(): ScheduledTimer {
 }
 
 beforeEach(() => {
+  unsubscribe = [];
   timers = installManualTimers();
   restoreWs = installFakeWebSocket();
   restoreWindow = installWindow({
@@ -54,6 +62,8 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  // Release sockets, shared registrations and timers even when an assertion fails.
+  for (const stop of unsubscribe.reverse()) stop();
   restoreWindow();
   restoreWs();
   timers.restore();
@@ -73,7 +83,7 @@ test('wsReconnectDelay grows exponentially then saturates at the cap', () => {
 // --- The regression: accept-then-immediate-close must keep backing off ------
 
 test('accept-then-immediate-close grows the reconnect backoff (no tight loop)', () => {
-  const teardown = subscribeWs('/ws/tasks', () => {});
+  const teardown = trackSubscription(subscribeWs('/ws/tasks', () => {}));
   const delays: number[] = [];
 
   // Six rounds of: server accepts the upgrade, then drops it before it can
@@ -96,7 +106,7 @@ test('accept-then-immediate-close grows the reconnect backoff (no tight loop)', 
 // --- A genuinely healthy connection still resets the backoff ----------------
 
 test('a connection that stays open past WS_STABLE_MS resets the backoff', () => {
-  const teardown = subscribeWs('/ws/tasks', () => {});
+  const teardown = trackSubscription(subscribeWs('/ws/tasks', () => {}));
 
   // Drive the backoff up with a few unstable cycles.
   for (let i = 0; i < 3; i++) {
@@ -122,7 +132,7 @@ test('a connection that stays open past WS_STABLE_MS resets the backoff', () => 
 // --- A drop during the stability window does NOT reset the backoff ----------
 
 test('a drop within WS_STABLE_MS leaves the backoff growing', () => {
-  const teardown = subscribeWs('/ws/tasks', () => {});
+  const teardown = trackSubscription(subscribeWs('/ws/tasks', () => {}));
 
   // First unstable cycle: delay 250, attempt advances to 1.
   let ws = latestSocket();
@@ -145,7 +155,7 @@ test('a drop within WS_STABLE_MS leaves the backoff growing', () => {
 // --- Teardown stops reconnecting and clears pending timers ------------------
 
 test('teardown after a drop cancels the pending reconnect', () => {
-  const teardown = subscribeWs('/ws/tasks', () => {});
+  const teardown = trackSubscription(subscribeWs('/ws/tasks', () => {}));
   const ws = latestSocket();
   ws.serverAccept();
   ws.serverDrop();
@@ -157,7 +167,7 @@ test('teardown after a drop cancels the pending reconnect', () => {
 test('teardown ignores queued socket callbacks without restoring timers or delivering messages', () => {
   const received: unknown[] = [];
   let disconnects = 0;
-  const teardown = subscribeWs('/cancelled', (msg) => received.push(msg), () => { disconnects += 1; });
+  const teardown = trackSubscription(subscribeWs('/cancelled', (msg) => received.push(msg), () => { disconnects += 1; }));
   const ws = latestSocket();
   teardown();
   ws.serverAccept();
@@ -172,12 +182,13 @@ test('a throwing message handler is reported and does not close the socket', () 
   const reported: unknown[][] = [];
   const origError = console.error;
   console.error = (...args: unknown[]) => { reported.push(args); };
+  let teardown: (() => void) | undefined;
   try {
     const received: unknown[] = [];
-    const teardown = subscribeWs<{ n: number }>('/ws/throwing', (msg) => {
+    teardown = trackSubscription(subscribeWs<{ n: number }>('/ws/throwing', (msg) => {
       received.push(msg);
       if (msg.n === 1) throw new Error('consumer failed');
-    });
+    }));
     const ws = latestSocket();
     ws.serverAccept();
     ws.onmessage?.({ data: '{"n":1}' });
@@ -193,15 +204,118 @@ test('a throwing message handler is reported and does not close the socket', () 
     ws.onmessage?.({ data: 'not json' });
     assert.equal(received.length, 2);
     assert.equal(reported.length, 1);
-    teardown();
   } finally {
+    teardown?.();
     console.error = origError;
   }
 });
 
 test('a throwing disconnect callback cannot stop reconnecting', () => {
-  const teardown = subscribeWs('/disconnect-error', () => {}, () => { throw new Error('subscriber failed'); });
+  const teardown = trackSubscription(subscribeWs('/disconnect-error', () => {}, () => { throw new Error('subscriber failed'); }));
   latestSocket().serverDrop();
   assert.equal(pendingReconnect().delay, WS_RECONNECT_BASE_MS);
   teardown();
+});
+
+// --- Shared channel replay and registration lifetimes ----------------------
+
+test('ordinary shared feeds retain their existing cached snapshot across disconnects', () => {
+  const replay = (_value: unknown) => true;
+  trackSubscription(subscribeWsShared('/ordinary-snapshot', () => {}, replay));
+  const original = latestSocket();
+  original.serverAccept();
+  original.onmessage?.({ data: JSON.stringify({ tasks: ['task-1'] }) });
+  original.serverDrop();
+  const late: unknown[] = [];
+  trackSubscription(subscribeWsShared('/ordinary-snapshot', (value) => late.push(value), replay));
+  assert.deepEqual(late, [{ tasks: ['task-1'] }]);
+});
+
+for (const finalState of ['open', 'dropped'] as const) {
+  test(`identical callbacks have independent shared subscription lifetimes (${finalState} at final unsubscribe)`, () => {
+    const path = '/ws/tasks?project=%2Fshared-lifetime';
+    const oldSnapshot = { type: 'tasks', tasks: [{ id: 'task-1', projectPath: '/shared-lifetime', status: 'in_progress' }] };
+    const newSnapshot = { type: 'tasks', tasks: [{ id: 'task-2', projectPath: '/shared-lifetime', status: 'open' }] };
+    const replay = (msg: typeof oldSnapshot) => msg.type === 'tasks';
+    const updates: unknown[] = [];
+    let disconnects = 0;
+    const onMessage = (value: unknown) => updates.push(value);
+    const onDisconnect = () => { disconnects += 1; };
+    const first = trackSubscription(subscribeWsShared(path, onMessage, replay, { onDisconnect }));
+    const second = trackSubscription(subscribeWsShared(path, onMessage, replay, { onDisconnect }));
+    const original = latestSocket();
+    original.serverAccept();
+    original.onmessage?.({ data: JSON.stringify(oldSnapshot) });
+    assert.equal(FakeWebSocket.instances.length, 1, 'both owners share one socket');
+    assert.deepEqual(updates, [oldSnapshot, oldSnapshot], 'identical callbacks each own a registration');
+
+    first();
+    assert.equal(original.closed, false, 'the second registration still owns the socket');
+    original.onmessage?.({ data: '{"value":1}' });
+    assert.deepEqual(updates, [oldSnapshot, oldSnapshot, { value: 1 }]);
+    original.serverDrop();
+    assert.equal(disconnects, 1, 'the remaining registration keeps its shared disconnect callback');
+    if (finalState === 'open') {
+      timers.fireAll();
+      latestSocket().serverAccept();
+    }
+    const survivingSocket = latestSocket();
+    const socketCount = FakeWebSocket.instances.length;
+    const survivingReplay: unknown[] = [];
+    const stopProbe = trackSubscription(subscribeWsShared(path, (msg) => survivingReplay.push(msg), replay));
+    assert.deepEqual(survivingReplay, [oldSnapshot], 'replay survives while the second owner remains');
+    assert.equal(FakeWebSocket.instances.length, socketCount, 'a surviving owner keeps the same channel');
+    stopProbe();
+    assert.equal(pendingReconnect().delay, finalState === 'open' ? WS_STABLE_MS : WS_RECONNECT_BASE_MS);
+
+    second();
+    assert.equal(timers.scheduled.length, 0, 'final unsubscribe cancels stability and reconnect timers');
+    if (finalState === 'open') assert.equal(survivingSocket.closed, true);
+    timers.fireAll();
+    assert.equal(FakeWebSocket.instances.length, socketCount, 'ownerless timers cannot recreate a socket');
+
+    trackSubscription(subscribeWsShared(path, onMessage, replay, { onDisconnect }));
+    const replacement = latestSocket();
+    assert.notEqual(replacement, survivingSocket, 'the exact same path creates a fresh channel');
+    assert.equal(FakeWebSocket.instances.length, socketCount + 1);
+    assert.deepEqual(updates, [oldSnapshot, oldSnapshot, { value: 1 }], 'reopening cannot replay the old snapshot');
+    second();
+    first();
+    assert.equal(replacement.closed, false, 'old cleanup cannot close a replacement channel');
+    replacement.serverAccept();
+    replacement.onmessage?.({ data: '{"value":2}' });
+    assert.deepEqual(updates, [oldSnapshot, oldSnapshot, { value: 1 }, { value: 2 }]);
+    replacement.onmessage?.({ data: JSON.stringify(newSnapshot) });
+    assert.deepEqual(updates, [oldSnapshot, oldSnapshot, { value: 1 }, { value: 2 }, newSnapshot],
+      'only the current registration receives the new snapshot');
+
+    first();
+    second();
+    const late: unknown[] = [];
+    trackSubscription(subscribeWsShared(path, (msg) => late.push(msg), replay));
+    assert.deepEqual(late, [newSnapshot], 'old cleanup cannot erase the replacement replay');
+    assert.equal(latestSocket(), replacement);
+    assert.equal(replacement.closed, false);
+  });
+}
+
+test('throwing shared message and replay subscribers cannot block peers or leak registrations', () => {
+  const replay = (_value: unknown) => true;
+  const broken = trackSubscription(subscribeWsShared('/throwing-subscriber', () => { throw new Error('broken handler'); }, replay));
+  const received: unknown[] = [];
+  const healthy = trackSubscription(subscribeWsShared('/throwing-subscriber', (msg) => received.push(msg), replay));
+  const current = latestSocket();
+  current.onmessage?.({ data: '{"value":1}' });
+  assert.deepEqual(received, [{ value: 1 }]);
+
+  let late: (() => void) | undefined;
+  assert.doesNotThrow(() => {
+    late = trackSubscription(subscribeWsShared('/throwing-subscriber', () => { throw new Error('broken replay'); }, replay));
+  });
+  assert.ok(late, 'a replay failure still returns its registration cleanup');
+  late();
+  broken();
+  assert.equal(current.closed, false);
+  healthy();
+  assert.equal(current.closed, true, 'all registrations can be released despite callback errors');
 });

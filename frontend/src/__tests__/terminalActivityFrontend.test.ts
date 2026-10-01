@@ -4,7 +4,6 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import TestRenderer, { act } from 'react-test-renderer';
 import { subscribeTerminalActivity } from '../api/terminals.ts';
-import { subscribeWsShared } from '../api/ws.ts';
 import { useBusyAgentTerminals } from '../components/sidebar/hooks/useBusyAgentTerminals.ts';
 import { SidebarTabsBar } from '../components/sidebar/SidebarTabsBar.tsx';
 import type { TerminalSpec, TerminalStatus } from '../terminal/terminalTypes.ts';
@@ -72,70 +71,6 @@ test('shared terminal activity clears on disconnect and never replays stale busy
   original.serverDrop();
   assert.deepEqual(second.at(-1), ['new-session']);
   assert.equal(timers.scheduled.length, 1, 'stale close cannot add another reconnect timer');
-});
-
-test('ordinary shared feeds retain their existing cached snapshot across disconnects', () => {
-  const replay = (_value: unknown) => true;
-  unsubscribe.push(subscribeWsShared('/ordinary-snapshot', () => {}, replay));
-  const original = socket();
-  original.serverAccept();
-  original.onmessage?.({ data: JSON.stringify({ tasks: ['task-1'] }) });
-  original.serverDrop();
-  const late: unknown[] = [];
-  unsubscribe.push(subscribeWsShared('/ordinary-snapshot', (value) => late.push(value), replay));
-  assert.deepEqual(late, [{ tasks: ['task-1'] }]);
-});
-
-test('identical callbacks have independent shared subscription lifetimes', () => {
-  const updates: unknown[] = [];
-  let disconnects = 0;
-  const onMessage = (value: unknown) => updates.push(value);
-  const onDisconnect = () => { disconnects += 1; };
-  const first = subscribeWsShared('/same-callback', onMessage, undefined, { onDisconnect });
-  const second = subscribeWsShared('/same-callback', onMessage, undefined, { onDisconnect });
-  unsubscribe.push(first, second);
-  const original = socket();
-  first();
-  assert.equal(original.closed, false, 'the second registration still owns the socket');
-  original.onmessage?.({ data: '{"value":1}' });
-  assert.deepEqual(updates, [{ value: 1 }]);
-  original.serverDrop();
-  assert.equal(disconnects, 1, 'the remaining registration keeps its shared disconnect callback');
-  second();
-  assert.equal(timers.scheduled.length, 0);
-
-  const replacementStop = subscribeWsShared('/same-callback', onMessage, undefined, { onDisconnect });
-  unsubscribe.push(replacementStop);
-  const replacement = socket();
-  second();
-  first();
-  assert.equal(replacement.closed, false, 'old cleanup cannot close a replacement channel');
-  replacement.onmessage?.({ data: '{"value":2}' });
-  assert.deepEqual(updates, [{ value: 1 }, { value: 2 }]);
-});
-
-test('throwing shared message and replay subscribers cannot block peers or leak registrations', () => {
-  const replay = (_value: unknown) => true;
-  const broken = subscribeWsShared('/throwing-subscriber', () => { throw new Error('broken handler'); }, replay);
-  unsubscribe.push(broken);
-  const received: unknown[] = [];
-  const healthy = subscribeWsShared('/throwing-subscriber', (msg) => received.push(msg), replay);
-  unsubscribe.push(healthy);
-  const current = socket();
-  current.onmessage?.({ data: '{"value":1}' });
-  assert.deepEqual(received, [{ value: 1 }]);
-
-  let late: (() => void) | undefined;
-  assert.doesNotThrow(() => {
-    late = subscribeWsShared('/throwing-subscriber', () => { throw new Error('broken replay'); }, replay);
-  });
-  assert.ok(late, 'a replay failure still returns its registration cleanup');
-  unsubscribe.push(late);
-  late();
-  broken();
-  assert.equal(current.closed, false);
-  healthy();
-  assert.equal(current.closed, true, 'all registrations can be released despite callback errors');
 });
 
 test('terminal activity normalizes duplicate and invalid ids and accepts an empty snapshot', () => {
