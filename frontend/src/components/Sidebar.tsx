@@ -65,7 +65,7 @@ export const Sidebar = memo(function Sidebar({
     mergeTerminals,
     startupTerminalsList,
   } = useTerminalGroups(terminals, activeFolder);
-  const mountedIds = useMountedTerminalIds(activeId, startupTerminalsList, projectTerminals);
+  const mountedIds = useMountedTerminalIds(activeId, startupTerminalsList, projectTerminals, terminals);
   // Which tabs are running an agent that's still working, for the tab spinner.
   // Keyed by backend session id, so it covers tabs whose pane was never mounted.
   const busyServerIds = useBusyAgentTerminals(activeFolder);
