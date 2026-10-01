@@ -89,11 +89,33 @@ shared `userSettings.json` fetch:
   · `useMetricsIgnoredExts` (exts skipped by the LOC/health overlays) ·
   `usePersistedToggle` (generic boolean ↔ `localStorage`) · `useActiveFolder`
   (canonical project path, seeded from `sessionStorage`, falls back to the
-  backend default — boot retry in `resolveDefaultRoot.ts`) · `useSidebarWidth`
-  (drag-resize + persist; releasing within `sidebar.minGraphWidth` of the right
-  edge snaps to full width — `sidebarMaximized`, graph hidden but kept mounted) ·
+  backend default — boot retry in `resolveDefaultRoot.ts`) ·
   `useSyncedRef` (a ref kept in sync with a value, for stable event handlers) ·
   `useStartupTerminalSync` (per-project startup-terminal list).
+- `useSidebarWidth` — owns sidebar drag-resize and per-project persistence.
+  The hook stores one **idempotent active-gesture cleanup** in
+  `resizeCleanupRef`. Replacement gestures and owner unmount invoke it: cancel
+  pending RAF work, remove window `pointermove` / `pointerup` / `pointercancel`
+  listeners, release pointer capture best-effort, clear the drag flag and
+  restore the prior body `cursor` / `userSelect`. A per-gesture active fence
+  rejects late pointer and RAF callbacks. Unmount and replacement only clean
+  up: they neither apply a final width nor PATCH settings. Controlled doubles in
+  [sidebarResizeLifetime.test.ts](../__tests__/sidebarResizeLifetime.test.ts)
+  pin teardown during a drag without another release event.
+
+  Moves remain RAF-coalesced; non-full widths clamp to the minimum and viewport
+  cap, including on window resize. Normal `pointerup` settles from the release
+  point; `pointercancel` uses the last move (no move means cleanup only).
+  Releasing within `sidebar.minGraphWidth` of the right edge snaps to full width
+  (`sidebarMaximized`, graph hidden but kept mounted), persisting only the
+  maximized flag and retaining the saved non-full width. Double-click resets to
+  the clamped default width and clears maximization. Completion and reset PATCH
+  the **current** folder via `activeFolderRef`, only when it is non-empty.
+
+  `sidebarSettingsLoaded` gates only the **first** sidebar mount. Never reset it
+  for a project settings fetch: hold the previous width until settings arrive,
+  then update in place. Resetting it on project switches disposes the sidebar
+  and every `TerminalPane`, interrupting terminal attaches.
 
 ### Folder-stamped state (read before adding a slice hook)
 
@@ -157,3 +179,7 @@ posts) has to be keyed so it can't fire on a mismatched pair. Pinned by
   Menu` is deliberately NOT on this hook: it's a different gesture (mousedown +
   `.closest()` class test + deferred attach, no Escape), and adapting it would
   need enough option flags to defeat the point.
+
+## Verification references
+
+Working directory `frontend/`: `npm run build`, `npm test`, `npx tsc -b`.

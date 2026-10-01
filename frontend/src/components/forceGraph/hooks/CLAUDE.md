@@ -116,16 +116,24 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   shared selection, so the "already applied" guard is keyed on the generation
   and the same match set is re-applied once after every swap (search halos used
   to vanish on the first rescan).
-- `useSelectionHaloSync` — in-place selection-halo delta (toggles only changed
-  ids + `wakeForRefresh`, never a full refresh). `useSelectionHaloPulse` —
-  animates the single shared halo material's tint (brighter/whiter ⇄ base) while
-  any node is selected so rings pop in dense graphs; O(1) per frame, holds the
-  idle controller's slow-only `halo` reason (30fps) only while selected.
-  `useSelectionGlowSettings` — pushes the Rendering-tab glow knobs
-  (`selectionGlowStrength`/`selectionGlowScale`) into `halo.ts` (strength read
-  live per frame; a size change rebuilds the current selection's halos in place
-  via `rebuildSelectionHalos`, O(selected), not a full refresh). `useBoxSelect` +
-  `boxSelectGeometry` + `orbitControlLock` — shift-drag rectangle select.
+- `useSelectionHaloSync` — toggles only changed ids + `wakeForRefresh`; never
+  `graph.refresh()`.
+- `useSelectionHaloPulse` — `../halo.ts::updateHaloPulse` animates two shared
+  materials in lock-step: ring tint (base ⇄ brighter/whiter) and additive glow
+  opacity (0 ⇄ peak). O(1) per frame regardless of selected-node count.
+  Allocation belongs to `../haloResources.ts`; see the [parent resource
+  guide](../CLAUDE.md) for full ownership details. The hook owns its `onFrame`
+  subscription and holds the idle controller's slow-only `halo` reason only
+  while selected (~30fps when no faster reason is held). Clearing selection
+  releases the reason, resets both existing materials (base ring tint, glow off)
+  and calls `wakeForRefresh` once. Teardown unsubscribes, releases any held
+  reason and resets; neither pulse nor reset allocates resources.
+- `useSelectionGlowSettings` — pushes `selectionGlowStrength`/
+  `selectionGlowScale` into `halo.ts`. Strength is read live per frame; a scale
+  change rebuilds the current selection's halos in place via
+  `rebuildSelectionHalos` (O(selected)), without `graph.refresh()`.
+- `useBoxSelect` + `boxSelectGeometry` + `orbitControlLock` — shift-drag rectangle
+  select.
 - `useNodeContextMenu` — right-click popover. `useGraphTaskCreation` — create-task
   modal state; `submitTask` runs `ensureGitRepo` (`components/gitSetup/`) before
   `createTask`, since a non-repo project 400s the create — this is the graph's
