@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import {
   accumulatePairwiseForces,
+  cleanupStaleRegistryEntries,
   integrateLabelState,
   updateConnectorEndpoint,
   zeroDistanceJitter,
@@ -79,4 +80,75 @@ test('connector endpoint update respects the epsilon threshold', () => {
   assert.equal(beyondAttr.getX(1), 1);
   assert.equal(beyondAttr.getY(1), 90);
   assert.equal(beyondAttr.getZ(1), 2);
+});
+
+test('stale cleanup releases a label under a detached ancestor once and preserves scene-connected labels', (t) => {
+  const scene = new THREE.Scene();
+  const surviving = makeLineEntry(new THREE.Vector3());
+  const detached = makeLineEntry(new THREE.Vector3());
+  const unparented = makeLineEntry(new THREE.Vector3());
+  const entries = [surviving, detached, unparented];
+  const registry = new Set(entries);
+  const states = new WeakMap<THREE.Sprite, LabelState>();
+  const originalStates = entries.map((entry, i) => {
+    const state = { vx: i + 1, vz: -i - 1, restFrames: i };
+    states.set(entry.label, state);
+    return state;
+  });
+  const releases: RepulsionEntry[] = [];
+  const onDetached = (entry: RepulsionEntry) => { releases.push(entry); };
+  t.after(() => {
+    registry.clear();
+    for (const entry of entries) {
+      states.delete(entry.label);
+      entry.label.removeFromParent();
+      entry.line.removeFromParent();
+      entry.line.geometry.dispose();
+      (entry.line.material as THREE.Material).dispose();
+      entry.label.material.dispose();
+    }
+    scene.clear();
+  });
+
+  const survivingRoot = new THREE.Group();
+  const survivingNested = new THREE.Group();
+  survivingRoot.add(survivingNested);
+  survivingNested.add(surviving.label, surviving.line);
+  const detachedRoot = new THREE.Group();
+  const detachedNested = new THREE.Group();
+  detachedRoot.add(detachedNested);
+  detachedNested.add(detached.label, detached.line);
+  scene.add(survivingRoot, detachedRoot, unparented.label, unparented.line);
+
+  cleanupStaleRegistryEntries(registry, states, onDetached);
+
+  assert.equal(registry.size, 3);
+  entries.forEach((entry, i) => {
+    assert.ok(registry.has(entry));
+    assert.equal(states.get(entry.label), originalStates[i], 'connected labels retain their state');
+  });
+  assert.equal(releases.length, 0, 'nested roots connected to a Scene need no release');
+
+  scene.remove(detachedRoot);
+  assert.equal(detachedRoot.parent, null);
+  assert.equal(detached.label.parent, detachedNested, 'ancestor removal leaves the label parented');
+  unparented.label.removeFromParent();
+  assert.equal(unparented.label.parent, null);
+
+  cleanupStaleRegistryEntries(registry, states, onDetached);
+
+  assert.equal(registry.size, 1);
+  assert.ok(registry.has(surviving));
+  assert.equal(states.get(surviving.label), originalStates[0]);
+  assert.equal(states.has(detached.label), false);
+  assert.equal(states.has(unparented.label), false);
+  assert.equal(releases.length, 1, 'direct unparenting requires no additional owning release');
+  assert.equal(releases[0], detached, 'the owning callback receives the detached entry itself');
+
+  cleanupStaleRegistryEntries(registry, states, onDetached);
+
+  assert.equal(releases.length, 1, 'a second sweep cannot release the removed entry again');
+  assert.equal(registry.size, 1);
+  assert.ok(registry.has(surviving));
+  assert.equal(states.get(surviving.label), originalStates[0]);
 });
