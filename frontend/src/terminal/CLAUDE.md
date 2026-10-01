@@ -61,15 +61,14 @@ effects read the committed list, including tabs that just arrived.
   `TerminalsProvider`: the registry fetch + `/ws/terminal-tabs` subscription
   effect, the once-per-project auto-restore effect, `runRestore`, and the
   `lastRestore` / `restorePrompt` state; returns `addedDuringFetchRef` for
-  `addTerminal`. Every race fix described above lives (and is commented) there.
-  Each HTTP request captures the subscription's event generation. A newer
-  WS `hello` supersedes an older list response entirely; other events fence
-  individual ids, including removals. `applyRestoreSummary` clears only the
-  pty captured in `terminalsRef` at restore start and preserves newer success
-  or failure, while still marking queued tabs pending if WS events were missed.
-  A subscription lifetime also fences responses across project switches and
-  revisits. Restore acknowledgements advance tab generations so an older list
-  cannot undo their pending state when the socket missed the queue event.
+  `addTerminal`. Owns async cancellation, restore single-flight and the
+  captured-PTY fallback for missed queue events.
+- `terminalRegistrySession.ts` — React-free generation fence created per
+  registry subscription, with fresh identity on project revisits (A → B → A).
+  Owns request generation capture, full-snapshot and changed-id increments
+  (including restore acknowledgements), and queries for intervening changed
+  ids or superseding snapshots. Retains changed ids, including tombstones,
+  for that subscription's lifetime.
 - `useTerminalActions.ts` — stable add/activate/rename/reorder/status and
   single/bulk/task-close callbacks, with explicit provider setters/refs.
   Called after registry sync so persistence → sync → order cleanup stays
