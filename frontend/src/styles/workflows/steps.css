@@ -284,27 +284,48 @@
 }
 
 /* Frozen steps (the snowflake toggle): kept in the workflow, skipped by every
-   run. Dimmed with an icy left rail so the row reads as "parked" at a glance —
-   deliberately a different color from the accent rail the RUNNING step gets.
+   run. An icy surface and crystalline edges make the frozen state visible
+   without blurring the text or blocking the row's controls.
    Declared after the control-step rules so a frozen start/merge/push row wins
    the border color too (same specificity, later file position). */
 .workflows-step.frozen {
-  opacity: 0.55;
+  opacity: 1;
   border-color: var(--freeze-border);
-  box-shadow: inset 2px 0 0 var(--freeze);
+  background:
+    radial-gradient(ellipse at top left, var(--freeze-bg-strong), transparent 65%),
+    radial-gradient(ellipse at bottom right, var(--freeze-bg), transparent 60%),
+    rgba(92, 196, 245, 0.04);
+  box-shadow: inset 2px 0 0 var(--freeze), inset 0 0 14px var(--freeze-bg);
+}
+.workflows-step.frozen::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    /* Irregular ice grain fades toward the text; no bitmap asset is needed. */
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='frost'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.65' numOctaves='3' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 .84 0 0 0 0 .96 0 0 0 0 1 .6 0 0 0 -.12'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23frost)'/%3E%3C/svg%3E"),
+    linear-gradient(125deg, rgba(215, 244, 255, 0.16), transparent 18%, transparent 82%, rgba(215, 244, 255, 0.12));
+  mask-image:
+    radial-gradient(ellipse at top left, #000, transparent 55%),
+    radial-gradient(ellipse at bottom right, #000, transparent 45%);
+}
+.workflows-step.frozen .workflows-step-body {
+  opacity: 0.8;
 }
 /* Editing a frozen step must still be comfortable — undim on interaction. */
-.workflows-step.frozen:hover,
-.workflows-step.frozen:focus-within {
-  opacity: 0.85;
+.workflows-step.frozen:hover .workflows-step-body,
+.workflows-step.frozen:focus-within .workflows-step-body {
+  opacity: 1;
 }
 /* The rail above would otherwise replace the drag drop-target indicator (same
    property, later rule) — keep both while a step is dragged over this one. */
 .workflows-step.frozen.drop-top {
-  box-shadow: inset 2px 0 0 var(--freeze), inset 0 2px 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--freeze), inset 0 0 14px var(--freeze-bg), inset 0 2px 0 var(--accent);
 }
 .workflows-step.frozen.drop-bottom {
-  box-shadow: inset 2px 0 0 var(--freeze), inset 0 -2px 0 var(--accent);
+  box-shadow: inset 2px 0 0 var(--freeze), inset 0 0 14px var(--freeze-bg), inset 0 -2px 0 var(--accent);
 }
 .workflows-step-freeze.frozen {
   color: var(--freeze);
@@ -326,6 +347,25 @@
 .workflows-step-slot {
   position: relative;
   padding-left: 14px;
+}
+.workflows-add-step-slot {
+  position: relative;
+  padding-left: 14px;
+}
+/* A chip's insertion line sits between cards, including frozen/parallel rows.
+   Use ::after so the existing parallel connector keeps its ::before rail. */
+.quick-add-drop-before::after {
+  content: '';
+  position: absolute;
+  top: -5px;
+  left: 14px;
+  right: 0;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+  box-shadow: 0 0 6px var(--accent-bg);
+  pointer-events: none;
+  z-index: 2;
 }
 .workflows-step-slot.parallel-group-member::before {
   content: '';

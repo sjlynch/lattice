@@ -55,6 +55,8 @@ there.
   identity; live-list refreshes preserve that identity. Returns nothing.
 - `useEditorMutationActions.ts` — the editor's step/variable mutation actions,
   every one a pure `setEditor` updater (no API/draft concerns). The step-adding
+  control/prompt actions accept an optional insertion index for quick-add drops;
+  omitting it preserves click-to-append behavior. The step-adding
   ones mint the new step's id *before* calling `setEditor` (an updater can run
   more than once, so an id created inside it isn't necessarily the committed
   one) and hand it to `onStepsAdded` so the new step starts collapsed.

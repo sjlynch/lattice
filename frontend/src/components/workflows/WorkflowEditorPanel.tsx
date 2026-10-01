@@ -10,6 +10,9 @@ import { WorkflowQuickAddBar } from './WorkflowQuickAddBar';
 import { WorkflowRunStrip } from './WorkflowRunStrip';
 import { WorkflowVariablesPanel } from './WorkflowVariablesPanel';
 import { useConfirm } from '../shared/ConfirmDialog';
+import { DEFAULT_PROMPTS } from './defaultPrompts';
+import { promptsWithProjectVariants } from './projectPromptVariants';
+import { useQuickAddDragDrop, type QuickAddDragItem } from './useQuickAddDragDrop';
 
 type Props = {
   manager: WorkflowManager;
@@ -47,6 +50,17 @@ export function WorkflowEditorPanel({ manager }: Props) {
   // object — that object is rebuilt each render, and a fresh onRemove identity
   // would re-render every memoized StepRow on each keystroke.
   const { removeStep, deleteCurrent } = actions;
+  const { addControlStep, addDefaultPromptStep } = actions;
+  const handleInsertStep = useCallback((item: QuickAddDragItem, index: number) => {
+    if (item.kind === 'control') {
+      addControlStep(item.stepKind, index);
+    } else {
+      const prompt = promptsWithProjectVariants(DEFAULT_PROMPTS, projectProfile)
+        .find((candidate) => candidate.id === item.promptId);
+      if (prompt) addDefaultPromptStep(prompt, index);
+    }
+  }, [addControlStep, addDefaultPromptStep, projectProfile]);
+  const { dropIndex, ...quickAddDropHandlers } = useQuickAddDragDrop(handleInsertStep);
 
   // Deleting a step permanently drops its prompt body — confirm first.
   const handleRemoveStep = useCallback(
@@ -119,11 +133,11 @@ export function WorkflowEditorPanel({ manager }: Props) {
               onAdd={actions.addVariable}
               onRemove={actions.removeVariable}
             />
-            <div className="workflows-editor-steps">
+            <div className="workflows-editor-steps" {...quickAddDropHandlers}>
               {editor.steps.map((step, index) => {
                 const group = parallelGroupAt(editor.steps, index);
                 return (
-                  <div key={step.id} className={`workflows-step-slot${group ? ' parallel-group-member' : ''}${group?.start === index ? ' parallel-group-start' : ''}${group?.end === index + 1 ? ' parallel-group-end' : ''}${step.frozen ? ' frozen' : ''}`}>
+                  <div key={step.id} className={`workflows-step-slot${dropIndex === index ? ' quick-add-drop-before' : ''}${group ? ' parallel-group-member' : ''}${group?.start === index ? ' parallel-group-start' : ''}${group?.end === index + 1 ? ' parallel-group-end' : ''}${step.frozen ? ' frozen' : ''}`}>
                     {group?.start === index && (
                       <div className="workflows-parallel-label">Parallel · {group.end - group.start} steps</div>
                     )}
@@ -147,9 +161,11 @@ export function WorkflowEditorPanel({ manager }: Props) {
                   </div>
                 );
               })}
-              <button className="workflows-add-step" onClick={actions.addStep}>
-                <Plus size={12} /> Add step
-              </button>
+              <div className={`workflows-add-step-slot${dropIndex === editor.steps.length ? ' quick-add-drop-before' : ''}`}>
+                <button className="workflows-add-step" onClick={actions.addStep}>
+                  <Plus size={12} /> Add step
+                </button>
+              </div>
             </div>
           </div>
           <WorkflowQuickAddBar

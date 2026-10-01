@@ -1,5 +1,10 @@
 # E2E navigation
 
+- [workflow-editor-drag.spec.ts](./workflow-editor-drag.spec.ts) intercepts all
+  API and WebSocket traffic. Exercises click-to-append, real chip drags before,
+  between and after steps, empty workflows, existing row reordering, rejected
+  drops, and frost styling/editing/save/reload for all step kinds.
+
 - [workflow-parallel.spec.ts](./workflow-parallel.spec.ts) creates a disposable
   workflow definition without launching harnesses. Checks toggle accessibility,
   action barriers, matching connector/icon color, frozen members, and save/reload.

@@ -22,8 +22,8 @@ export type EditorMutationActions = {
   patchStep: (idx: number, patch: Partial<WorkflowStep>) => void;
   removeStep: (idx: number) => void;
   addStep: () => void;
-  addControlStep: (kind: WorkflowStepKind) => void;
-  addDefaultPromptStep: (p: DefaultPrompt) => void;
+  addControlStep: (kind: WorkflowStepKind, index?: number) => void;
+  addDefaultPromptStep: (p: DefaultPrompt, index?: number) => void;
   reorderSteps: (fromIdx: number, toIdx: number) => void;
   patchVariable: (idx: number, patch: Partial<WorkflowVariable>) => void;
   addVariable: () => void;
@@ -79,12 +79,12 @@ export function useEditorMutationActions(
     onStepsAdded([id]);
   }, [setEditor, onStepsAdded]);
 
-  // Append a headless control-flow step (Start/Merge/Push). These have no
+  // Add a headless control-flow step (Start/Merge/Push). These have no
   // prompt or harness — they drive Lattice's own task pipeline server-side
   // and are the building blocks for highly autonomous workflows. The Run tests
   // step (`test`) is added the same way: no prompt (its brief is fixed), the
-  // default harness, the default timeout.
-  const addControlStep = useCallback((kind: WorkflowStepKind) => {
+  // default harness, the default timeout. With no insertion index, append.
+  const addControlStep = useCallback((kind: WorkflowStepKind, index?: number) => {
     const titleByKind: Record<WorkflowStepKind, string> = {
       agent: 'Step',
       start: 'Start all open tasks',
@@ -92,30 +92,32 @@ export function useEditorMutationActions(
       push: 'Push to remote',
       test: 'Run tests',
     };
-    setEditor((cur) => ({
-      ...cur,
-      steps: [...cur.steps, makeControlStep(kind, titleByKind[kind])],
-      dirty: true,
-    }));
+    const step = makeControlStep(kind, titleByKind[kind]);
+    setEditor((cur) => {
+      const steps = [...cur.steps];
+      steps.splice(index ?? steps.length, 0, step);
+      return { ...cur, steps, dirty: true };
+    });
   }, [setEditor]);
 
-  // Append a step seeded from a default-prompt chip. If the editor is empty
+  // Add a step seeded from a default-prompt chip, appending unless an insertion
+  // index is supplied by a drop. If the editor is empty
   // (no workflow loaded, no steps), bootstrap a draft so clicking a chip from
   // the empty state immediately produces something runnable.
-  const addDefaultPromptStep = useCallback((p: DefaultPrompt) => {
+  const addDefaultPromptStep = useCallback((p: DefaultPrompt, index?: number) => {
     const id = localStepId();
     setEditor((cur) => {
       const base: EditorState =
         cur.workflowId === null && cur.steps.length === 0 && cur.name === ''
           ? { ...cur, name: p.title, dirty: true }
           : cur;
+      const steps = [...base.steps];
+      // Built-in quick-add prompts end with {{user_instructions}}.
+      steps.splice(index ?? steps.length, 0,
+        makeAgentStep({ id, title: p.title, prompt: withUserInstructions(p.prompt), tools: p.tools }));
       return {
         ...base,
-        steps: [
-          ...base.steps,
-          // Built-in quick-add prompts end with {{user_instructions}}.
-          makeAgentStep({ id, title: p.title, prompt: withUserInstructions(p.prompt), tools: p.tools }),
-        ],
+        steps,
         dirty: true,
       };
     });

@@ -71,13 +71,26 @@ step advance, so `currentStepIndex` jumps over frozen rows while `totalSteps`
 still counts them. It's the one-click alternative to deleting a step and
 retyping its prompt later.
 
-UI consequences to keep in sync: the row dims with an icy left rail
+UI consequences to keep in sync: the row has an icy gradient surface,
+crystalline edge texture and left rail, with lightly muted contents
 (`.workflows-step.frozen`, `--freeze*` tokens in `styles/tokens.css`), its badge
 becomes a snowflake during a run (`stepRunStatus` → `skipped`), the saved-list
 row shows an "N frozen" meta chip, and Run/Queue are disabled with an
 "Every step is frozen" reason when nothing runnable is left — the backend
 refuses an all-frozen run anyway, so the disable is just the earlier, nicer
 half of the same rule.
+
+## Quick-add drag and drop
+
+Quick-add chips keep their click-to-append behavior and can also be dragged
+before, between or after steps. `useQuickAddDragDrop.ts` owns the separate
+`application/x-lattice-workflow-quick-add` copy payload and the list's insertion
+marker. It uses row midpoints to include the gaps and Add step area, recomputes
+the index on drop, and clears the marker on leave/drop/dragend. Prompt payloads
+carry only an id; the panel resolves the project-tailored prompt and calls the
+same add action as a click, with an optional insertion index. Row dragging
+still uses the existing move MIME and reorder action. Frost overlays use
+`pointer-events: none` so frozen rows remain editable and accept drops.
 
 ## Parallel reviews
 
