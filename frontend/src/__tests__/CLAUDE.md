@@ -29,6 +29,14 @@ Selected suites and the contracts they own (not exhaustive):
   identities, failures, removals, remote/local additions, project-switch
   cancellation, and the Sidebar's pane status/remount behavior. Restore summaries
   still mark queued tabs pending when queue events were missed.
+  Direct mount-`Set` assertions pin bounded history across repeated removals and
+  exclude stale active IDs, preserving surviving tabs across panels/project
+  switches, pending/failed closes, and startup/fallback restore gates.
+- `sidebarResizeLifetime.test.ts` — real `useSidebarWidth` coverage for interrupted
+  drags: unmount/replacement cleanup releases listeners, RAF and pointer capture,
+  restores body styles, and rejects stale callbacks; unmount never writes settings.
+  Normal release/cancel persistence, width clamping/maximizing, viewport resize
+  and double-click reset remain covered.
 - `searchMatcher.test.ts` — `buildSearchRegExp` (`components/forceGraph/`):
   wildcard→regex translation, metacharacter escaping, case-insensitive matching,
   and the null-on-empty/invalid-regex guard. Must stay in sync with the backend
@@ -112,9 +120,9 @@ Selected suites and the contracts they own (not exhaustive):
 ### Memory ownership regressions
 
 These suites assert deterministic ownership/disposal contracts with controlled
-doubles and disposal instrumentation, without a real GPU or nondeterministic
-forced-GC timing. Passing them does not establish the cause of the cross-PC
-browser OOM report.
+doubles and disposal/reference instrumentation, without measuring real GPU bytes
+or relying on nondeterministic forced-GC timing. Passing them does not establish
+the cause of the cross-PC Chrome OOM report.
 
 - `sceneFrameDriver.test.ts` / `nodeMotionDriver.test.ts` — unsubscribe releases
   cached frame/motion/drag callbacks immediately, including the last listener,
@@ -144,8 +152,15 @@ browser OOM report.
 - `labelTextureCache.test.ts` — refcounts protect mounted/shared labels;
   release-time eviction reclaims excess textures, paired materials and canvas
   pixels without another cache miss. Owner teardown clears the cache and pixels.
-- `labelGeometryLeak.test.ts` — each entry's owned connector geometry is disposed
-  once before registry clear; shared line materials remain intact.
+- `labelGeometryLeak.test.ts` — production factories populate real LOC/health/name
+  registries; `clearAllLabelRegistries` empties them and disposes each owned
+  connector geometry exactly once, preserving shared line materials. Release-time
+  eviction reclaims excess textures, paired materials and canvas pixels without
+  another build; separate metric-owner clears balance references while a shared
+  sibling stays mounted.
+- `labelRepulsion.test.ts` — stale cleanup preserves scene-connected labels and
+  state, removes ancestor-detached and directly unparented entries, and invokes
+  the owning-release callback once only for the ancestor-detached entry.
 - `repulsionScratchReset.test.ts` — an empty repulsion tick drops scratch
   references to the previous labels, without waiting for another non-empty tick.
 - `graphSettingsForceOwnership.test.ts` — collision disable drops its cache;

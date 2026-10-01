@@ -1,13 +1,12 @@
-// Renderer (WebGL) status for the file graph. Split out of the React layer so
-// the classification + copy can be unit-tested without a DOM.
+// Renderer (WebGL) status for the file graph. Kept outside React so the
+// classification and copy can be unit-tested without a DOM.
 //
-// The graph owns the app's only long-lived WebGL context, and a browser can
-// refuse one for reasons that have nothing to do with Lattice: the per-page
-// context budget is already spent (each active xterm WebglAddon takes one
-// too), the GPU process is down — an out-of-memory kill is the usual cause,
-// and Chrome then withholds contexts until the *browser* restarts — or
-// hardware acceleration is switched off. THREE surfaces all of them the same
-// way, by throwing `Error creating WebGL context.` out of `new WebGLRenderer`.
+// WebGL construction errors and `webglcontextlost` report renderer failure,
+// not its cause: neither alone establishes OOM or a garbage-collection defect.
+// Retry remounts the coordinator and its hooks; `webglcontextrestored` clears
+// the notice. A browser restart may help persistent failures, but is neither
+// a guaranteed nor an exclusive recovery action. See the recovery advice in
+// ../../../README.md#browser-memory-troubleshooting.
 
 export type RendererStatus =
   | { kind: 'ok' }
