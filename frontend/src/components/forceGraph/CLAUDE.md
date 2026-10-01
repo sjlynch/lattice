@@ -183,16 +183,13 @@ label physics in `labelPhysics/CLAUDE.md`.
   destroy; inactive overlays may never receive another frame. A remaining sibling
   keeps the index, and the next addition rebuilds it through `ensure`. Coverage:
   [agentOverlayPathIndex.test.ts](../../__tests__/agentOverlayPathIndex.test.ts).
-  `agentOverlayLabelLayout.ts` is the **label spreader**: at the end of each tick
-  it projects every agent + satellite label onto the camera's image plane
-  (depth-normalised), de-overlaps them with the pure `spreadLabelRects` (labels
-  only slide along their node's side; satellites label outward from the parent),
-  maps back to world space, and draws a faint
-  leader to any label it displaced. It's a snap, not an animation, so it holds
-  no idle reason — an orbit already renders on `interact`. It sizes labels with
-  `floatingLabelHeight` (shared with the sprite's own onBeforeRender, which runs
-  after the scene-level tick) so a zoom's last frame isn't laid out a frame
-  stale.
+  `agentLabelRects.ts` owns the dependency-free rectangle types and pure
+  `spreadLabelRects` packing (labels only slide along their node's side).
+  `agentOverlayLabelLayout.ts` is the scene adapter and compatibility re-export:
+  each tick it sizes labels with `floatingLabelHeight`, projects onto the
+  camera's image plane, chooses outward satellite sides, packs, maps back to
+  world space and manages faint leaders for displaced labels. Layout snaps
+  without holding an idle reason; an orbit already renders on `interact`.
 
 **Idle / scene / motion drivers**
 - `idleController.ts` + `idleController{Reasons,Loop,Engine,Interact}.ts` — reason
