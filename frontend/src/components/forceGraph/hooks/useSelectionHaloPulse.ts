@@ -4,20 +4,17 @@ import { getIdleController } from '../idleController';
 import { onFrame } from '../sceneFrameDriver';
 import { resetHaloPulse, updateHaloPulse } from '../halo';
 
-// Pulses the selection halo between its base color and a brighter/whiter tint
-// so selected nodes (search hits or box-selected) stay visible in dense graphs.
+// Pulses two shared SpriteMaterials in lock-step: the selection ring's tint
+// brightens toward white while the additive glow's opacity rises, then both
+// return to rest. `halo.ts::updateHaloPulse` updates them in O(1) per frame
+// regardless of selected-node count; allocation belongs to `haloResources.ts`.
 //
-// Performance: the halo is ONE shared SpriteMaterial (see halo.ts), so the
-// pulse recolors a single material per frame — O(1) regardless of how many
-// nodes are selected; every mounted halo sprite picks up the new tint for free.
-//
-// Render-on-demand: while a selection exists the pulse holds the idle
-// controller's `halo` reason (a slow-only reason, like `agents`/`labelPhysics`)
-// so the loop keeps painting but duty-cycles to ~30fps — plenty for a ~1s pulse
-// at half the render cost. An empty selection releases the reason and the loop
-// suspends again. The per-frame recolor rides the scene's real render frames via
-// `onFrame`; clearing the selection restores the base tint and paints it once
-// with `wakeForRefresh` (the loop is otherwise about to suspend).
+// This hook owns the `onFrame` subscription and the idle controller's slow-only
+// `halo` reason, held only while selected (~30fps when no faster reason is held).
+// Clearing selection releases the reason, resets both existing materials
+// (base ring tint, glow opacity 0), and requests one paint via `wakeForRefresh`.
+// Teardown unsubscribes, releases any held reason, and resets; pulse/reset never
+// allocate resources. See ../CLAUDE.md for full resource ownership details.
 export function useSelectionHaloPulse(
   graphRef: MutableRefObject<ForceGraph3DInstance | null>,
   hasSelection: boolean,
