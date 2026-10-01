@@ -33,6 +33,9 @@ the next:
      `unhandled`. Worker construction failure, unexpected death or respawn-budget
      exhaustion likewise returns the unprocessed tail for in-thread fallback.
      Worker factory + `moduleUrls` are injectable test seams.
+   - **Worker program** — [healthWorkerSource.ts](healthWorkerSource.ts) holds
+     the scan's eval source and message protocol; `healthWorkerRunner.ts` remains
+     the parent resource owner.
    - **Handled outcomes/watchdog** — completed `analysis: null` results are
      failed/skipped analyses, excluded from fallback. The per-file stall watchdog
      (default 10 s, reset on each completed file) terminates the worker, reports
