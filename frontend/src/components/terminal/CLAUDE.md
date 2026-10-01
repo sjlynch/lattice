@@ -33,20 +33,24 @@ CLAUDE.md) — different directory, don't conflate.
 - `terminalSocket.ts` — React-free helpers for the connection: `buildTerminalWsUrl`
   (URL building), `handleTerminalMessage` (decode + dispatch), `reconnectDelay` /
   `canReattachTerminal` / `shouldGiveUpReconnect` (backoff/give-up decisions),
-  `forwardTerminalInput` (xterm onData/onResize → socket), `terminalNotices` (all
-  user-visible terminal-body status lines, in one place), and `MAX_RECONNECT_ATTEMPTS`.
-  Two behaviours here exist for the harness TUIs, not for xterm: **resizes are
-  trailing-debounced** (`RESIZE_DEBOUNCE_MS`) so a drag reaches the pty once at
-  its settled size — every pty resize is a SIGWINCH, and Codex (since its
-  resize-reflow shipped) clears and re-emits up to thousands of transcript rows
-  per width change, which turned one drag into minutes of redraw; and **an
-  `attached` frame clears the xterm buffer** before the scrollback replay that
-  follows it — a reconnect used to append the ~2 MB replay under the content the
-  pane already showed. It is `term.clear()`, never `term.reset()`: a full RIS
+  `terminalNotices` (all user-visible terminal-body status lines, in one place),
+  and `MAX_RECONNECT_ATTEMPTS`.
+  Re-exports `forwardTerminalInput` and `RESIZE_DEBOUNCE_MS` from `terminalInput.ts`
+  for existing consumers. **An `attached` frame clears the xterm buffer** before
+  the scrollback replay that follows it — a reconnect used to append the ~2 MB
+  replay under the content the pane already showed. It is `term.clear()`, never
+  `term.reset()`: a full RIS
   also drops the DEC private modes the running TUI switched on at startup
   (bracketed paste, mouse tracking, alternate screen), and those sequences sit
   far outside a long session's replay window, so nothing would restore them.
   Pinned by `__tests__/terminalSocketResize.test.ts`.
+- `terminalInput.ts` — `forwardTerminalInput` owns xterm onData/onResize listeners,
+  the pending size and the 150 ms trailing resize timer (`RESIZE_DEBOUNCE_MS`).
+  Input sends immediately; every send looks up the current OPEN socket. Disposal
+  removes both listeners and cancels/drops the pending resize without sending it.
+  Debouncing sends only a drag's settled size: every pty resize is a SIGWINCH,
+  and Codex's resize reflow can re-emit thousands of transcript rows per change.
+  Pinned by `__tests__/terminalSocketResize.test.ts` via the old import path.
 - `terminalConfig.ts` — `Terminal` options + theme. `clipboardPaste.ts` — Ctrl+V
   → `term.paste()` (xterm would otherwise forward ^V as a raw byte).
 

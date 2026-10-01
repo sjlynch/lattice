@@ -31,6 +31,7 @@ export function useSidebarWidth(
     () => !activeFolder,
   );
   const resizingRef = useRef(false);
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
   const activeFolderRef = useSyncedRef(activeFolder);
   const { settings, loaded } = userSettings;
 
@@ -78,12 +79,17 @@ export function useSidebarWidth(
     return () => window.removeEventListener('resize', onResize);
   }, []);
 
+  // An interrupted drag must release its resources without committing settings.
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
   const onResizerPointerDown = useCallback((e: ReactPointerEvent<HTMLDivElement>) => {
     e.preventDefault();
+    resizeCleanupRef.current?.();
     resizingRef.current = true;
     const target = e.currentTarget;
+    const pointerId = e.pointerId;
     try {
-      target.setPointerCapture(e.pointerId);
+      target.setPointerCapture(pointerId);
     } catch {
       /* ignore */
     }
@@ -95,6 +101,7 @@ export function useSidebarWidth(
     // Coalesce pointer moves to one width commit per animation frame: each
     // commit re-renders App (and lays the graph + sidebar out again), and a
     // pointer delivers several moves per frame.
+    let active = true;
     let frame: number | null = null;
     let latestX: number | null = null;
     const apply = (x: number) => {
@@ -104,20 +111,36 @@ export function useSidebarWidth(
       return full;
     };
     const handleMove = (ev: PointerEvent) => {
-      if (!resizingRef.current) return;
+      if (!active || !resizingRef.current) return;
       latestX = ev.clientX;
       if (frame !== null) return;
       frame = requestAnimationFrame(() => {
         frame = null;
-        if (resizingRef.current && latestX !== null) apply(latestX);
+        if (active && resizingRef.current && latestX !== null) apply(latestX);
       });
     };
-    const handleUp = (ev: PointerEvent) => {
+    const cleanup = () => {
+      if (!active) return;
+      active = false;
       resizingRef.current = false;
       if (frame !== null) {
         cancelAnimationFrame(frame);
         frame = null;
       }
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+      window.removeEventListener('pointercancel', handleUp);
+      try {
+        target.releasePointerCapture(pointerId);
+      } catch {
+        /* ignore */
+      }
+      document.body.style.userSelect = prevUserSelect;
+      document.body.style.cursor = prevCursor;
+      if (resizeCleanupRef.current === cleanup) resizeCleanupRef.current = null;
+    };
+    const handleUp = (ev: PointerEvent) => {
+      if (!active) return;
       // The final width comes from the release point, not the state ref: the
       // last coalesced frame may not have committed yet. A `pointercancel`
       // (touch cancelled, window lost the pointer) carries no useful
@@ -125,17 +148,8 @@ export function useSidebarWidth(
       // minimum — so it settles on the last move instead; with no move at all
       // there is nothing to commit.
       const releaseX = ev.type === 'pointercancel' ? latestX : ev.clientX;
+      cleanup();
       const finalFull = releaseX === null ? null : apply(releaseX);
-      document.body.style.userSelect = prevUserSelect;
-      document.body.style.cursor = prevCursor;
-      try {
-        target.releasePointerCapture(ev.pointerId);
-      } catch {
-        /* ignore */
-      }
-      window.removeEventListener('pointermove', handleMove);
-      window.removeEventListener('pointerup', handleUp);
-      window.removeEventListener('pointercancel', handleUp);
       if (activeFolderRef.current && releaseX !== null) {
         // A full-width release keeps the stored width as the last non-full one.
         patchUserSettings(
@@ -146,6 +160,7 @@ export function useSidebarWidth(
         ).catch(() => {});
       }
     };
+    resizeCleanupRef.current = cleanup;
     window.addEventListener('pointermove', handleMove);
     window.addEventListener('pointerup', handleUp);
     window.addEventListener('pointercancel', handleUp);
