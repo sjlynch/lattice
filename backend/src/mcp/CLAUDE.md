@@ -3,8 +3,10 @@
 The MCP control plane. Lattice is the single place a user curates/toggles MCP
 servers; it injects the enabled set into the Claude, Codex and Pi sessions it
 spawns. Policy is **resolved in the main backend** (`registry.ts`) and
-**applied** per harness at spawn. Full design: `plans/mcp-integration.md` +
-`plans/mcp-codex-pi-harness-plan.md` (gitignored).
+**applied** per harness at spawn. Tracked guidance: the
+[spawn client](../terminalServerClient/CLAUDE.md),
+[Claude apply mechanism](../claudeTrust/CLAUDE.md) and
+[Pi MCP](../piMcp/CLAUDE.md) guides.
 
 ## Per-harness mechanism
 
@@ -38,15 +40,23 @@ All spawns funnel through `proxyCreateSession` → `resolveHarnessSpawnBody`
   is inert.
 
 **v1 coverage — Lattice-created launches only** (task run/resume, workflow step,
-prompt customization, post-merge hook, sidebar launcher). The sidebar launcher
-reaches the chokepoint via **`POST /api/terminals`** (`routes/terminals.ts`),
-which pre-creates the pty; without it a sidebar terminal connects serverlessly
-to `/ws/terminal` (pty built from WS query params) and Codex/Pi get no MCP —
-only Claude survives, via the persistent project-root reconcile. A harness typed
+prompt customization, post-merge hook, sidebar dropdown/startup terminals).
+Both dropdown and startup launches normally pre-create via
+`createBackendSession` → **`POST /api/terminals`** (`../routes/terminals.ts`) →
+`proxyCreateSession` → `resolveHarnessSpawnBody`, then attach to `/ws/terminal`
+by the returned `serverId`. Startup `owner: 'startup'` / `startupId` metadata
+reaches the durable registry. Recognized harness commands receive their spawn
+configuration; dispatch uses command-prefix checks
+(`../terminalServerClient/spawnBody.ts`), so arbitrary compound shell commands
+are not guaranteed to be recognized. See the current
+[sidebar launch guide](../../../frontend/src/components/sidebar/hooks/CLAUDE.md).
+
+Failed pre-creation falls back to serverless `/ws/terminal` creation from WS
+query params, bypassing the Codex/Pi MCP resolution path. Claude can still use
+the persistent project-root reconcile. A harness typed
 into an already-open plain shell is not observable, and Lattice deliberately
 does not write a tracked `.codex/config.toml` or a proactive project-root
-`.pi/mcp.json` to cover it. (Startup-configured harness terminals also stay
-serverless for now — see `frontend/src/components/sidebar/CLAUDE.md`.)
+`.pi/mcp.json` to cover it.
 
 ## Policies
 
@@ -287,3 +297,13 @@ server-side env kill switch over an in-app consent setting** (blender-mcp's
 checkbox gates only the private payload, anonymous events ship regardless, and
 `get_telemetry_consent` FAILS OPEN), and **set every accepted variable name** so
 an upstream rename can't resume sending. Covered in `__tests__/mcp.harness.test.ts`.
+
+## Command references
+
+From `backend/` (documentation references, not task-agent execution steps):
+
+```sh
+npm run build
+npm test
+npx tsc --noEmit
+```
