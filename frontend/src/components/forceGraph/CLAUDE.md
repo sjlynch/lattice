@@ -7,13 +7,11 @@ label physics in `labelPhysics/CLAUDE.md`.
 ## Two named subsystems (shared vocabulary)
 
 - **Idle controller** (`idleController.ts`) — the render-on-demand gate: a
-  reference-counted wrapper around `pauseAnimation`/`resumeAnimation` that
-  suspends the RAF loop unless a **reason** is held (`engine`, `interact`,
-  `refresh`, `labelPhysics`, `agents`, `halo`; minus a tab-hidden gate and a collapsed-container gate for the
-  graph hidden behind a full-width sidebar). THE perf
-  contract: a settled, un-interacted scene reaches 0 frames (see invariants).
-  `agents`/`labelPhysics`/`halo` are the *slow-only* reasons — when they're the
-  only thing awake the loop duty-cycles to ~30fps.
+  reference-counted `pauseAnimation`/`resumeAnimation` wrapper. The RAF loop
+  needs a held **reason** (`engine`, `interact`, `refresh`, `labelPhysics`,
+  `agents`, `halo`) and is gated off for a hidden tab or collapsed container.
+  A settled, un-interacted scene reaches 0 frames; when only the *slow-only*
+  `agents`/`labelPhysics`/`halo` reasons remain, it duty-cycles to ~30fps.
 - **Agent Presence Layer (APL)** (`agentOverlay*.ts` + `hooks/useAgentOverlay`)
   — where live agents (Claude, Codex, Pi) work: per agent a free-floating
   **presence node**, fading **focus beams** to files it touches, a file
@@ -37,22 +35,16 @@ label physics in `labelPhysics/CLAUDE.md`.
   refs through `useGraphOverlays` + `useForceGraphInitialization`, and stays
   focused on graph lifecycle / scene runtime orchestration. Imperative syncs +
   keyboard live in focused hooks.
-- `rendererStatus.ts` / `GraphRendererNotice.tsx` — **WebGL faults are expected,
-  not bugs.** The graph owns the app's only long-lived WebGL context and the
-  browser can refuse one outright: the per-page context budget is spent (each
-  *active* xterm WebglAddon holds one too — see
-  `terminal/useActiveTerminalWebgl`), or the GPU process is down after an
-  out-of-memory kill, in which case Chrome withholds contexts until the
-  **browser** restarts — a page reload does nothing. THREE throws
-  `Error creating WebGL context.` out of `new ForceGraph3D`, and an exception
-  escaping the init layout effect used to reach `<ErrorBoundary compact>` and
-  blank the whole graph subtree behind a raw stack. So init catches it, the
-  coordinator renders a recoverable notice over the dead viewport, and Retry
-  **remounts the coordinator** — re-running init alone would leave every hook
-  below wired to a graph instance that no longer exists. The same notice covers
-  `webglcontextlost` (frozen canvas, previously silent) and clears itself on
-  `webglcontextrestored`. Classification/copy is pure + unit-tested in
-  `src/__tests__/rendererStatus.test.ts`.
+- `rendererStatus.ts` / `GraphRendererNotice.tsx` — classify initialization
+  errors (including WebGL construction failures) and show a notice for them or
+  `webglcontextlost`. A construction failure or context-loss event alone
+  establishes neither OOM nor a GC defect. Retry **remounts the coordinator
+  and its hooks**: re-running init alone would leave hooks wired to the old
+  graph instance. `webglcontextrestored` clears the notice and wakes rendering.
+  A browser restart may help, but is neither a guaranteed nor an exclusive
+  cure; see the existing
+  [browser memory troubleshooting and graph recovery advice](../../../README.md#browser-memory-troubleshooting).
+  Classification coverage: [rendererStatus.test.ts](../../__tests__/rendererStatus.test.ts).
 - `useGraphViewChromeModel.ts` — shapes the coordinator's state into HUD,
   overlay-key, timeline, selection, context-menu, task-modal, toast, and settings
   chrome props (including counts, timeline range handler, and active-pin state).
@@ -67,33 +59,20 @@ label physics in `labelPhysics/CLAUDE.md`.
   tooltip; writes its own `transform` so cursor moves don't re-render React.
 - `TimelineScrubber.tsx` (+ `timelineRange`/`useTimelineScrubberDrag`/`timelineDiff`/
   `timelineReset`) — git timeline scrubber UI + range math. `timelineDiff`'s
-  `buildGhostGraphData` mints one **ghost node per path in
-  `GitHistoryResult.deletedPaths`** — the backend's `git ls-files`-derived set of
-  history paths that no longer exist (`backend/src/gitHistory/deletedPaths.ts`) —
-  all in forward-slash relative-to-root space via `relForward`. **Deriving that
-  set here is not possible and must not be reattempted:** the scan is filtered to
-  `SOURCE_EXTS` while `git log` is not, so "missing from the scan" ghosted every
-  tracked image/font/`.ico`/`.gitignore` and drew it as deleted on the commit
-  that added it; and "newest status in log order is `D`" is no better, since
-  `git log` sorts by date across branches and Lattice branches constantly.
-  Paths still present in the scan are skipped as a consistency guard (scan and
-  history are fetched independently). **Parent-linking invariant:** a ghost links to the
-  nearest existing *ancestor directory* node — walking `a/b/c` → `a/b` → `a` —
-  and falls back to the scan-root node id when none exist, so deleted/renamed
-  files always attach somewhere real rather than dangling. See
-  `src/__tests__/timelineDiff.test.ts`. `hooks/useGitTimeline` keeps history **live**:
-  besides the once-per-project fetch it subscribes to `subscribeGitStatus`
-  (`/ws/git-status`) and re-fetches on a new signature (deduped vs the last one),
-  so a commit / working-tree edit updates the commit list + dirty rings without a
-  page refresh. `timelineRange.reconcileTimelineRange` remaps the scrubber range
-  onto the new tick space so a live update never yanks the handles (tested in
-  `src/__tests__/timelineRange.test.ts`).
+  `buildGhostGraphData` uses **`GitHistoryResult.deletedPaths`**, the backend's
+  `git ls-files`-derived missing history paths (`backend/src/gitHistory/deletedPaths.ts`),
+  normalized with `relForward`; paths still in the scan are skipped. Never infer
+  deletion from scan absence (`SOURCE_EXTS` filters it) or the latest `git log`
+  status (date order crosses branches). Ghosts link to the nearest existing
+  **ancestor directory**, falling back to the scan root. `hooks/useGitTimeline`
+  re-fetches on a new `subscribeGitStatus` signature; `reconcileTimelineRange`
+  preserves handle positions in the new tick space. Coverage:
+  [timelineDiff.test.ts](../../__tests__/timelineDiff.test.ts),
+  [timelineRange.test.ts](../../__tests__/timelineRange.test.ts).
 
 **Node sprites & recolor overlays**
-- `nodeObjectFactory.ts` — `buildNodeObject`: builds a node's THREE root by
-  applying the decision from `spriteDecision.ts` as a flat sequence (build base
-  sprite, hide-if-batched, attach change-ring/label/halo sibling children).
-  Handed to `nodeThreeObject`.
+- `nodeObjectFactory.ts` — `buildNodeObject` applies `spriteDecision.ts` to the
+  node's THREE root, including sibling rings/labels/halos; passed to `nodeThreeObject`.
 - `spriteDecision.ts` — `decideSpriteState`: the pure ghost/health/loc/dead/base
   decision tree (recolor precedence security > health > loc > dead > base) returning a
   plain, THREE-free `SpriteDecision` (baseKind + hide-when-batched + which
@@ -134,25 +113,28 @@ label physics in `labelPhysics/CLAUDE.md`.
   `labelPhysics` only while labels move) + `labelPhysics/` (pure physics, own doc).
 
 **Sibling-child ring/halo toggles ("the halo pattern")**
-- `halo` + `selectionHaloSync` (toggle the halo per changed id) + the
-  `useSelectionHaloPulse` hook. The halo is a Group of two shared-material
-  sprites: a **ring** below the node body (an outline, `RING_RENDER_ORDER`) and
-  an additive-white **glow** just above it (`SELECTION_GLOW_RENDER_ORDER`) that
-  brightens the node itself. The pulse animates both shared materials (ring tint
-  brighter/whiter ⇄ base, glow opacity 0 ⇄ peak) in lock-step while any node is
-  selected — O(1) per frame regardless of selection size; holds the idle
-  controller's slow-only `halo` reason only while selected. `worktreeRing` +
-  `worktreeRingSync` (`W`): the ring's state is a fetched path→color snapshot,
-  not something `decideSpriteState` can derive, so the sync publishes it on
-  `worktreeRingsRef` (a `NodeObjectRefs` member) and `buildNodeObject`
-  re-attaches the ring from it on every full rebuild — a metric-view toggle /
-  size slider / batched-nodes flip / file-save rescan while `W` was active used
-  to rebuild every root ring-less. `clearWorktreeRings` is a one-shot O(N)
-  scene walk (never a remembered id set, which a rebuild would orphan). Pinned
-  by `src/__tests__/worktreeRingRebuild.test.ts`. `changeRing` +
-  `changeRingSync` + `changeRing{Materials,Textures}` (timeline git rings, two-part
-  `W`-suppression). Each toggles a ring as a sibling child of the node root for
-  only the changed ids — never `graph.refresh()`.
+- `haloResources.ts` — owns the lazy ring/glow `CanvasTexture` and
+  `SpriteMaterial` singletons. Every node borrows the same two materials and
+  their textures. Once created, they are retained for the module lifetime;
+  there is no halo resource teardown API. Removing a halo must not dispose them.
+- `halo.ts` — owns selection-glow settings, shared pulse/reset, and per-node
+  Group attachment. The Group contains a ring below the body and an additive
+  glow above it; removal only detaches the Group. Pulse/reset use
+  `peekRingMaterial`/`peekGlowMaterial`, which do not allocate, so calling either
+  before the first halo creates no canvases or GPU resources. The pulse updates
+  both shared materials in O(1) per frame regardless of selection size.
+- `selectionHaloSync` toggles changed ids without `graph.refresh()`;
+  `hooks/useSelectionHaloPulse` holds the slow-only `halo` idle reason only while
+  selected, then resets and wakes once. `hooks/useSelectionGlowSettings` pushes
+  settings to `halo.ts`: strength is read live; scale rebuilds selected halos.
+- `worktreeRing` + `worktreeRingSync` (`W`) — fetched path→color state lives in
+  `worktreeRingsRef` (`NodeObjectRefs`), so `buildNodeObject` can re-attach rings
+  on every full rebuild. `clearWorktreeRings` walks the current scene, never a
+  remembered id set that a rebuild would orphan. Coverage:
+  [worktreeRingRebuild.test.ts](../../__tests__/worktreeRingRebuild.test.ts).
+- `changeRing` + `changeRingSync` + `changeRing{Materials,Textures}` — timeline
+  rings with two-part `W` suppression. Like selection/worktree rings, these are
+  sibling children toggled per changed id, without `graph.refresh()`.
   `changeRingSync` also carries **ghost visibility**, and because it skips the
   digest it has to move the ghost's *link* by hand as well: the library's
   per-link object (`__lineObj`) plus a `getInstancedLinks(graph).rebuild()` for
@@ -185,11 +167,9 @@ label physics in `labelPhysics/CLAUDE.md`.
   [agentOverlayPathIndex.test.ts](../../__tests__/agentOverlayPathIndex.test.ts).
   `agentLabelRects.ts` owns the dependency-free rectangle types and pure
   `spreadLabelRects` packing (labels only slide along their node's side).
-  `agentOverlayLabelLayout.ts` is the scene adapter and compatibility re-export:
-  each tick it sizes labels with `floatingLabelHeight`, projects onto the
-  camera's image plane, chooses outward satellite sides, packs, maps back to
-  world space and manages faint leaders for displaced labels. Layout snaps
-  without holding an idle reason; an orbit already renders on `interact`.
+  `agentOverlayLabelLayout.ts` is the scene adapter and compatibility re-export;
+  it projects/packs labels and manages displacement leaders. Layout snaps
+  without an idle reason; an orbit already renders on `interact`.
 
 **Idle / scene / motion drivers**
 - `idleController.ts` + `idleController{Reasons,Loop,Engine,Interact}.ts` — reason
@@ -265,32 +245,18 @@ label physics in `labelPhysics/CLAUDE.md`.
   `hooks/useGraphSettings`' `useLayoutShapeSettings` (with `alphaDecay`/`warmupTicks`)
   only while `collideRadius > 0`.
 - `radialTidyLayout.ts` (`computeRadialTidyLayout`/`tidyRingStep`, pure/tested) +
-  `hooks/useRadialTidyLayout` — the **on-load untangler**. The scan is a
-  containment *tree*; the library's default phyllotaxis-spiral seed ignores it and
-  the engine settles sibling subtrees into a tangled "cord nest". Instead we seed
-  each node at its **radial tidy-tree** position — every subtree gets its own
-  angular wedge (sized by leaf count), radius growing with directory depth — so
-  sibling wedges never overlap and the seed is effectively planar (≈0 link
-  crossings). The engine then settles *from* the seed: radially-symmetric forces
-  preserve the angular separation while the global charge declumps each directory's
-  file cluster into 2D area. `tidyRingStep` is adaptive (`≈ sqrt(N)*linkDistance /
-  maxDepth`, floored at `dagLevelDistance`) so the seed lands at ~half the
-  force-directed natural radius — compact enough that the engine expands *outward*
-  from it (which declumps) rather than contracting (which freezes clumps). Runs
-  once per project on first data populate (guarded against file-save re-scans) and
-  on demand via the Spread tab's "Untangle now" button. **Apply + reheat are
-  atomic** in one deferred macrotask: on load the engine is still hot from the
-  data-load reheat, so writing the seed and leaving the reheat for a later frame
-  lets the strong center repulsion scatter the crowded shallow nodes before they
-  settle — re-tangling. Measured ~5–6× fewer X/Z link crossings than the raw
-  library seed. On unless `tidyLayoutOnLoad` is off.
-  `sceneSetup.ts` — camera/OrbitControls lock + resize observer + `applyRenderPixelRatio`.
-  `cameraState.ts` — pure load/save/read of the persisted camera view (used by
-  `hooks/useCameraPersistence`).
-  `depthMap` + `useNodeDepthCache` — Alt-label depth bands; `menu.ts` /
+  `hooks/useRadialTidyLayout` — default-on untangler: seeds the containment tree
+  in separate angular wedges with an adaptive radius so the engine expands
+  outward to declump. Runs once per project on first data populate, guarded
+  against file-save rescans, and on demand via "Untangle now". **Apply + reheat
+  must be atomic** in one deferred macrotask; a frame between them lets the
+  already-hot engine scatter shallow nodes and re-tangle the seed.
+- `sceneSetup.ts` — camera/OrbitControls lock + resize observer + `applyRenderPixelRatio`.
+- `cameraState.ts` — pure persisted camera load/save/read for `hooks/useCameraPersistence`.
+- `depthMap` + `useNodeDepthCache` — Alt-label depth bands; `menu.ts` /
   `renderOrders.ts` — right-click items / z-layer constants.
-  `searchMatcher.ts` — `buildSearchRegExp` for the search bar's file/folder-name pass
-  (wildcard/regex, kept in sync with the backend `search.ts` rules).
+- `searchMatcher.ts` — file/folder-name wildcard/regex matching; keep it aligned
+  with backend `search.ts` rules.
 
 ## Hooks
 
@@ -365,5 +331,7 @@ persisted per project and restored across refresh/project switch by
 
 ## Commands
 
-From `frontend/`: `npm run build` (build), `npm test` (tests), `npx tsc -b`
-(type-check). See [test conventions](../../__tests__/CLAUDE.md).
+Reference commands, with cwd `frontend/`: `npm run build` (build), `npm test`
+(tests), `npx tsc -b` (type-check). These are documentation references;
+Lattice task agents leave checks to the separate Run tests step. See
+[test conventions](../../__tests__/CLAUDE.md).
