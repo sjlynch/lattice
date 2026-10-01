@@ -32,7 +32,10 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   `agent`, so a new kind must be added there too. The legacy per-step `mode`
   (`sequential` | `parallel`) is gone — nothing ever read it; it stays optional
   on the type only so pre-removal data type-checks, and `normalizeSteps` strips
-  it. `frozen`
+  it. `parallel: true` is a separate opt-in for planning `agent` steps only;
+  Start/Merge/Run tests/Push strip it. Adjacent marked agents run together and
+  the runner waits for the group before continuing (`workflowRuns/execution.ts`).
+  `frozen`
   (the editor's snowflake toggle) is kind-agnostic: the step stays in the
   definition but the run engine skips it — see
   `../workflowRuns/frozenSteps.ts`. `tools` (`WorkflowStepTool[]`, v1 only

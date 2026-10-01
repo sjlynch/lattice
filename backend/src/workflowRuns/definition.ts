@@ -2,7 +2,7 @@ import type { Workflow } from '../workflows.js';
 import { normalizeSteps, normalizeVariables } from '../workflows/normalization.js';
 
 export function cloneWorkflowDefinition(wf: Workflow): Workflow {
-  return { ...wf, steps: wf.steps.map((step) => ({ ...step })), variables: wf.variables.map((v) => ({ ...v })) };
+  return { ...wf, steps: wf.steps.map((step) => ({ ...step, ...(step.tools ? { tools: [...step.tools] } : {}) })), variables: wf.variables.map((v) => ({ ...v })) };
 }
 
 // A persisted definition must never silently fall back to today's edited one.

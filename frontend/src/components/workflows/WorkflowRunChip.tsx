@@ -1,3 +1,4 @@
+import { workflowRunProgress } from './parallelSteps';
 import type { WorkflowRun } from '../../api';
 
 type Props = {
@@ -20,8 +21,7 @@ export function WorkflowRunChip({ activeRunList, onOpen }: Props) {
         {activeRunList.length === 1
           ? (() => {
               const run = activeRunList[0];
-              const pos = Math.min(run.currentStepIndex + 1, run.totalSteps);
-              return `${run.workflowName} · Step ${pos}/${run.totalSteps}`;
+              return `${run.workflowName} · ${workflowRunProgress(run).text}`;
             })()
           : `${activeRunList.length} workflows running`}
       </span>

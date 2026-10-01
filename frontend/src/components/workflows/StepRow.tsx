@@ -35,6 +35,7 @@ export const StepRow = memo(function StepRow({
   piMenu,
   definedNames,
   runStatus,
+  autoScroll,
   postMergeHookConfigured = false,
   onChange,
   onRemove,
@@ -50,6 +51,7 @@ export const StepRow = memo(function StepRow({
   piMenu: PiMenuEntry[];
   definedNames: ReadonlySet<string>;
   runStatus?: StepRunStatus;
+  autoScroll?: boolean;
   // The project has a post-merge hook prompt (the Run tests row notes the
   // possible overlap).
   postMergeHookConfigured?: boolean;
@@ -86,6 +88,7 @@ export const StepRow = memo(function StepRow({
   }
   return (
     <AgentStepRow
+      autoScroll={autoScroll}
       step={step}
       index={index}
       collapsed={collapsed}

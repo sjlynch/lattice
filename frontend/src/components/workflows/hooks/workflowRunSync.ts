@@ -18,6 +18,7 @@ export type ControlProgress = {
   current: number;
   total: number;
   message?: string;
+  steps?: Record<number, Omit<ControlProgress, 'steps'>>;
 };
 
 export type RunMap = Record<string, WorkflowRun>;
@@ -68,9 +69,15 @@ export function clearStaleControlProgress(
   cur: ControlProgressMap,
   runId: string,
   currentStepIndex: number,
+  activeIndices: number[] = [currentStepIndex],
 ): ControlProgressMap {
   const prev = cur[runId];
-  if (!prev || prev.stepIndex === currentStepIndex) return cur;
+  if (prev?.steps) {
+    const steps = Object.fromEntries(Object.entries(prev.steps).filter(([i]) => activeIndices.includes(Number(i))));
+    const first = Object.values(steps)[0];
+    return first ? { ...cur, [runId]: { ...first, steps } } : removeKey(cur, runId);
+  }
+  if (!prev || activeIndices.includes(prev.stepIndex)) return cur;
   return removeKey(cur, runId);
 }
 
@@ -85,6 +92,12 @@ export function clearControlProgressForStep(
   stepIndex: number,
 ): ControlProgressMap {
   const prev = cur[runId];
+  if (prev?.steps) {
+    const steps = { ...prev.steps };
+    delete steps[stepIndex];
+    const first = Object.values(steps)[0];
+    return first ? { ...cur, [runId]: { ...first, steps } } : removeKey(cur, runId);
+  }
   if (!prev || prev.stepIndex !== stepIndex) return cur;
   return removeKey(cur, runId);
 }
@@ -117,8 +130,16 @@ export function setControlProgress(
     current: number;
     total: number;
     message?: string;
+    parallel?: boolean;
   },
 ): ControlProgressMap {
+  const step: ControlProgress = { stepIndex: ev.stepIndex, kind: ev.kind, current: ev.current, total: ev.total, message: ev.message };
+  const prev = cur[ev.runId];
+  if (ev.parallel && prev) {
+    const { steps: previousSteps, ...previousStep } = prev;
+    const steps = { ...(previousSteps ?? { [prev.stepIndex]: previousStep }), [ev.stepIndex]: step };
+    return { ...cur, [ev.runId]: { ...Object.values(steps)[0], steps } };
+  }
   return {
     ...cur,
     [ev.runId]: {

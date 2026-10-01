@@ -93,6 +93,7 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
       // keeps the flag out of the JSON for the overwhelmingly common
       // not-frozen case — same shape convention as `piModel`.
       frozen: step.frozen === true ? true : undefined,
+      parallel: kind === 'agent' && step.parallel === true ? true : undefined,
       tools: normalizeStepTools(step.tools),
       // Only a Run tests step has a timeout; the spread above would otherwise
       // carry a stray one on any other kind forever.

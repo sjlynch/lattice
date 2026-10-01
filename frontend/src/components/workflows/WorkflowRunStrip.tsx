@@ -1,3 +1,4 @@
+import { workflowRunProgress } from './parallelSteps';
 import { Square, X } from 'lucide-react';
 import type { WorkflowRun } from '../../api';
 import type { ControlProgress } from './hooks/useWorkflowRuns';
@@ -85,13 +86,13 @@ function renderStrip({
   if (active) {
     const pos = Math.min(active.currentStepIndex + 1, active.totalSteps);
     const pct =
-      active.totalSteps > 0 ? Math.round((pos / active.totalSteps) * 100) : 0;
+      workflowRunProgress(active).percent;
 
     // Surface control-step progress only when it belongs to the currently-
     // executing step (defensive — stale events get filtered in useWorkflowRuns
     // on 'progress' advance, but the run object is the source of truth).
     const controlForThisStep =
-      controlProgress && controlProgress.stepIndex === active.currentStepIndex
+      controlProgress && (active.activeStepIndices ?? [active.currentStepIndex]).includes(controlProgress.stepIndex)
         ? controlProgress
         : null;
 
@@ -100,8 +101,10 @@ function renderStrip({
         <span className="merge-run-strip-spinner" />
         <span className="merge-run-strip-text">
           {controlForThisStep
-            ? renderControlText(controlForThisStep, pos, active.totalSteps)
-            : `Step ${pos} of ${active.totalSteps}`}
+            ? (active.activeStepIndices?.length ?? 0) > 1
+              ? `${workflowRunProgress(active).text} · ${controlForThisStep.message ?? 'Preparing reviews…'}`
+              : renderControlText(controlForThisStep, pos, active.totalSteps)
+            : workflowRunProgress(active).text}
         </span>
         <span className="merge-run-strip-pct">{pct}%</span>
         {onStop && (

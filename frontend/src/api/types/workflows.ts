@@ -30,6 +30,7 @@ export type WorkflowStep = {
   // Frozen (the step row's snowflake toggle): the step is kept in the workflow
   // but skipped when the workflow runs. Applies to every step kind.
   frozen?: boolean;
+  parallel?: boolean;
   // Pre-run tools for an agent step (shown as a read-only shield badge; set by
   // the "Opengrep" quick-add chip / template, never by a per-step toggle): each
   // runs before the harness spawns and its report lands beside
@@ -61,6 +62,12 @@ export type Workflow = {
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
+export type WorkflowStepExecution = {
+  stepId: string;
+  phase: 'pending' | 'spawning' | 'running' | 'completing' | 'completed' | 'skipped' | 'errored' | 'cancelled';
+  error?: string;
+};
+
 export type WorkflowRun = {
   id: string;
   workflowId: string;
@@ -71,6 +78,8 @@ export type WorkflowRun = {
   finishedAt?: number;
   totalSteps: number;
   currentStepIndex: number;
+  activeStepIndices?: number[];
+  stepStates?: Record<number, WorkflowStepExecution>;
   harnessOverride?: WorkflowStepHarness;
   // Pi model override, applied to every step when harnessOverride is `pi`.
   piModelOverride?: string;
@@ -175,6 +184,7 @@ export type WorkflowRunEvent =
     }
   | {
       type: 'step-control-progress';
+      parallel?: boolean;
       runId: string;
       projectPath: string;
       stepIndex: number;

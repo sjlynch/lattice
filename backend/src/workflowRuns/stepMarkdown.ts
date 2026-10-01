@@ -16,6 +16,7 @@ import {
   type WorkflowStepHarness,
 } from '../workflows.js';
 import type { WorkflowRun } from './state.js';
+import { activeStepIndices } from './execution.js';
 import {
   renderDirtyStateWarning,
   type DirtyStateSummary,
@@ -138,7 +139,7 @@ export function renderStepMarkdown(
   // (e.g. the built-in `{{user_instructions}}`) before the prompt reaches the
   // agent. Unknown variables are left intact so a typo is visible, not silent.
   const renderedPrompt = interpolateWorkflowVariables(step.prompt, wf.variables);
-  return applyTemplate(template, {
+  const markdown = applyTemplate(template, {
     step_number: String(stepIndex + 1),
     total_steps: String(wf.steps.length),
     step_title: step.title,
@@ -159,4 +160,7 @@ export function renderStepMarkdown(
     harness_override_note: harnessOverrideNote,
     completion_instructions: completionInstructions,
   });
+  return activeStepIndices(run).length > 1
+    ? '> **Parallel review group:** other reviews are running alongside this step. File independent tasks, leave their tickets intact, and do not wait for their output. Lattice waits for the whole group before continuing.\n\n' + markdown
+    : markdown;
 }

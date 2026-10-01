@@ -1,5 +1,10 @@
 # E2E navigation
 
+- [workflow-parallel.spec.ts](./workflow-parallel.spec.ts) creates a disposable
+  workflow definition without launching harnesses. Checks toggle accessibility,
+  action barriers, matching connector/icon color, frozen members, and save/reload.
+  Its project cleanup is bounded to a direct child of `os.tmpdir()`.
+
 - [workflow-queue.spec.ts](./workflow-queue.spec.ts) uses the **real backend**:
   it creates task/workflow records for a disposable, committed Git project in
   `<tmp>/lattice-playwright-queue-*` and selects it with sessionStorage's

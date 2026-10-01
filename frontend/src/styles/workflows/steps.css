@@ -314,6 +314,52 @@
   color: var(--freeze);
   background: var(--freeze-bg-strong);
 }
+
+.workflows-step-parallel.on {
+  color: var(--workflow-parallel);
+  background: var(--workflow-parallel-bg);
+}
+.workflows-step-parallel.on:hover {
+  color: var(--workflow-parallel);
+  background: var(--workflow-parallel-bg-strong);
+}
+.workflows-step-slot {
+  position: relative;
+  padding-left: 14px;
+}
+.workflows-step-slot.parallel-group-member::before {
+  content: '';
+  position: absolute;
+  left: 3px;
+  top: 0;
+  bottom: -8px; /* spans the editor's gap between adjacent cards */
+  width: 3px;
+  background: var(--workflow-parallel);
+}
+.workflows-step-slot.parallel-group-start::before {
+  top: 22px;
+  border-radius: 3px 3px 0 0;
+}
+.workflows-step-slot.parallel-group-end::before {
+  bottom: 0;
+  border-radius: 0 0 3px 3px;
+}
+.workflows-step-slot.frozen::before {
+  opacity: 0.4;
+}
+.workflows-parallel-label {
+  color: var(--workflow-parallel);
+  font-size: 10px;
+  font-weight: 600;
+  padding-bottom: 6px;
+  line-height: 16px;
+}
+.workflows-step-index.run-queued {
+  color: var(--workflow-parallel);
+}
+.workflows-step.run-cancelled {
+  opacity: 0.55;
+}
 /* The read-only Opengrep marker on an agent step (StepOpengrepBadge): green
    when the step scans before its harness spawns. Sized like an `.icon-btn sm`
    so it sits in the header row's rhythm, but it is a span, not a control. */

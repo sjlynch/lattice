@@ -27,7 +27,13 @@ Components behind the Workflows button. `Workflows.tsx` (parent dir) is a re-exp
 - `TestStepRow.tsx` — the Run tests (`test`) row: compact like a control row (no prompt; the backend brief `RUN_TESTS.md` is fixed) but it spawns an agent, so it keeps the `StepHarnessSelect` (exported from `AgentStepHeader`) and adds a `timeoutMinutes` number input (blank = 60; raw while typing, clamped to 5–720 on blur) and the hint "Usually right before Push…". When the project has a post-merge hook prompt (`hooks/usePostMergeHookConfigured`, one settings read per project) it adds a note that the two may run the tests twice. Not in any built-in template — the user adds it.
 - `StepRowShared.tsx` — bits shared across the row family: the `StepIndexBadge` (the `#N` badge / run-status glyph), the `StepFreezeButton` (the snowflake toggle, latching blue when `step.frozen`), the `StepOpengrepBadge` (a read-only green shield on an AGENT step whose `step.tools` includes `opengrep`, i.e. one seeded by the "Opengrep" chip/template — the backend runs an Opengrep scan before that step's harness spawns and drops `OPENGREP_FINDINGS.md` beside the brief; needs Opengrep installed in Settings → Tools, else the brief just says the scan could not run. Deliberately not a toggle: the scan belongs to the Opengrep step), and the `StepRowCallbacks` type (the id/index-parameterized handlers the parent hands down once each).
 - `StepRowHooks.ts` — colocated StepRow internals for drag/drop state, prompt textarea autosizing (`PROMPT_MIN_HEIGHT_PX`), and `useScrollRunningIntoView` (scrolls a row into view the moment it becomes the running step).
-- `stepRunStatus.ts` — pure `stepRunStatus(index, run, frozen?)` mapping a row index onto the active/recent run's `currentStepIndex` → the `StepRunStatus` enum StepRow renders. `WorkflowEditorPanel` computes it per row from `runForEditor ?? recentForEditor`. A `frozen` row is always `skipped`: the backend jumps `currentStepIndex` over frozen steps, so the plain index comparison would otherwise report one as `done`. Unit-tested in `src/__tests__/stepRunStatus.test.ts`.
+- `stepRunStatus.ts` — pure row-status mapping. New runs resolve captured
+  member state by stable step ID, including queued/cancelled states, so editor
+  reordering and freeze edits do not change live statuses. Legacy records use
+  `currentStepIndex` and the row's frozen flag. Unit-tested in
+  `stepRunStatus.test.ts` and `workflowParallelSteps.test.ts`.
+- `parallelSteps.ts` — authored adjacency groups for the editor connector and
+  member-aware progress counts shared by the run strip, chips and saved list.
 - `WorkflowRunStrip.tsx` — progress / summary strip above the editor name input. Below it, one collapsed "Run tests summary · step N" disclosure per `run.stepSummaries` entry (the Run tests step's TEST_SUMMARY.md + Lattice's notes — skipped / timed out / could not start — + the commits it made), for the active run's finished steps and for a finished run (`runTestsSummaries`, unit-tested in `src/__tests__/runTestsStep.test.ts`). `CONTROL_KIND_LABEL` labels the Run tests pre-spawn progress ("checking whether anything was merged…", "waiting for the project to be free…").
 - `editorState.ts` — `EditorState` type + the `emptyEditor`/`fromTemplate`/`fromWorkflow` converters, `makeAgentStep`/`makeControlStep`/`localStepId` step factories (`makeAgentStep` takes an optional `id` so an add action can mint it outside the `setEditor` updater), `collapsibleStepIds` (the agent-step ids of a step list — control rows have no collapse toggle), and `nextEditorAfterSave` (reseeds from the server echo only when no edit landed mid-save, so an in-flight edit isn't silently overwritten; a superseded create adopts the created id only within the same editor lifetime, staying dirty, so the next save PATCHes instead of POSTing a duplicate). Editor keeps a `dirty` flag so unsaved changes show "Discard"/"Save", plus an in-memory `identity` symbol retained by edits and renewed by replacements/restores.
 - `unsavedSwitch.ts` — `guardUnsavedSwitch`, the gate before anything REPLACES the editor's contents: when `dirty`, asks Save / Discard / Cancel via the shared `ConfirmDialog` (`confirmUnsaved`); a failed save resolves `null` and aborts the switch (error already toasted). Mirrors `WorkflowsLauncher`'s panel-close guard. Callers: `hooks/useWorkflowManager`'s `selectWorkflow` (skipped when re-selecting the workflow already open) and `newBlank`/`newFromTemplate`. The optional `isCurrent` check rejects stale confirmations and saves before they can act on a replacement editor or project. **Any new action that swaps the editor's workflow must go through this gate**, or unsaved edits are silently lost. Unit-tested in `src/__tests__/workflowUnsavedSwitch.test.ts`; manager wiring and delayed mutation regressions are in `src/__tests__/workflowEditorLifetime.test.ts`.
@@ -50,14 +56,17 @@ Workflow CSS is split under `frontend/src/styles/workflows/`; `styles/workflows.
 1. `runWorkflow(wf)` saves first if `editor.dirty`, then `apiStartWorkflow(wf.id, { harnessOverride, piModelOverride })`. A `null` harness override means each step uses its stored harness/model. A project runs **one workflow at a time**: the backend 409s a start while another run is active, so a ▶ Run click (editor or saved list) with a run already going — known from `activeRuns`, or learned from the 409 — adds the workflow to the queue instead and toasts "Queued behind <name>" (`hooks/useWorkflowManualRun`).
 2. Backend creates the run, materializes the first step's directory, and returns `{run}`. `useWorkflowRuns` stashes the run in `activeRuns`.
 3. Per step, the backend emits a `step-spawned` event on `/ws/workflow-runs` with `{stepIndex, cwd, command, serverId}`. `useWorkflowRuns` turns each one into an `addTerminal({...})` call so the step opens as a terminal tab in that step's working directory.
-4. The next step's `step-spawned` arrives when the prior step finishes — workflow steps are sibling terminal sessions in step directories, not task-board worktrees.
+4. Adjacent marked planning steps emit independent `step-spawned` events as
+   the spawn queue admits them. The next group starts after every member
+   finishes. Workflow steps use individual scratch directories, not task-board
+   worktrees. Only the first active member auto-scrolls to avoid competing scrolls.
 
 ## Freezing steps
 
 Every step row (agent and control alike) carries a snowflake toggle that sets
 `WorkflowStep.frozen`. A frozen step keeps its place, title and prompt but is
-**skipped when the workflow runs** — the backend's `nextRunnableStepIndex`
-(`backend/src/workflowRuns/frozenSteps.ts`) walks past it at both run start and
+**skipped when the workflow runs** — the backend's `nextStepGroup`
+(`backend/src/workflowRuns/execution.ts`) walks past it at both run start and
 step advance, so `currentStepIndex` jumps over frozen rows while `totalSteps`
 still counts them. It's the one-click alternative to deleting a step and
 retyping its prompt later.
@@ -69,3 +78,18 @@ row shows an "N frozen" meta chip, and Run/Queue are disabled with an
 "Every step is frozen" reason when nothing runnable is left — the backend
 refuses an all-frozen run anyway, so the disable is just the earlier, nicer
 half of the same rule.
+
+## Parallel reviews
+
+Agent headers have a branching toggle beside Freeze (`parallel: true`), with
+`aria-pressed` and an explanation that the workflow waits for the whole group.
+Start/Merge/Run tests/Push have no parallel toggle. Adjacent marked agent rows
+share a violet vertical connector and group label (`--workflow-parallel*` in
+`styles/tokens.css`, rules in `styles/workflows/steps.css`). Isolated marked
+steps retain their toggle but have no connector. Frozen marked rows remain in
+the authored group with a dimmed connector; frozen unmarked rows and action
+steps separate groups. Reordering/toggling derives the connector immediately.
+
+Live progress counts completed runnable members rather than the anchor index.
+Parallel strips show running/queued/completed counts, and sibling pre-run tool
+progress is retained until that particular member spawns or completes.

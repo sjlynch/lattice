@@ -3,6 +3,7 @@ import { Plus } from 'lucide-react';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { StepRow } from './StepRow';
 import { stepRunStatus } from './stepRunStatus';
+import { parallelGroupAt } from './parallelSteps';
 import { WorkflowEditorActions } from './WorkflowEditorActions';
 import { WorkflowEditorEmptyState } from './WorkflowEditorEmptyState';
 import { WorkflowQuickAddBar } from './WorkflowQuickAddBar';
@@ -119,25 +120,33 @@ export function WorkflowEditorPanel({ manager }: Props) {
               onRemove={actions.removeVariable}
             />
             <div className="workflows-editor-steps">
-              {editor.steps.map((step, index) => (
-                <StepRow
-                  key={step.id}
-                  step={step}
-                  index={index}
-                  collapsed={collapsedSteps.isCollapsed(step.id)}
-                  harnessAvail={harnessAvail}
-                  piMenu={piMenu}
-                  definedNames={definedNames}
-                  runStatus={stepRunStatus(index, statusRun, step.frozen === true)}
-                  postMergeHookConfigured={postMergeHookConfigured}
-                  onChange={actions.patchStep}
-                  onRemove={handleRemoveStep}
-                  onReorder={actions.reorderSteps}
-                  onToggleCollapse={collapsedSteps.toggleCollapsed}
-                  onCustomize={actions.customizeStepPrompt}
-                  customizing={Boolean(customizingSteps[step.id])}
-                />
-              ))}
+              {editor.steps.map((step, index) => {
+                const group = parallelGroupAt(editor.steps, index);
+                return (
+                  <div key={step.id} className={`workflows-step-slot${group ? ' parallel-group-member' : ''}${group?.start === index ? ' parallel-group-start' : ''}${group?.end === index + 1 ? ' parallel-group-end' : ''}${step.frozen ? ' frozen' : ''}`}>
+                    {group?.start === index && (
+                      <div className="workflows-parallel-label">Parallel · {group.end - group.start} steps</div>
+                    )}
+                    <StepRow
+                      step={step}
+                      index={index}
+                      collapsed={collapsedSteps.isCollapsed(step.id)}
+                      harnessAvail={harnessAvail}
+                      piMenu={piMenu}
+                      definedNames={definedNames}
+                      runStatus={stepRunStatus(index, statusRun, step.frozen === true, step.id)}
+                      autoScroll={!statusRun?.activeStepIndices || statusRun.stepStates?.[statusRun.activeStepIndices[0]]?.stepId === step.id}
+                      postMergeHookConfigured={postMergeHookConfigured}
+                      onChange={actions.patchStep}
+                      onRemove={handleRemoveStep}
+                      onReorder={actions.reorderSteps}
+                      onToggleCollapse={collapsedSteps.toggleCollapsed}
+                      onCustomize={actions.customizeStepPrompt}
+                      customizing={Boolean(customizingSteps[step.id])}
+                    />
+                  </div>
+                );
+              })}
               <button className="workflows-add-step" onClick={actions.addStep}>
                 <Plus size={12} /> Add step
               </button>

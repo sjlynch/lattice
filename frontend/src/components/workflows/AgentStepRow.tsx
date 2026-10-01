@@ -23,6 +23,7 @@ export const AgentStepRow = memo(function AgentStepRow({
   piMenu,
   definedNames,
   runStatus,
+  autoScroll = true,
   onChange,
   onRemove,
   onReorder,
@@ -37,12 +38,13 @@ export const AgentStepRow = memo(function AgentStepRow({
   piMenu: PiMenuEntry[];
   definedNames: ReadonlySet<string>;
   runStatus?: StepRunStatus;
+  autoScroll?: boolean;
   customizing: boolean;
 } & StepRowCallbacks) {
   const rootRef = useRef<HTMLDivElement>(null);
   const { dragOver, onDragStart, onDragOver, onDragLeave, onDrop } =
     useWorkflowStepDragDrop(index, onReorder);
-  useScrollRunningIntoView(rootRef, runStatus === 'running');
+  useScrollRunningIntoView(rootRef, autoScroll && (runStatus === 'running' || runStatus === 'queued'));
   const frozen = step.frozen === true;
 
   return (
@@ -67,6 +69,7 @@ export const AgentStepRow = memo(function AgentStepRow({
           harness={step.harness}
           piModel={step.piModel}
           frozen={frozen}
+          parallel={step.parallel === true}
           tools={step.tools}
           harnessAvail={harnessAvail}
           piMenu={piMenu}

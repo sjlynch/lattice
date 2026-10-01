@@ -12,6 +12,14 @@ import { cloneWorkflowDefinition } from './definition.js';
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
+export type WorkflowStepExecution = {
+  stepId: string;
+  phase: 'pending' | 'spawning' | 'running' | 'completing' | 'completed' | 'skipped' | 'errored' | 'cancelled';
+  sessionId?: string;
+  stopReceived?: WorkflowRun['stopReceived'];
+  error?: string;
+};
+
 export type WorkflowRun = {
   id: string;
   workflowId: string;
@@ -21,7 +29,13 @@ export type WorkflowRun = {
   startedAt: number;
   finishedAt?: number;
   totalSteps: number;
+  // Compatibility anchor: the first runnable member of the current group.
   currentStepIndex: number;
+  // New runs persist every member independently; absent on legacy serial runs.
+  activeStepIndices?: number[];
+  // Exclusive authored boundary, including any frozen members in the group.
+  groupEndIndex?: number;
+  stepStates?: Record<number, WorkflowStepExecution>;
   harnessOverride?: WorkflowStepHarness;
   // Pi model override for the run, applied to every step when harnessOverride
   // is `pi`. Sibling to harnessOverride (two-field model, see piModels.ts).
@@ -105,6 +119,7 @@ export type WorkflowRunEvent =
   //     before the harness spawns — the frontend clears it on `step-spawned`
   | {
       type: 'step-control-progress';
+      parallel?: boolean;
       runId: string;
       projectPath: string;
       stepIndex: number;
@@ -120,6 +135,9 @@ const listeners = new Set<(ev: WorkflowRunEvent) => void>();
 export function snapshot(run: WorkflowRun): WorkflowRun {
   return {
     ...run,
+    ...(run.activeStepIndices ? { activeStepIndices: [...run.activeStepIndices] } : {}),
+    ...(run.stepStates ? { stepStates: Object.fromEntries(Object.entries(run.stepStates).map(([index, step]) =>
+      [index, { ...step, ...(step.stopReceived ? { stopReceived: { ...step.stopReceived } } : {}) }])) } : {}),
     ...(run.definition ? { definition: cloneWorkflowDefinition(run.definition) } : {}),
     ...(run.stepSummaries ? { stepSummaries: { ...run.stepSummaries } } : {}),
     ...(run.testStep ? { testStep: { ...run.testStep } } : {}),

@@ -9,7 +9,8 @@ import { cancelSpawn, enqueueSpawn, notifySessionsFreed, SpawnCapacityError } fr
 import { registerAgentSession, unregisterAgentSession } from '../agentSessions.js';
 import { forgetAgentQuiescence } from '../agentQuiescence.js';
 import type { Workflow } from '../workflows.js';
-import { checkpointWorkflowRun, notify, type WorkflowRun } from './state.js';
+import { checkpointWorkflowRun, notify, snapshot, type WorkflowRun } from './state.js';
+import { isWorkflowStepActive, setStepPhase, stepPhase } from './execution.js';
 import { markRunErrored } from './runErrored.js';
 
 // Stable graph-node id for a workflow-step session. A new id per step, so
@@ -28,6 +29,7 @@ type WorkflowStepSpawnRecord = {
   dedupeKey: string;
   serverId?: string;
   spawning?: Promise<CreateSessionResult>;
+  deps?: Pick<WorkflowStepSessionDeps, 'proxyKillSession'>;
 };
 
 const stepSpawnRecords = new Map<string, WorkflowStepSpawnRecord>();
@@ -37,7 +39,7 @@ function recordKey(runId: string, stepIndex: number): string {
 }
 
 function isCurrentRunningStep(run: WorkflowRun, stepIndex: number): boolean {
-  return run.status === 'running' && run.currentStepIndex === stepIndex;
+  return isWorkflowStepActive(run, stepIndex);
 }
 
 // Route the pty allocation through the spawn queue (fire-and-forget, like
@@ -72,6 +74,8 @@ function markWorkflowStepSpawnErrored(
   if (!isCurrentRunningStep(run, stepIndex)) return;
   // Durable now — markRunErrored checkpoints; `notify` alone only schedules
   // the debounced mirror (see cancelWorkflowRun in ../workflowRuns.ts).
+  if (run.stepStates?.[stepIndex]) run.stepStates[stepIndex].error = error;
+  setStepPhase(run, stepIndex, 'errored');
   markRunErrored(run, `workflow step ${stepIndex + 1} failed to spawn: ${error}`);
 }
 
@@ -99,7 +103,7 @@ async function killWorkflowStepServer(
 export async function killWorkflowStepSession(
   runId: string,
   stepIndex: number,
-  deps: Pick<WorkflowStepSessionDeps, 'proxyKillSession'> = productionDeps,
+  deps?: Pick<WorkflowStepSessionDeps, 'proxyKillSession'>,
 ): Promise<void> {
   const key = recordKey(runId, stepIndex);
   const record = stepSpawnRecords.get(key);
@@ -112,7 +116,7 @@ export async function killWorkflowStepSession(
   stepSpawnRecords.delete(key);
   if (!record?.serverId) return;
   try {
-    await killWorkflowStepServer(record.serverId, deps);
+    await killWorkflowStepServer(record.serverId, deps ?? record.deps ?? productionDeps);
   } catch (err) {
     console.warn(
       `[workflow-run] ${runId} step ${stepIndex}: kill session ${record.serverId} on advance failed:`,
@@ -152,14 +156,14 @@ export function adoptWorkflowStepSession(
 
 export function cancelWorkflowStepSessions(
   runId: string,
-  deps: Pick<WorkflowStepSessionDeps, 'proxyKillSession'> = productionDeps,
+  deps?: Pick<WorkflowStepSessionDeps, 'proxyKillSession'>,
 ): void {
   const records = [...stepSpawnRecords.values()].filter((record) => record.runId === runId);
   for (const record of records) {
     cancelSpawn(record.dedupeKey);
     unregisterAgentSession(workflowStepAgentId(record.runId, record.stepIndex));
     if (record.serverId) {
-      void killWorkflowStepServer(record.serverId, deps).catch((err) => {
+      void killWorkflowStepServer(record.serverId, deps ?? record.deps ?? productionDeps).catch((err) => {
         console.warn(
           `[workflow-run] ${record.runId} step ${record.stepIndex}: kill session ${record.serverId} failed:`,
           err,
@@ -192,6 +196,7 @@ export function enqueueWorkflowStepSession(opts: {
     runId: run.id,
     stepIndex,
     dedupeKey,
+    deps,
   };
   stepSpawnRecords.set(recordKey(run.id, stepIndex), spawnRecord);
 
@@ -206,7 +211,7 @@ export function enqueueWorkflowStepSession(opts: {
         throw new Error(`workflow step ${run.id}/${stepIndex}: spawn cancelled`);
       }
 
-      run.stepPhase = 'spawning';
+      setStepPhase(run, stepIndex, 'spawning');
       await checkpointWorkflowRun(run);
       if (!isCurrentRunningStep(run, stepIndex)) throw new Error('workflow step spawn cancelled');
       spawnRecord.spawning = deps.proxyCreateSession({
@@ -229,7 +234,7 @@ export function enqueueWorkflowStepSession(opts: {
 
       if ('error' in sess) {
         if (sess.code === 'CAP') {
-          run.stepPhase = 'pending';
+          setStepPhase(run, stepIndex, 'pending');
           await checkpointWorkflowRun(run);
           throw new SpawnCapacityError(
             `workflow step ${run.id}/${stepIndex}: terminal-server hard cap`,
@@ -244,8 +249,9 @@ export function enqueueWorkflowStepSession(opts: {
       }
 
       spawnRecord.serverId = sess.id;
-      run.stepSessionId = sess.id;
-      if ((run as WorkflowRun).stepPhase !== 'completing') run.stepPhase = 'running';
+      if (run.currentStepIndex === stepIndex) run.stepSessionId = sess.id;
+      if (run.stepStates?.[stepIndex]) run.stepStates[stepIndex].sessionId = sess.id;
+      if (stepPhase(run, stepIndex) !== 'completing') setStepPhase(run, stepIndex, 'running');
       try {
         await checkpointWorkflowRun(run);
       } catch (err) {
@@ -269,6 +275,7 @@ export function enqueueWorkflowStepSession(opts: {
         ...(opts.harness ? { harness: opts.harness } : {}),
       });
 
+      notify({ type: 'progress', run: snapshot(run) });
       notify({
         type: 'step-spawned',
         runId: run.id,

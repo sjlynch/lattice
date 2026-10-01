@@ -55,6 +55,7 @@ export function emitControlProgress(
 ): void {
   notify({
     type: 'step-control-progress',
+    ...((run.activeStepIndices?.length ?? 0) > 1 ? { parallel: true } : {}),
     runId: run.id,
     projectPath: run.projectPath,
     stepIndex,

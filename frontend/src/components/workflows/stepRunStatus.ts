@@ -1,7 +1,7 @@
 import type { WorkflowRun } from '../../api';
 
-// Per-row execution state, derived from the active (or recently-finished) run's
-// `currentStepIndex` and threaded down into each StepRow so the editor doubles
+// Per-row execution state, derived from captured member state (or a legacy
+// run's `currentStepIndex`) and threaded down into each StepRow so the editor doubles
 // as a live run view: which step is running, which already ran, which are still
 // pending, and where a failure landed.
 //
@@ -11,10 +11,14 @@ export type StepRunStatus =
   | 'running'
   | 'done'
   | 'pending'
+  | 'queued'
+  | 'cancelled'
   | 'error'
   | 'skipped';
 
-// Map a row index onto the run's progress. Rows before the current step have
+// New runs map by captured step ID so editor edits cannot move live statuses.
+// The index/frozen comparison below is the fallback for legacy serial runs.
+// Rows before the current step have
 // run (done); the current step is running (or, if the run failed/finished on
 // it, error/done); rows after are pending. Rows beyond the run's step count
 // (the workflow was edited since it started) get no status so they aren't
@@ -33,8 +37,24 @@ export function stepRunStatus(
   index: number,
   run: WorkflowRun | null | undefined,
   frozen = false,
+  stepId?: string,
 ): StepRunStatus | undefined {
   if (!run) return undefined;
+  if (run.stepStates) {
+    const entry = stepId ? Object.entries(run.stepStates).find(([, s]) => s.stepId === stepId)
+      : run.stepStates[index] ? [String(index), run.stepStates[index]] as const : undefined;
+    if (!entry) return undefined;
+    const [key, state] = entry;
+    switch (state.phase) {
+      case 'completed': return 'done';
+      case 'skipped': return 'skipped';
+      case 'errored': return 'error';
+      case 'cancelled': return 'cancelled';
+      case 'running': case 'completing': return 'running';
+      case 'spawning': return 'queued';
+      case 'pending': return run.activeStepIndices?.includes(Number(key)) ? 'queued' : 'pending';
+    }
+  }
   if (index >= run.totalSteps) return undefined;
   if (frozen) return 'skipped';
   if (index < run.currentStepIndex) return 'done';

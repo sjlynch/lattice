@@ -64,7 +64,8 @@ export function handleWorkflowRunEvent(
   } else if (ev.type === 'started' || ev.type === 'progress') {
     setActiveRuns((cur) => upsertRun(cur, ev.run));
     setControlProgress((cur) =>
-      clearStaleControlProgress(cur, ev.run.id, ev.run.currentStepIndex),
+      clearStaleControlProgress(cur, ev.run.id, ev.run.currentStepIndex,
+        ev.run.activeStepIndices?.filter((i) => ev.run.stepStates?.[i]?.phase !== 'completed')),
     );
   } else if (
     ev.type === 'completed' ||

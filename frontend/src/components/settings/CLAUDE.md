@@ -68,7 +68,8 @@ parent itself rather than a tab — the terminal-default harness +
 skip-permissions, the Codex `--yolo` toggle (default ON — part of
 `terminalLaunchSettings`, so it's reseeded synchronously with the harness/skip
 drafts and feeds the sidebar's new-Codex-terminal command as well as being read
-by the backend for every Codex spawn), the instrument-Claude /
+by the backend for every Codex spawn; the UI labels it "Disable Codex sandbox
+and approval prompts (--yolo)" so its sandbox behavior is explicit), the instrument-Claude /
 disable-memory / qa-auto-close toggles, and the three terminal-tab restore
 drafts (`restoreTerminalsOnOpen` — `always` / `ask` / `never` —,
 `restoreNudgeAgents`, `restoreNudgeUserTabs`; see the terminal-registry notes

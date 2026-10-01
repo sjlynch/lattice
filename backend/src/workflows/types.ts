@@ -49,6 +49,8 @@ export type WorkflowStep = {
   // prompt and position intact — but the run engine walks straight past it, for
   // every kind. Absent/false = runs normally. See workflowRuns/frozenSteps.ts.
   frozen?: boolean;
+  // Adjacent opted-in planning steps run together; every other kind is serial.
+  parallel?: boolean;
   // Pre-run tools for an agent step. Each runs BEFORE the harness spawns and
   // drops its report beside WORKFLOW_STEP.md, surfaced through the brief's
   // `{{tool_reports}}` token. v1: `opengrep` (a SAST scan → OPENGREP_FINDINGS.md).

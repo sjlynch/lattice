@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { ChevronDown, ChevronRight, Wand2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitFork, Wand2, X } from 'lucide-react';
 import type {
   HarnessAvailability,
   PiMenuEntry,
@@ -79,6 +79,7 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   harness,
   piModel,
   frozen,
+  parallel = false,
   tools,
   harnessAvail,
   piMenu,
@@ -96,6 +97,7 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   harness: WorkflowStep['harness'];
   piModel?: string;
   frozen: boolean;
+  parallel?: boolean;
   tools?: WorkflowStep['tools'];
   harnessAvail: HarnessAvailability;
   piMenu: PiMenuEntry[];
@@ -134,6 +136,16 @@ export const AgentStepHeader = memo(function AgentStepHeader({
         onChange={(h, pm) => onChange(index, { harness: h, piModel: pm })}
       />
       <StepOpengrepBadge on={opengrepOn} />
+      <button
+        type="button"
+        className={`icon-btn sm workflows-step-parallel${parallel ? ' on' : ''}`}
+        onClick={() => onChange(index, { parallel: parallel ? undefined : true })}
+        title="Run with adjacent parallel steps. The workflow waits for the whole group."
+        aria-label="Run step in parallel"
+        aria-pressed={parallel === true}
+      >
+        <GitFork size={12} />
+      </button>
       <StepFreezeButton
         frozen={frozen}
         onToggle={() => onChange(index, { frozen: !frozen })}

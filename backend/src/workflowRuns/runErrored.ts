@@ -1,14 +1,16 @@
-// Shared "error a running run" transition for the workflow-run workers that
-// fail a run without an active step to tear down (control-step workers, a
-// step whose spawn failed). `failWorkflowRun` in ../workflowRuns.ts is NOT
-// this: it tears the active step down between setting the error and notifying.
+// Shared "error a running run" transition for control and spawn workers.
+// Like failWorkflowRun in the facade, it reclaims every active member before
+// notifying, without importing the facade back into its workers.
 
 import { checkpointWorkflowRun, notify, snapshot, type WorkflowRun } from './state.js';
+import { teardownWorkflowRun } from './teardown.js';
 
 export function markRunErrored(run: WorkflowRun, error: string): void {
+  if (run.status !== 'running') return;
   run.status = 'errored';
   run.finishedAt = Date.now();
   run.error = error;
+  teardownWorkflowRun(run);
   notify({ type: 'errored', run: snapshot(run) });
   // Make the terminal state durable NOW: `notify` only schedules the
   // debounced mirror, and a restart inside that window left the run

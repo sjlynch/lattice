@@ -33,11 +33,12 @@ import { canonicalProjectPath, homeProjectScratchDir } from '../projectPath.js';
 import { matchesStoredProjectIdentity } from '../projectIdentity.js';
 import { normalizePiModel } from '../agentCommandBuilder.js';
 import { normalizeWorkflowRunHarnessOverride } from '../workflows/normalization.js';
-import type { WorkflowRun } from './state.js';
-import { cloneWorkflowDefinition, readWorkflowDefinition } from './definition.js';
+import { snapshot, type WorkflowRun, type WorkflowStepExecution } from './state.js';
+import { nextStepGroup } from './execution.js';
+import { readWorkflowDefinition } from './definition.js';
 
 export const WORKFLOW_RUNS_FILENAME = 'workflow-runs.json';
-export const WORKFLOW_RUNS_FILE_VERSION = 2;
+export const WORKFLOW_RUNS_FILE_VERSION = 3;
 // Matches the task cache's debounce: coalesce the burst of mutations a single
 // step advance produces into one write.
 export const WORKFLOW_RUNS_PERSIST_DEBOUNCE_MS = 100;
@@ -122,7 +123,51 @@ export function deserializeWorkflowRun(raw: unknown, owningProject?: string): Wo
   if (testStep) run.testStep = testStep;
   const stopReceived = readStopReceived(r.stopReceived);
   if (stopReceived) run.stopReceived = stopReceived;
+  if (r.stepStates !== undefined || r.activeStepIndices !== undefined || r.groupEndIndex !== undefined) {
+    if (!readExecutionState(run, r)) {
+      run.definitionError = 'persisted workflow execution state is invalid; inspect workflow-runs.json before retrying';
+    }
+  }
   return run;
+}
+
+function readExecutionState(run: WorkflowRun, raw: Record<string, unknown>): boolean {
+  const wf = run.definition;
+  const indices = raw.activeStepIndices;
+  const end = num(raw.groupEndIndex);
+  const states = raw.stepStates;
+  if (!wf || !Number.isSafeInteger(run.currentStepIndex) || !Array.isArray(indices) || !indices.length || !Number.isSafeInteger(end) ||
+      !states || typeof states !== 'object' || Array.isArray(states)) return false;
+  const group = nextStepGroup(wf.steps, run.currentStepIndex);
+  if (!group || group.indices[0] !== run.currentStepIndex || end !== group.end ||
+      JSON.stringify(indices) !== JSON.stringify(group.indices)) return false;
+  const entries = Object.entries(states);
+  if (entries.length !== wf.steps.length || run.totalSteps !== wf.steps.length) return false;
+  const out: Record<number, WorkflowStepExecution> = {};
+  for (const [key, value] of entries) {
+    const index = Number(key);
+    if (!Number.isSafeInteger(index) || String(index) !== key || !wf.steps[index] || !value || typeof value !== 'object') return false;
+    const s = value as Record<string, unknown>;
+    if (s.stepId !== wf.steps[index].id || !['pending', 'spawning', 'running', 'completing', 'completed', 'skipped'].includes(String(s.phase))) return false;
+    if ((s.phase === 'skipped') !== (wf.steps[index].frozen === true)) return false;
+    if (!indices.includes(index) && s.phase !== (wf.steps[index].frozen ? 'skipped' : index < run.currentStepIndex ? 'completed' : 'pending')) return false;
+    const stop = readStopReceived(s.stopReceived);
+    if (s.stopReceived !== undefined && (!stop || stop.stepIndex !== index)) return false;
+    out[index] = { stepId: String(s.stepId), phase: s.phase as WorkflowStepExecution['phase'],
+      ...(str(s.sessionId) ? { sessionId: str(s.sessionId) } : {}),
+      ...(stop ? { stopReceived: stop } : {}), ...(str(s.error) ? { error: str(s.error) } : {}) };
+  }
+  run.activeStepIndices = [...indices] as number[];
+  run.groupEndIndex = end;
+  run.stepStates = out;
+  // Per-member state is authoritative; keep the legacy singleton mirrors in
+  // sync even if a hand-edited checkpoint omits or contradicts them.
+  const anchor = out[run.currentStepIndex];
+  run.stepPhase = ['pending', 'spawning', 'running', 'completing'].includes(anchor.phase)
+    ? anchor.phase as WorkflowRun['stepPhase'] : undefined;
+  run.stepSessionId = anchor.sessionId;
+  run.stopReceived = anchor.stopReceived;
+  return true;
 }
 
 function readStopReceived(raw: unknown): WorkflowRun['stopReceived'] {
@@ -217,7 +262,7 @@ export async function writeWorkflowRunsNow(
   // write or deletion. Serialize per project so a slow running-state write
   // cannot resurrect a completed workflow after its newer removal finishes.
   const previous = writesInFlight.get(key) ?? Promise.resolve();
-  const records = runs.map((run) => ({ ...run, ...(run.definition ? { definition: cloneWorkflowDefinition(run.definition) } : {}) }));
+  const records = runs.map(snapshot);
   const write = previous.catch(() => {}).then(() => writeWorkflowRunsFile(key, records, required));
   const settled = write.catch(() => {});
   writesInFlight.set(key, settled);

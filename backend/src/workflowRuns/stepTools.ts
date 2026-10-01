@@ -20,6 +20,8 @@ import {
   OpengrepScanBusyError,
   scanProjectWithDigest,
 } from '../opengrep/index.js';
+import { runExclusive } from '../serializeWrites.js';
+import { canonicalProjectPath } from '../projectPath.js';
 import type { WorkflowStep, WorkflowStepTool } from '../workflows/types.js';
 
 export const OPENGREP_REPORT_FILENAME = 'OPENGREP_FINDINGS.md';
@@ -50,16 +52,17 @@ export function setStepToolsDepsForTest(overrides: StepToolsDeps): () => void {
   return () => { depsForTest = previous; };
 }
 
-// One AbortController per run whose current step is inside its pre-run, so a
+// One AbortController per member inside its pre-run, so a
 // cancelled run kills its scan instead of leaving the project "busy" (one scan
 // per project) for the run the user starts next. `cancelWorkflowRun` calls
 // `abortStepPreRun`; the spawner brackets `runStepTools` with begin/end.
 const preRuns = new Map<string, AbortController>();
 
-export function beginStepPreRun(runId: string): AbortSignal {
-  preRuns.get(runId)?.abort();
+export function beginStepPreRun(runId: string, stepIndex = 0): AbortSignal {
+  const key = `${runId}:${stepIndex}`;
+  preRuns.get(key)?.abort();
   const controller = new AbortController();
-  preRuns.set(runId, controller);
+  preRuns.set(key, controller);
   const listeners = preRunBeginListeners.get(runId);
   if (listeners) {
     preRunBeginListeners.delete(runId);
@@ -96,17 +99,21 @@ export function waitForStepPreRunBegin(runId: string): { begun: Promise<void>; d
 // Pass the signal `beginStepPreRun` returned: a superseded pre-run (a newer
 // begin for the same run already replaced and aborted it) must not delete the
 // NEWER controller as it unwinds, or a cancel could no longer reach that scan.
-export function endStepPreRun(runId: string, signal?: AbortSignal): void {
-  if (signal && preRuns.get(runId)?.signal !== signal) return;
-  preRuns.delete(runId);
+export function endStepPreRun(runId: string, signal?: AbortSignal, stepIndex = 0): void {
+  const key = `${runId}:${stepIndex}`;
+  if (signal && preRuns.get(key)?.signal !== signal) return;
+  preRuns.delete(key);
 }
 
 export function abortStepPreRun(runId: string): boolean {
-  const controller = preRuns.get(runId);
-  if (!controller) return false;
-  preRuns.delete(runId);
-  controller.abort();
-  return true;
+  let aborted = false;
+  for (const [key, controller] of preRuns) {
+    if (!key.startsWith(`${runId}:`)) continue;
+    preRuns.delete(key);
+    controller.abort();
+    aborted = true;
+  }
+  return aborted;
 }
 
 async function runOpengrepTool(
@@ -117,6 +124,7 @@ async function runOpengrepTool(
 ): Promise<StepToolReport> {
   const file = path.join(stepDir, OPENGREP_REPORT_FILENAME);
   try {
+    if (signal?.aborted) throw new OpengrepScanAbortedError();
     const result = await (deps.scan ?? depsForTest.scan ?? scanProjectWithDigest)(projectPath, {
       timeoutMs: OPENGREP_STEP_TIMEOUT_MS,
       signal,
@@ -213,7 +221,8 @@ export async function runStepTools(
   const tools = (step.kind ?? 'agent') === 'agent' ? (step.tools ?? []) : [];
   const reports: StepToolReport[] = [];
   for (const tool of tools) {
-    if (tool === 'opengrep') reports.push(await runOpengrepTool(projectPath, stepDir, deps, signal));
+    if (tool === 'opengrep') reports.push(await runExclusive(`workflow-opengrep:${canonicalProjectPath(projectPath)}`, () =>
+      runOpengrepTool(projectPath, stepDir, deps, signal)));
   }
   if (reports.length === 0) return { reports, markdown: '' };
   const markdown = ['## Tool reports (generated before this step started)', '', ...reports.map((r) => r.markdown)].join('\n');

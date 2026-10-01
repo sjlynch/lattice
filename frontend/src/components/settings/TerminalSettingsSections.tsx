@@ -79,26 +79,27 @@ type CodexYoloSectionProps = {
 function CodexYoloSection({ enabled, onChange }: CodexYoloSectionProps) {
   return (
     <CheckboxSettingsSection
-      title="Run Codex with --yolo"
-      infoLabel="About running Codex with --yolo"
+      title="Codex sandbox and approvals"
+      infoLabel="About Codex sandbox and approvals"
       info={(
         <>
           <p>
             Launches every Codex session Lattice spawns — task runs, workflow
             steps, the post-merge hook, prompt customization, and new Codex
             terminals — with <code>--yolo</code>, Codex’s analogue of Claude’s{' '}
-            <code>--dangerously-skip-permissions</code>: it runs tool calls
-            without pausing to ask.
+            <code>--dangerously-skip-permissions</code>: it disables Codex's
+            sandbox and runs tool calls without pausing for approval.
           </p>
           <p>
-            On by default. Turn it off to launch plain <code>codex</code>, which
-            prompts for approval before acting.
+            On by default. Turn it off to launch Codex with the sandbox and
+            approval policy from your Codex configuration. Changes apply to new
+            sessions; running sessions keep their launch settings.
           </p>
         </>
       )}
       checked={enabled}
       onChange={onChange}
-      label="Launch Codex with --yolo (skip approval prompts)"
+      label="Disable Codex sandbox and approval prompts (--yolo)"
     />
   );
 }

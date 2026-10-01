@@ -1,3 +1,4 @@
+import { workflowRunProgress } from './parallelSteps';
 import { Square, X } from 'lucide-react';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
 import { QueuePanel } from './QueuePanel';
@@ -24,14 +25,14 @@ export function WorkflowRunsAside({ manager }: Props) {
         ) : (
           <div className="workflows-runs-list">
             {activeRunList.map((run) => {
-              const pos = Math.min(run.currentStepIndex + 1, run.totalSteps);
-              const pct = run.totalSteps > 0 ? Math.round((pos / run.totalSteps) * 100) : 0;
+              const progress = workflowRunProgress(run);
+              const pct = progress.percent;
               return (
                 <div key={run.id} className="workflows-run-card active">
                   <div className="workflows-run-card-main">
                     <span className="workflows-run-card-name">{run.workflowName}</span>
                     <span className="workflows-run-card-meta">
-                      Step {pos}/{run.totalSteps} · {pct}%
+                      {progress.text} · {pct}%
                       {run.harnessOverride
                         ? ` · Override: ${workflowRunOverrideLabel(run.harnessOverride, run.piModelOverride)}`
                         : ''}

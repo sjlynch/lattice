@@ -1,3 +1,4 @@
+import { workflowRunProgress } from './parallelSteps';
 import { memo } from 'react';
 import { Play, Plus, Square } from 'lucide-react';
 import type { Workflow, WorkflowRun, WorkflowRunHarnessOverride } from '../../api';
@@ -89,7 +90,7 @@ export const WorkflowsSavedItem = memo(function WorkflowsSavedItem({
           <>
             {' · '}
             <span className="workflows-item-run">
-              running {run.currentStepIndex + 1}/{run.totalSteps}
+              {workflowRunProgress(run).text}
             </span>
           </>
         )}

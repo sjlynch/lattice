@@ -32,6 +32,8 @@ import {
   workflowStepCompletionAdvance,
 } from '../workflowRuns.js';
 import { loadPersistedWorkflowRuns } from '../workflowRuns/persistence.js';
+import { activeStepIndices, heldStepStop, isWorkflowStepActive, setStepPhase, stepPhase, stepSessionId } from '../workflowRuns/execution.js';
+import { notify, runs, snapshot } from '../workflowRuns/state.js';
 import { requestStopHookStepComplete } from '../workflowRuns/stopHookGate.js';
 import { waitForStepPreRunBegin } from '../workflowRuns/stepTools.js';
 import { getActiveHookForProject } from '../postMergeHooks.js';
@@ -113,15 +115,17 @@ export function registerPersistedWorkflowRuns(persisted: WorkflowRun[], sessions
   for (const run of persisted) {
     if (!restoreWorkflowRun(run)) continue;
     registered.push(run);
-    const stepDir = workflowStepDir(run.projectPath, run.id, run.currentStepIndex);
-    const id = sessions ? findStepSessionId(sessions, stepDir, run.stepSessionId) : null;
-    if (id) adoptWorkflowStepSession(run.id, run.currentStepIndex, id);
-    // A surviving (or unprobeable) step session lost its live-subagent state
-    // with the old process. Mark it before callbacks are released, so a Stop
-    // arriving right after the registry is ready is already gated
-    // conservatively (see agentQuiescence.ts `markAgentReadopted`).
-    if (id || (sessions === null && run.stepPhase !== 'pending')) {
-      markAgentReadopted(workflowStepAgentId(run.id, run.currentStepIndex), heldStop(run));
+    for (const index of activeStepIndices(run)) {
+      if (run.stepStates?.[index]?.phase === 'completed') continue;
+      const stepDir = workflowStepDir(run.projectPath, run.id, index);
+      const id = sessions ? findStepSessionId(sessions, stepDir, stepSessionId(run, index)) : null;
+      if (id) adoptWorkflowStepSession(run.id, index, id);
+      // A surviving (or unprobeable) session lost its live-subagent state.
+      // Mark every member before callbacks are released at registry readiness.
+      if (id || (sessions === null && stepPhase(run, index) !== 'pending')) {
+        markAgentReadopted(workflowStepAgentId(run.id, index), heldStop({ ...run, currentStepIndex: index,
+          stopReceived: heldStepStop(run, index) }));
+      }
     }
   }
   return registered;
@@ -136,6 +140,7 @@ export async function resumePersistedRun(
   sessions: ProbedSession[] | null,
   backendOrigin: string,
   alreadyRestored = false,
+  deps: { redispatchStep?: typeof redispatchCurrentWorkflowStep } = {},
 ): Promise<void> {
   const current = getRun(run.id);
   if (current && !alreadyRestored) return;
@@ -145,6 +150,19 @@ export async function resumePersistedRun(
   }
 
   const wf = run.definitionError ? null : run.definition ?? await getWorkflow(run.workflowId).catch(() => null);
+  if (run.stepStates && run.activeStepIndices) {
+    if (!wf) { failUnresumableRun(run, run.id, run.definitionError ?? 'workflow definition not found'); return; }
+    if (run.activeStepIndices.every((i) => run.stepStates![i].phase === 'completed')) {
+      restoreWorkflowRun(run);
+      await completeWorkflowStep(run.id, run.currentStepIndex, backendOrigin, { resumeCompleted: true });
+      return;
+    }
+    if (run.activeStepIndices.length > 1) {
+      restoreWorkflowRun(run);
+      await resumeParallelMembers(run, wf, sessions, backendOrigin, deps.redispatchStep ?? redispatchCurrentWorkflowStep);
+      return;
+    }
+  }
   const step = wf?.steps[run.currentStepIndex] ?? null;
   const stepDir = workflowStepDir(run.projectPath, run.id, run.currentStepIndex);
   const serverId = sessions ? findStepSessionId(sessions, stepDir, run.stepSessionId) : null;
@@ -183,12 +201,63 @@ export async function resumePersistedRun(
       await advancePastLostTestStep(run, label, decision.reason, backendOrigin);
       return;
     case 'redispatch':
-      await redispatchWithBudget(run, step, label, decision.reason, backendOrigin);
+      await redispatchWithBudget(run, step, label, decision.reason, backendOrigin, deps.redispatchStep ?? redispatchCurrentWorkflowStep);
       return;
     case 'readopt':
       await readoptRun(run, wf, step, serverId, label, decision.reason, backendOrigin);
       return;
   }
+}
+
+async function resumeParallelMembers(run: WorkflowRun, wf: Workflow, sessions: ProbedSession[] | null,
+  backendOrigin: string, redispatch: typeof redispatchCurrentWorkflowStep): Promise<void> {
+  await Promise.all(activeStepIndices(run).map(async (index) => {
+    if (run.stepStates?.[index]?.phase === 'completed') return;
+    const latest = getRun(run.id);
+    if (!latest || !isWorkflowStepActive(latest, index)) return;
+    const step = wf.steps[index];
+    if ((step.kind ?? 'agent') !== 'agent') { failUnresumableRun(run, run.id, 'action steps cannot run in parallel'); return; }
+    const serverId = sessions ? findStepSessionId(sessions, workflowStepDir(run.projectPath, run.id, index), stepSessionId(latest, index)) : null;
+    const member: WorkflowRun = { ...latest, currentStepIndex: index, stepPhase: stepPhase(latest, index),
+      stepSessionId: stepSessionId(latest, index), stopReceived: heldStepStop(latest, index) };
+    const decision = classifyWorkflowRunResume({ status: latest.status, currentStepIndex: index,
+      definitionStepCount: wf.steps.length, stepKind: 'agent', stepPhase: member.stepPhase,
+      stepSessionAlive: sessions === null ? null : serverId !== null });
+    const label = `${run.id} "${run.workflowName}" step ${index + 1}/${run.totalSteps}`;
+    if (decision.action !== 'readopt') forgetAgentQuiescence(workflowStepAgentId(run.id, index));
+    if (decision.action === 'readopt') {
+      await readoptRun(member, wf, step, serverId, label, decision.reason, backendOrigin);
+    } else if (decision.action === 'complete') {
+      if (serverId) adoptWorkflowStepSession(run.id, index, serverId);
+      await completeWorkflowStep(run.id, index, backendOrigin);
+    } else if (decision.action === 'error') {
+      // Mark the actual lost member, rather than the group's anchor, in the UI.
+      const live = getRun(run.id);
+      if (live && isWorkflowStepActive(live, index)) {
+        const state = runs.get(run.id)?.stepStates?.[index];
+        if (state) { state.phase = 'errored'; state.error = decision.reason; }
+        failUnresumableRun(run, label, decision.reason);
+      }
+    } else if (decision.action === 'redispatch') {
+      const stillPending = () => {
+        const live = getRun(run.id);
+        return !!live && isWorkflowStepActive(live, index) && stepPhase(live, index) === 'pending';
+      };
+      try {
+        const tasks = await listTasks(run.projectPath);
+        const checkpoint = JSON.stringify([index, latest.activeStepIndices,
+          Object.entries(getRun(run.id)?.stepStates ?? {}).map(([i, s]) => [i, s.phase]),
+          tasks.filter((t) => PENDING_TASK_STATUSES.includes(t.status)).map((t) => [t.id, t.status, !!t.runQueued]).sort()]);
+        const budget = await claimRecoveryAttempt(run.projectPath, `workflow:${run.id}:step:${index}`, checkpoint);
+        if (!stillPending()) return;
+        if (budget.paused) { failWorkflowRun(run.id, budget.paused); return; }
+        forgetAgentQuiescence(workflowStepAgentId(run.id, index));
+        await redispatch(run.id, backendOrigin, index);
+      } catch (err) {
+        if (stillPending()) failWorkflowRun(run.id, `Automatic recovery could not record its attempt: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+  }));
 }
 
 function failUnresumableRun(run: WorkflowRun, label: string, reason: string): void {
@@ -226,6 +295,7 @@ async function redispatchWithBudget(
   label: string,
   reason: string,
   backendOrigin: string,
+  redispatch: typeof redispatchCurrentWorkflowStep,
 ): Promise<void> {
   const recoveryStepIndex = run.currentStepIndex;
   const stillNeedsRedispatch = () => {
@@ -257,7 +327,7 @@ async function redispatchWithBudget(
   // (or a completing step) using this stale recovery observation.
   if (!stillNeedsRedispatch()) return;
   console.warn(`[startup] workflow run ${label} interrupted — ${reason}; re-running it.`);
-  await redispatchCurrentWorkflowStep(run.id, backendOrigin).catch((err) =>
+  await redispatch(run.id, backendOrigin).catch((err) =>
     console.error(`[startup] workflow run ${run.id}: redispatch failed:`, err),
   );
 }
@@ -297,6 +367,11 @@ async function readoptRun(
   reason: string,
   backendOrigin: string,
 ): Promise<void> {
+  const isStillActive = () => {
+    const latest = getRun(run.id);
+    return !!latest && isWorkflowStepActive(latest, run.currentStepIndex);
+  };
+  if (!isStillActive()) return;
   console.log(`[startup] workflow run ${label} re-adopted — ${reason}.`);
   if (serverId) adoptWorkflowStepSession(run.id, run.currentStepIndex, serverId);
   // Its subagents' state is unknown to this process: gate a Stop-hook advance
@@ -307,6 +382,16 @@ async function readoptRun(
     // the step's timeout from its recorded spawn time.
     await resumeRunTestsStep(wf ?? undefined, run, run.currentStepIndex, backendOrigin, completeWorkflowStep);
   }
+  if (!isStillActive()) return;
+  const live = runs.get(run.id)!;
+  const index = run.currentStepIndex;
+  const changed = stepPhase(live, index) !== 'running' || (serverId && stepSessionId(live, index) !== serverId);
+  setStepPhase(live, index, 'running');
+  if (serverId) {
+    if (live.stepStates?.[index]) live.stepStates[index].sessionId = serverId;
+    if (live.currentStepIndex === index) live.stepSessionId = serverId;
+  }
+  if (changed) notify({ type: 'progress', run: snapshot(live) });
   if (wf && step) {
     registerAgentSession({
       agentId: workflowStepAgentId(run.id, run.currentStepIndex),

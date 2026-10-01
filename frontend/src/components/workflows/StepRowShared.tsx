@@ -1,4 +1,4 @@
-import { AlertCircle, Check, ShieldCheck, Snowflake } from 'lucide-react';
+import { AlertCircle, Check, Clock3, ShieldCheck, Snowflake, Square } from 'lucide-react';
 import type { WorkflowStep } from '../../api';
 import type { StepRunStatus } from './stepRunStatus';
 
@@ -21,6 +21,8 @@ const STEP_RUN_STATUS_TITLE: Record<StepRunStatus, string> = {
   running: 'Running…',
   done: 'Completed',
   pending: 'Pending',
+  queued: 'Queued or preparing — waiting to start',
+  cancelled: 'Stopped',
   error: 'Failed here',
   skipped: 'Frozen — skipped by this run',
 };
@@ -48,6 +50,10 @@ export function StepIndexBadge({
         <AlertCircle size={13} aria-hidden />
       ) : runStatus === 'skipped' ? (
         <Snowflake size={13} aria-hidden />
+      ) : runStatus === 'queued' ? (
+        <Clock3 size={13} aria-hidden />
+      ) : runStatus === 'cancelled' ? (
+        <Square size={11} aria-hidden />
       ) : (
         `#${index + 1}`
       )}

@@ -31,6 +31,7 @@ import {
   renderStepMarkdown,
 } from './stepMarkdown.js';
 import { getProjectDirtyState, type DirtyStateSummary } from './projectDirtyState.js';
+import { isWorkflowStepActive } from './execution.js';
 import { getRunningRunIds, notify, snapshot, type WorkflowRun } from './state.js';
 import {
   pruneOldWorkflowRuns,
@@ -131,7 +132,7 @@ async function writeStepAssets(args: {
   const { wf, run, stepIndex, backendOrigin, stepDir, stepFile } = args;
   if (args.runTests) {
     // Run tests: the brief is pre-rendered; it files no tasks, so no helper.
-    if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return false;
+    if (!isWorkflowStepActive(run, stepIndex)) return false;
     await fs.writeFile(stepFile, args.runTests.brief, 'utf8');
     return true;
   }
@@ -163,17 +164,17 @@ async function writeStepAssets(args: {
       `running ${step.tools.map((t) => (t === 'opengrep' ? 'the Opengrep scan' : t)).join(', ')} before the agent starts…`,
     );
   }
-  const signal = beginStepPreRun(run.id);
+  const signal = beginStepPreRun(run.id, stepIndex);
   let tools: Awaited<ReturnType<typeof runStepTools>>;
   try {
     tools = await runStepTools(step, wf.projectPath, stepDir, {}, signal);
   } finally {
-    endStepPreRun(run.id, signal);
+    endStepPreRun(run.id, signal, stepIndex);
   }
   // A cancel (or a completed step racing a re-dispatch) during the pre-run:
   // the brief would be for a step nobody will spawn. Stop here; the spawn
   // guard below would skip it anyway.
-  if (run.status !== 'running' || run.currentStepIndex !== stepIndex) {
+  if (!isWorkflowStepActive(run, stepIndex)) {
     console.log(`[workflow-step] ${run.id} step ${stepIndex}: run is ${run.status}; not writing the brief`);
     return false;
   }
@@ -271,7 +272,7 @@ function spawnStepSession(args: {
     runTests ? { claudeAddDir: runTests.addDir } : {},
   );
 
-  if (run.status === 'running' && run.currentStepIndex === stepIndex) {
+  if (isWorkflowStepActive(run, stepIndex)) {
     enqueueWorkflowStepSession({
       run,
       stepIndex,
@@ -325,7 +326,7 @@ export async function spawnWorkflowStep(
   // Emit progress now — the step is the run's current step whether its pty
   // is spawning immediately or waiting in the queue. If cancellation raced
   // with scratch setup, do not resurrect/update the cancelled run.
-  if (run.status === 'running' && run.currentStepIndex === stepIndex) {
+  if (isWorkflowStepActive(run, stepIndex)) {
     notify({ type: 'progress', run: snapshot(run) });
   }
 

@@ -17,9 +17,12 @@ call `completeWorkflowStep` themselves.
   `MAX_FINISHED_RUNS_PER_PROJECT` (a memory bound); running runs never are.
 - `definition.ts` — `cloneWorkflowDefinition` / `readWorkflowDefinition`: the
   frozen per-run definition copy and its validated read-back.
-- `frozenSteps.ts` — pure frozen-step policy (`isStepFrozen`,
-  `nextRunnableStepIndex`); used only by `startWorkflowRun` and
-  `completeWorkflowStep` — keep it here, don't inline a third copy.
+- `frozenSteps.ts` — legacy pure frozen-step policy (`isStepFrozen`,
+  `nextRunnableStepIndex`).
+- `execution.ts` — current group policy and member state helpers. Adjacent
+  `agent` steps with `parallel: true` form a group; all other steps are
+  singletons. Form authored boundaries before skipping frozen members.
+- `teardown.ts` — shared cancellation/error cleanup for every active member.
 
 **Step dispatch / spawning** (agent steps)
 - `stepSpawner.ts` — `spawnWorkflowStep`, split into `prepareStepScratch` →
@@ -33,7 +36,8 @@ call `completeWorkflowStep` themselves.
 - `stepTools.ts` — pre-run tools (`WorkflowStep.tools`, v1 `opengrep`):
   `runStepTools` writes `OPENGREP_FINDINGS.md` + the `{{tool_reports}}` block;
   `beginStepPreRun` / `endStepPreRun` / `abortStepPreRun` make a cancel abort
-  the scan.
+  every member's scan. Controllers are keyed by run/member; Opengrep scans
+  serialize per project so sibling scans do not collide with the one-scan slot.
 - `projectDirtyState.ts` — `getProjectDirtyState` + `renderDirtyStateWarning`:
   the dirty-checkout banner at the top of WORKFLOW_STEP.md (best-effort).
 - `commandBuilder.ts` — `buildWorkflowStepCommand` (harness dispatch via
@@ -109,16 +113,20 @@ call `completeWorkflowStep` themselves.
 - A workflow whose steps are *all* frozen is refused before any run record.
 
 **Advancing**
-- Advancement is sequential and **idempotent**: `completeWorkflowStep` ignores
-  stale callbacks; duplicates join the in-flight promise keyed by run/step.
-  `advanceCompletedStep` checkpoints `stepPhase: 'completing'` while retaining
-  the finishing `currentStepIndex`. If that initial checkpoint fails, it
-  restores the previous phase for the still-current running step so a later
-  callback can retry.
-- After awaiting terminal handling (below), the advance computes
-  `nextRunnableStepIndex`, then changes/checkpoints the next index with
-  `stepPhase: 'pending'` before dispatch. Frozen steps are skipped, not removed;
-  a run with no runnable steps remaining completes.
+- Groups advance sequentially and member completion is **idempotent**:
+  stale callbacks are ignored; duplicates join the run/member promise.
+  Each member checkpoints `completing` before terminal handling, then
+  `completed` inside a per-run join lock. Failed initial checkpoints restore
+  the prior member phase so its callback can retry.
+- The successor dispatches once, after **every** active member is durably
+  completed and its terminal handling has settled. The next group is
+  checkpointed `pending` before dispatch. `currentStepIndex` remains the first
+  runnable member for compatibility; `activeStepIndices`, `groupEndIndex`, and
+  `stepStates` drive new runs. Older records retain singleton behavior.
+- Only planning `agent` steps can opt in. Start/Merge/Run tests/Push are always
+  sequential barriers, including when frozen. A frozen unmarked agent also
+  separates groups; a frozen marked member stays in its group but is skipped.
+  Every runnable member enters the existing spawn queue and respects capacity.
 - **Terminal handling precedes the next dispatch.** By default,
   `killWorkflowStepSession` awaits any outstanding allocation and the kill —
   `codex --yolo` never self-exits. With project `keepWorkflowStepTerminals`
@@ -153,7 +161,7 @@ call `completeWorkflowStep` themselves.
   terminal retention: `cancelWorkflowRun` cancels pending
   `wf-step:<runId>:<step>` queue entries, unregisters the presence node, kills
   any tracked `serverId`, aborts a pre-run scan and a pending stop-hook gate;
-  queued thunks re-check run status / current step before and after
+  queued thunks re-check run status / active membership before and after
   `proxyCreateSession`. A tool that cannot run never fails its step.
 - **A terminal transition checkpoints immediately** (`cancelWorkflowRun`,
   `failWorkflowRun`, `markWorkflowStepSpawnErrored`, control-step errors follow
@@ -183,6 +191,11 @@ call `completeWorkflowStep` themselves.
   scan) is always re-dispatched; `spawning` with no terminal errors;
   `stepSessionAlive: null` ("can't probe") re-adopts; `completing` advances
   without replaying the prompt.
+- Version-3 mirrors snapshot group state deeply at enqueue time. Recovery
+  independently re-adopts, redispatches, or finishes each member and re-arms
+  every held Stop gate. Completed members never replay; an all-completed group
+  finishes its join. Invalid group state errors visibly rather than falling
+  back to a serial replay. Tests: `workflowParallelSteps.test.ts`.
 - During recovery, lifecycle requests wait (then 503 + Retry-After), unknown
   callbacks get 404 — never acknowledge an unknown run — and
   `/ws/workflow-runs` hellos carry `recovering: true` until an authoritative

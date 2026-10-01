@@ -67,15 +67,12 @@ export function workflowStepDir(
 export async function writeScratchReadme(runDir: string): Promise<boolean> {
   const readmePath = path.join(runDir, 'README.md');
   try {
-    await fs.access(readmePath);
-    return false;
-  } catch {
-    // fall through to write
-  }
-  try {
-    await fs.writeFile(readmePath, SCRATCH_README, 'utf8');
+    // Exclusive create: parallel members must not both prune the same old runs.
+    await fs.writeFile(readmePath, SCRATCH_README, { encoding: 'utf8', flag: 'wx' });
   } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === 'EEXIST') return false;
     console.warn(`[workflow-step] failed to write scratch README at ${readmePath}:`, err);
+    return false;
   }
   return true;
 }

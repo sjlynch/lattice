@@ -8,8 +8,8 @@
 //                     when its condition is met (Start finishes spawning
 //                     tasks, Merge drains lanes, Push session reports done).
 //
-// Steps always run one after another, and a project runs one workflow at a
-// time (`assertNoActiveWorkflowRun`).
+// Adjacent opted-in planning steps run as a group. Groups and action steps
+// remain sequential; a project runs one workflow at a time.
 //
 // Implementation lives in workflowRuns/:
 //   - state.ts         registry + WS event fan-out
@@ -36,23 +36,22 @@ import {
   checkpointWorkflowRun,
 } from './workflowRuns/state.js';
 import { spawnWorkflowStep } from './workflowRuns/stepSpawner.js';
-import { nextRunnableStepIndex } from './workflowRuns/frozenSteps.js';
+import { activeStepIndices, isWorkflowStepActive, nextStepGroup, openStepGroup,
+  setStepPhase, stepPhase } from './workflowRuns/execution.js';
+import { runExclusive } from './serializeWrites.js';
+import { teardownWorkflowRun } from './workflowRuns/teardown.js';
 import { executeControlStep } from './workflowRuns/controlStep.js';
 import {
-  cancelWorkflowStepSessions,
   killWorkflowStepSession,
   releaseWorkflowStepSession,
   workflowStepAgentId,
 } from './workflowRuns/sessionSpawner.js';
 import { isKeepWorkflowStepTerminalsEnabled } from './userSettings.js';
-import { cancelStopHookGate } from './workflowRuns/stopHookGate.js';
 import { forgetAgentQuiescence } from './agentQuiescence.js';
 import { unregisterAgentSession } from './agentSessions.js';
-import { abortStepPreRun } from './workflowRuns/stepTools.js';
 import { cloneWorkflowDefinition } from './workflowRuns/definition.js';
 import { beginRestartTransition, trackRestartTransition } from './restartDrain/gate.js';
 import {
-  abortRunTestsStep,
   dispatchRunTestsStep,
   finalizeRunTestsStep,
 } from './workflowRuns/testStep/runTestsStep.js';
@@ -111,8 +110,9 @@ async function dispatchStep(
   backendOrigin: string,
 ): Promise<void> {
   if (run.definitionError) throw new Error(run.definitionError);
-  if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
+  if (!isWorkflowStepActive(run, stepIndex)) return;
   const kind = wf.steps[stepIndex].kind ?? 'agent';
+  if (kind !== 'agent' && activeStepIndices(run).length > 1) throw new Error('action steps cannot run in parallel');
   if (kind === 'agent') {
     await spawnWorkflowStep(wf, run, stepIndex, backendOrigin);
     return;
@@ -133,13 +133,29 @@ async function dispatchStep(
   // never see the new `currentStepIndex` until the control step finishes.
   // Emit progress here so the UI advances as soon as the control step
   // begins.
-  run.stepPhase = 'running';
+  setStepPhase(run, stepIndex, 'running');
   await checkpointWorkflowRun(run);
   if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
   notify({ type: 'progress', run: snapshot(run) });
   // Fire-and-forget. The control step's worker calls completeWorkflowStep
   // when its async work finishes (or marks the run errored on failure).
   executeControlStep(wf, run, stepIndex, backendOrigin, completeWorkflowStep);
+}
+
+async function dispatchGroup(wf: Workflow, run: WorkflowRun, backendOrigin: string,
+  dispatch: typeof dispatchStep = dispatchStep): Promise<void> {
+  const indices = [...activeStepIndices(run)];
+  await Promise.all(indices.map(async (index) => {
+    try { await dispatch(wf, run, index, backendOrigin); }
+    catch (err) {
+      if (isWorkflowStepActive(run, index)) {
+        if (run.stepStates?.[index]) run.stepStates[index].error = (err as Error).message;
+        setStepPhase(run, index, 'errored');
+        failWorkflowRun(run.id, `workflow step ${index + 1}: ${(err as Error).message ?? 'setup failed'}`);
+      }
+      throw err;
+    }
+  }));
 }
 
 export async function startWorkflowRun(
@@ -154,10 +170,11 @@ export async function startWorkflowRun(
   // Frozen steps are skipped, so a run starts at the first thawed step rather
   // than always at 0. All-frozen is refused outright — starting a run that
   // instantly completes reads as a silent no-op to the user.
-  const firstIndex = nextRunnableStepIndex(wf.steps, 0);
-  if (firstIndex === null) {
+  const firstGroup = nextStepGroup(wf.steps, 0);
+  if (firstGroup === null) {
     throw new Error('every step in this workflow is frozen');
   }
+  const firstIndex = firstGroup.indices[0];
 
   // Authoritative one-run-per-project guard: reject if a run is already active.
   // Runs before any run record / notify / spawn so a rejected start is atomic.
@@ -181,6 +198,7 @@ export async function startWorkflowRun(
     ...(harnessOverride ? { harnessOverride } : {}),
     ...(piModelOverride ? { piModelOverride } : {}),
   };
+  openStepGroup(run, run.definition!.steps, firstGroup);
   runs.set(run.id, run);
   notify({ type: 'started', run: snapshot(run) });
   console.log(
@@ -192,7 +210,7 @@ export async function startWorkflowRun(
   const endStart = beginRestartTransition(`workflow ${run.id} start`);
   try {
     await checkpointWorkflowRun(run);
-    await dispatchStep(run.definition!, run, firstIndex, backendOrigin);
+    await dispatchGroup(run.definition!, run, backendOrigin);
     return snapshot(run);
   } catch (err) {
     console.error(`[workflow-run] ${run.id} failed to start step ${firstIndex}:`, err);
@@ -207,15 +225,9 @@ export async function startWorkflowRun(
   }
 }
 
-// Tear down whatever the run's current step still holds, once the run has
-// left `running` (cancelled or errored): its queued/spawned session, the Stop
-// hook gate and the agent's quiescence state.
+// Tear down all active members after the run leaves `running`.
 function teardownActiveStep(run: WorkflowRun): void {
-  cancelWorkflowStepSessions(run.id);
-  cancelStopHookGate(run.id);
-  forgetAgentQuiescence(workflowStepAgentId(run.id, run.currentStepIndex));
-  // A Run tests step holds the project run lock + a timeout; release both.
-  void abortRunTestsStep(run.id);
+  teardownWorkflowRun(run);
 }
 
 export function cancelWorkflowRun(runId: string): boolean {
@@ -223,9 +235,6 @@ export function cancelWorkflowRun(runId: string): boolean {
   if (!run || run.status !== 'running') return false;
   run.status = 'cancelled';
   run.finishedAt = Date.now();
-  // A step still inside its pre-run (an Opengrep scan) has no session to kill;
-  // abort the scan so the project's one-scan slot frees for the next run.
-  abortStepPreRun(run.id);
   teardownActiveStep(run);
   notify({ type: 'cancelled', run: snapshot(run) });
   // Durable now, not after the 100 ms debounce: a restart in that window left
@@ -255,12 +264,12 @@ export function restoreWorkflowRun(persisted: WorkflowRun): boolean {
   return true;
 }
 
-// Re-run the run's CURRENT step. Only for control steps (start/merge/push),
-// which execute in-process and are therefore killed outright by a restart —
-// unlike an agent step, whose pty survives in the detached terminal-server.
+// Re-dispatch a control step or a pending agent member after a restart.
+// Already-admitted agents are re-adopted instead of replaying their prompts.
 export async function redispatchCurrentWorkflowStep(
   runId: string,
   backendOrigin: string,
+  stepIndex?: number,
 ): Promise<void> {
   const run = runs.get(runId);
   if (!run || run.status !== 'running') return;
@@ -273,7 +282,7 @@ export async function redispatchCurrentWorkflowStep(
         `current step ${run.currentStepIndex} is outside the workflow's ${wf.steps.length} step(s)`,
       );
     }
-    await dispatchStep(wf, run, run.currentStepIndex, backendOrigin);
+    await dispatchStep(wf, run, stepIndex ?? run.currentStepIndex, backendOrigin);
   } catch (err) {
     failWorkflowRun(runId, (err as Error).message ?? 'resume failed');
   }
@@ -322,10 +331,12 @@ type AdvanceDeps = {
   releaseStepSession?: typeof releaseWorkflowStepSession;
   dispatchStep?: typeof dispatchStep;
   finalizeTestStep?: typeof finalizeRunTestsStep;
+  // Boot can finish the join checkpoint after every member was reclaimed.
+  resumeCompleted?: boolean;
 };
 
 // Called by the Stop-hook callback. Idempotent: stale hooks (same stepIndex
-// re-firing) are silently ignored via the currentStepIndex check.
+// re-firing) are silently ignored via the active-member check.
 export async function completeWorkflowStep(
   runId: string,
   stepIndex: number,
@@ -335,7 +346,8 @@ export async function completeWorkflowStep(
   const run = runs.get(runId);
   if (!run || run.status !== 'running') return;
   if (run.definitionError) throw new Error(run.definitionError);
-  if (stepIndex !== run.currentStepIndex) return;
+  if (!isWorkflowStepActive(run, stepIndex) && !(deps.resumeCompleted &&
+    activeStepIndices(run).includes(stepIndex) && run.stepStates?.[stepIndex]?.phase === 'completed')) return;
 
   const key = `${runId}:${stepIndex}`;
   if (completions.has(key)) return completions.get(key);
@@ -352,67 +364,58 @@ export async function completeWorkflowStep(
 
 async function advanceCompletedStep(run: WorkflowRun, stepIndex: number, backendOrigin: string,
   deps: AdvanceDeps): Promise<void> {
-  const claimedIndex = stepIndex + 1;
-  // Keep the index on the finishing step until its completion and terminal
-  // teardown are durable. The per-step promise deduplicates concurrent hooks
-  // while allowing the next step to finish during its predecessor's dispatch.
-  const previousPhase = run.stepPhase;
-  run.stepPhase = 'completing';
-  // A failed completion write is retriable: do not kill the agent or return a
-  // successful HTTP acknowledgement for work that only exists in memory.
+  const previousPhase = stepPhase(run, stepIndex);
+  setStepPhase(run, stepIndex, 'completing');
   try {
     await checkpointWorkflowRun(run);
   } catch (err) {
-    if (run.status === 'running' && run.currentStepIndex === stepIndex) run.stepPhase = previousPhase;
+    if (isWorkflowStepActive(run, stepIndex)) setStepPhase(run, stepIndex, previousPhase ?? 'running');
     throw err;
   }
   try {
-    // Kill the finished step's pty (the leak/overlap guard) — unless the
-    // project keeps step terminals open for inspection, in which case only the
-    // bookkeeping is dropped and the idle session stays until its tab closes.
     const keepOpen = await isKeepWorkflowStepTerminalsEnabled(run.projectPath).catch(() => false);
     await (keepOpen
       ? (deps.releaseStepSession ?? releaseWorkflowStepSession)
       : (deps.killStepSession ?? killWorkflowStepSession))(run.id, stepIndex);
-    if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
+    if (!isWorkflowStepActive(run, stepIndex)) return;
     const wf = run.definition ?? await getWorkflow(run.workflowId);
-    if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
-    if (!wf) {
-      failWorkflowRun(run.id, 'workflow definition not found');
-      return;
-    }
-    // A Run tests step settles here on every path (agent done, skipped, timed
-    // out, could not start): its summary lands on the run and its project run
-    // lock is released BEFORE the next step dispatches (often Push, a control
-    // step that takes the same lock).
+    if (!isWorkflowStepActive(run, stepIndex)) return;
+    if (!wf) { failWorkflowRun(run.id, 'workflow definition not found'); return; }
     if (wf.steps[stepIndex]?.kind === 'test') {
       await (deps.finalizeTestStep ?? finalizeRunTestsStep)(run, stepIndex);
-      if (run.status !== 'running' || run.currentStepIndex !== stepIndex) return;
+      if (!isWorkflowStepActive(run, stepIndex)) return;
     }
-    // Walk past any frozen steps between here and the next runnable one; `null`
-    // means nothing runnable is left (end of workflow, or only frozen steps).
-    const nextIndex = nextRunnableStepIndex(wf.steps, claimedIndex);
-    if (nextIndex === null) {
-      await completeRun(run, wf);
-      return;
+    // Serialize the durable member settlement and group join. Two last callbacks
+    // cannot both dispatch a successor, nor observe an uncheckpointed completion.
+    let dispatchNext = false;
+    await runExclusive(`workflow-group:${run.id}`, async () => {
+      if (!isWorkflowStepActive(run, stepIndex)) return;
+      if (run.stepStates) {
+        setStepPhase(run, stepIndex, 'completed');
+        delete run.stepStates[stepIndex].stopReceived;
+        delete run.stepStates[stepIndex].sessionId;
+      }
+      if (run.stopReceived?.stepIndex === stepIndex) delete run.stopReceived;
+      await checkpointWorkflowRun(run);
+      if (run.status !== 'running') return;
+      if (run.stepStates && activeStepIndices(run).some((i) => run.stepStates![i].phase !== 'completed')) {
+        notify({ type: 'progress', run: snapshot(run) });
+        return;
+      }
+      const next = nextStepGroup(wf.steps, run.groupEndIndex ?? stepIndex + 1);
+      if (!next) { await completeRun(run, wf); return; }
+      openStepGroup(run, wf.steps, next);
+      await checkpointWorkflowRun(run);
+      notify({ type: 'progress', run: snapshot(run) });
+      dispatchNext = true;
+    });
+    // Dispatch outside the join lock: an unrelated member's pre-run can take
+    // minutes, and must not hold callbacks for the new group's other members.
+    if (dispatchNext && run.status === 'running') {
+      await dispatchGroup(wf, run, backendOrigin, deps.dispatchStep ?? dispatchStep);
     }
-    run.currentStepIndex = nextIndex;
-    run.stepPhase = 'pending';
-    delete run.stepSessionId;
-    await checkpointWorkflowRun(run);
-    if (nextIndex !== claimedIndex) {
-      console.log(
-        `[workflow-run] ${run.id} skipping frozen step(s) ${claimedIndex}..${nextIndex - 1}`,
-      );
-    }
-    console.log(`[workflow-run] ${run.id} advancing step ${stepIndex} → ${nextIndex}`);
-    await (deps.dispatchStep ?? dispatchStep)(wf, run, nextIndex, backendOrigin);
   } catch (err) {
     if (run.status !== 'running') return;
-    console.error(`[workflow-run] ${run.id} advance failed:`, err);
-    // failWorkflowRun: durable terminal checkpoint (not the debounce — a
-    // restart in that window re-dispatched the failed step) and teardown of
-    // whatever the failed dispatch had already queued.
     failWorkflowRun(run.id, (err as Error).message ?? 'advance failed');
   }
 }
@@ -422,6 +425,7 @@ async function completeRun(run: WorkflowRun, wf: Workflow): Promise<void> {
   // Park the index past the last step so every editor row reads as done.
   // `max` keeps a claim that already overshot (workflow shortened mid-run).
   run.currentStepIndex = Math.max(run.currentStepIndex, wf.steps.length);
+  run.activeStepIndices = [];
   run.status = 'completed';
   run.finishedAt = Date.now();
   console.log(`[workflow-run] ${run.id} completed all ${wf.steps.length} step(s)`);

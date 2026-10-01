@@ -30,6 +30,12 @@ Boot-time crash recovery for project/task state. `../recovery.ts` is only the st
      - a **control** step (start/merge/push) died with the process and is re-dispatched (they are re-runnable, same property `resumeInterruptedMergeRuns` relies on);
      - an agent step whose pty is gone is marked **errored** rather than left hanging.
    - One terminal-server probe per sweep; `null` ("couldn't ask") re-adopts, so a wedged terminal-server can't mass-error healthy runs.
+   - Parallel groups register every surviving member before readiness, then
+     classify each member independently. Pending members redispatch with a
+     per-member retry budget; completing members finish teardown; completed
+     members never replay. A lost member fails the run and cancels its siblings.
+     Every member's held Stop re-arms its own gate. An all-completed checkpoint
+     finishes the group join without requiring a live terminal.
    - A re-adopted step's quiescence state is marked `markAgentReadopted` (at registration, before callbacks are released): its live-subagent tracking died with the old process, so its Stop-hook gate needs `READOPTED_SETTLE_MS` (2 min) of silence instead of a few seconds — see `agentQuiescence.ts`; any other outcome drops the mark.
    - A step whose Stop the dead process was still holding in its gate (`run.stopReceived` for the current step) has that gate re-armed here, with the quiet window counted from the Stop — the hook already got its 200 and the idle agent will never Stop again (3a does the same for a post-merge hook's `stopReceivedAt`).
    - A re-dispatched **Push** step re-attaches to its still-live push session (3a re-adopted it) rather than spawning a second push.
