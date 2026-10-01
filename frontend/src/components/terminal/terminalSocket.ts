@@ -1,11 +1,15 @@
-import type { IDisposable, Terminal } from '@xterm/xterm';
+import type { Terminal } from '@xterm/xterm';
 import type { TerminalStatus } from '../../terminal/terminalTypes';
 import { buildTerminalWsQuery, type TerminalWsQueryArgs } from './connectionParams';
 
+// Preserve the connection helpers' existing import path for input forwarding.
+export { forwardTerminalInput, RESIZE_DEBOUNCE_MS } from './terminalInput';
+
 // Mechanism behind `useTerminalConnection` — the `/ws/terminal` protocol with
-// no React in it: URL building, message decoding, reconnect/backoff maths, the
-// user-visible terminal-body notices, and xterm input/resize forwarding. The
-// reconnect lifecycle *state machine* (terminated / attachedOnce / attempt)
+// no React in it: URL building, message decoding, reconnect/backoff maths, and
+// user-visible terminal-body notices. Input/resize ownership lives in
+// `terminalInput.ts`; the reconnect lifecycle *state machine*
+// (terminated / attachedOnce / attempt)
 // lives in `terminalReconnectController.ts`; the hook wires these focused
 // helpers to React refs, xterm, and the WebSocket instance.
 
@@ -172,56 +176,4 @@ export function shouldGiveUpReconnect(
 // once `attempt` grows large during a long outage.
 export function reconnectDelay(attempt: number): number {
   return Math.min(RECONNECT_MAX_DELAY_MS, 250 * 2 ** Math.min(attempt, 6));
-}
-
-// --- xterm input / resize forwarding ---------------------------------------
-
-// How long the terminal's size must hold still before the pty hears about it.
-// A sidebar drag refits the pane on every pointer move, and each pty resize is
-// a SIGWINCH to the harness: Codex (since its resize-reflow landed) clears its
-// scrollback and re-emits up to thousands of transcript rows on every width
-// change, so forwarding each intermediate size turned one drag into minutes of
-// redraw on a busy machine. Only the settled size is worth sending; xterm
-// itself is already laid out at the new size in the meantime.
-export const RESIZE_DEBOUNCE_MS = 150;
-
-// Forward typed input and resize events to the live socket. `getSocket` is read
-// lazily on every event because the hook reassigns its `ws` across reconnects.
-export function forwardTerminalInput(
-  term: Terminal,
-  getSocket: () => WebSocket | null,
-  schedule: {
-    setTimeout: (fn: () => void, ms: number) => unknown;
-    clearTimeout: (handle: unknown) => void;
-  } = { setTimeout: (fn, ms) => setTimeout(fn, ms), clearTimeout: (h) => clearTimeout(h as number) },
-): IDisposable {
-  const send = (payload: object) => {
-    const ws = getSocket();
-    if (ws && ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify(payload));
-    }
-  };
-  const dataDisposable = term.onData((data) => send({ type: 'input', data }));
-  let pendingResize: { cols: number; rows: number } | null = null;
-  let resizeTimer: unknown = null;
-  const flushResize = () => {
-    resizeTimer = null;
-    const size = pendingResize;
-    pendingResize = null;
-    if (size) send({ type: 'resize', cols: size.cols, rows: size.rows });
-  };
-  const resizeDisposable = term.onResize(({ cols, rows }) => {
-    pendingResize = { cols, rows };
-    if (resizeTimer !== null) schedule.clearTimeout(resizeTimer);
-    resizeTimer = schedule.setTimeout(flushResize, RESIZE_DEBOUNCE_MS);
-  });
-  return {
-    dispose() {
-      dataDisposable.dispose();
-      resizeDisposable.dispose();
-      if (resizeTimer !== null) schedule.clearTimeout(resizeTimer);
-      resizeTimer = null;
-      pendingResize = null;
-    },
-  };
 }
