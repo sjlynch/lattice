@@ -34,6 +34,10 @@
 // run on the proven per-node path unchanged. The instanced mesh only ever draws
 // the base (no-overlay) view, which is the orbit-cost steady state. Ghosts
 // (deleted-file discs) likewise keep their per-node sprite and are excluded here.
+//
+// Style meshes own their instance buffers and billboard materials; allocation
+// and disposal live in instancedNodeResources.ts. This controller owns the
+// shared quad through final teardown; sprite-cache textures are borrowed.
 
 import * as THREE from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';
@@ -52,9 +56,12 @@ import {
   visibilityPredicate,
   wakeInstancedRefresh,
 } from './instancedBatching';
-import { materialFor } from './sprites';
+import {
+  createStyleMesh,
+  disposeStyleMesh,
+  type StyleMesh,
+} from './instancedNodeResources';
 import { isGhost } from './timelineDiff';
-import { NODE_RENDER_ORDER } from './renderOrders';
 import {
   MATRIX_ELEMENTS,
   TRANSLATION_OFFSET,
@@ -89,54 +96,8 @@ export type InstancedNodes = {
   dispose(): void;
 };
 
-// One InstancedMesh per distinct base style currently on screen.
-type StyleMesh = {
-  mesh: THREE.InstancedMesh;
-  material: THREE.MeshBasicMaterial;
-  // Nodes in buffer order; length === mesh.count.
-  nodes: SimNode[];
-  capacity: number;
-};
-
 // Extra slots so a few file additions don't force an InstancedMesh recreate.
 const CAPACITY_SLACK = 32;
-
-// Patch a MeshBasicMaterial so each instance billboards toward the camera. We
-// keep the stock map/uv/colorspace chunks (identical sampling to SpriteMaterial)
-// and replace only `<project_vertex>`: take the instance's center (translation
-// column of instanceMatrix) into view space, then offset by the quad vertex
-// scaled by the per-instance uniform scale (diagonal of instanceMatrix). This is
-// the classic view-space billboard — camera rotation is handled implicitly, so
-// instance matrices never need re-uploading on orbit, only on layout motion.
-function makeBillboardMaterial(texture: THREE.Texture): THREE.MeshBasicMaterial {
-  const mat = new THREE.MeshBasicMaterial({
-    map: texture,
-    transparent: true,
-    // Match the per-node sprite material: never depth-tested (so links can't
-    // occlude nodes) and no depth write (transparent pass).
-    depthTest: false,
-    depthWrite: false,
-  });
-  mat.onBeforeCompile = (shader) => {
-    shader.vertexShader = shader.vertexShader.replace(
-      '#include <project_vertex>',
-      [
-        'vec3 instCenter = vec3(instanceMatrix[3][0], instanceMatrix[3][1], instanceMatrix[3][2]);',
-        'float instScale = instanceMatrix[0][0];',
-        'vec4 mvPosition = modelViewMatrix * vec4(instCenter, 1.0);',
-        'mvPosition.xy += transformed.xy * instScale;',
-        'gl_Position = projectionMatrix * mvPosition;',
-      ].join('\n'),
-    );
-  };
-  // The patched source diverges from a stock MeshBasicMaterial, and three keys
-  // its program cache on the *generated* source (onBeforeCompile edits are
-  // invisible to that key). A stable custom key both prevents three from handing
-  // us a cached stock program AND lets all per-style billboard materials share
-  // one compiled program (they differ only by the `map` uniform).
-  mat.customProgramCacheKey = () => 'lattice:billboardNode';
-  return mat;
-}
 
 export function createInstancedNodes(
   graph: ForceGraph3DInstance,
@@ -164,33 +125,8 @@ export function createInstancedNodes(
     return node.kind === 'dir' ? s.dirNodeSize : s.fileNodeSize;
   }
 
-  function createStyleMesh(style: ExtStyle, capacity: number): StyleMesh {
-    // Reuse the per-node sprite's cached texture so the look is byte-identical
-    // and we don't duplicate canvas work. The texture is module-owned by the
-    // sprite material cache — never dispose it here.
-    const texture = materialFor(style).map as THREE.Texture;
-    const material = makeBillboardMaterial(texture);
-    const mesh = new THREE.InstancedMesh(quad, material, capacity);
-    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    // One object spanning the whole graph; its (unmaintained) bounding sphere
-    // would wrongly cull it. Never raycast it — the per-node sprites are the
-    // pick targets. Match the sprite renderOrder (NODE_RENDER_ORDER) so draw
-    // order is unchanged.
-    mesh.frustumCulled = false;
-    mesh.raycast = () => {};
-    mesh.renderOrder = NODE_RENDER_ORDER;
-    mesh.userData['lattice:batchedNodes'] = true;
-    scene.add(mesh);
-    return { mesh, material, nodes: [], capacity };
-  }
-
-  function disposeStyleMesh(sm: StyleMesh): void {
-    scene.remove(sm.mesh);
-    // Frees the per-mesh instanceMatrix GPU buffer (not the geometry/material).
-    sm.mesh.dispose();
-    // Geometry (`quad`) is shared and disposed once in dispose(); the texture is
-    // owned by the sprite cache. Only the per-style material is ours to free.
-    sm.material.dispose();
+  function disposeMesh(sm: StyleMesh): void {
+    disposeStyleMesh(scene, sm);
   }
 
   // Visible (per the library's installed nodeVisibility accessor), non-ghost
@@ -224,8 +160,13 @@ export function createInstancedNodes(
       const count = grp.nodes.length;
       let sm = meshes.get(key);
       if (!sm || sm.capacity < count) {
-        if (sm) disposeStyleMesh(sm);
-        sm = createStyleMesh(grp.style, capacityWithSlack(count, CAPACITY_SLACK));
+        if (sm) disposeMesh(sm);
+        sm = createStyleMesh(
+          scene,
+          quad,
+          grp.style,
+          capacityWithSlack(count, CAPACITY_SLACK),
+        );
         meshes.set(key, sm);
       }
       sm.nodes = grp.nodes;
@@ -249,7 +190,7 @@ export function createInstancedNodes(
     // Drop styles that no longer have any visible node.
     for (const [key, sm] of meshes) {
       if (!groups.has(key)) {
-        disposeStyleMesh(sm);
+        disposeMesh(sm);
         meshes.delete(key);
       }
     }
@@ -305,14 +246,14 @@ export function createInstancedNodes(
       rebuild();
     } else {
       gate.detach();
-      disposeMapValues(meshes, disposeStyleMesh);
+      disposeMapValues(meshes, disposeMesh);
       wakeInstancedRefresh(graph);
     }
   }
 
   function dispose(): void {
     gate.detach();
-    disposeMapValues(meshes, disposeStyleMesh);
+    disposeMapValues(meshes, disposeMesh);
     quad.dispose();
   }
 

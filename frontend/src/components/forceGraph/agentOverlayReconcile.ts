@@ -65,6 +65,7 @@ export function removeAgent(ctx: AgentOverlayCtx, taskId: string): void {
   // reclaim it once the session is gone.
   if (agent.label) removeFloatingLabel(ctx.group, agent);
   ctx.agents.delete(taskId);
+  if (ctx.agents.size === 0) ctx.pathIndex.clear();
 }
 
 // Reconcile the live agent set against the latest descriptors. Returns whether
@@ -121,5 +122,8 @@ export function reconcileAgents(
       changed = true;
     }
   }
+  // Also enforce ownership for an already-empty reconciliation, without waiting
+  // for a render frame or indexing a graph that no agent uses.
+  if (ctx.agents.size === 0) ctx.pathIndex.clear();
   return changed;
 }

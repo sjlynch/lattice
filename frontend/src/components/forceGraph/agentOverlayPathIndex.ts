@@ -51,6 +51,15 @@ export class AgentPathIndex {
   private cachedBounds: GraphBounds | null = null;
   private boundsValid = false;
 
+  // Release the graph generation when no agents need it. The overlay may never
+  // tick again while inactive, so cleanup belongs to removal/teardown.
+  clear(): void {
+    this.byPath.clear();
+    this.indexedNodes = null;
+    this.cachedBounds = null;
+    this.boundsValid = false;
+  }
+
   get(normPath: string): SimNode | undefined {
     return this.byPath.get(normPath);
   }
