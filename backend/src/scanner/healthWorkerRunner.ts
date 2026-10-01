@@ -33,6 +33,7 @@ import {
   type AnalysisWorkerHandle,
   type StallTimer,
 } from '../health/analysisWorker.js';
+import { WORKER_SRC } from './healthWorkerSource.js';
 
 export type AnalysisJob = {
   // Position in the caller's file list, echoed back verbatim so results can be
@@ -83,54 +84,6 @@ const DEFAULT_STALL_MS = DEFAULT_ANALYSIS_STALL_MS;
 // Ceiling on respawns per run so a scan with many independently-hanging files
 // can't loop forever; the leftover tail is handed back for in-thread fallback.
 const MAX_RESPAWNS = 10;
-
-// Inline worker source (CJS `require` + dynamic `import()` of the ESM analysis
-// modules by URL). Mirrors search.ts's proven eval-worker pattern. Kept as a
-// string so there's no separate file to compile/ship; the compiled analysis
-// modules are located by URLs the parent passes in workerData.
-const WORKER_SRC = `
-const { parentPort, workerData } = require('node:worker_threads');
-// Keep-alive: hold the worker's event loop open after the job loop finishes so
-// it only exits on the parent's explicit terminate(). This makes 'exit' an
-// unambiguous "we killed it / it crashed" signal and guarantees all posted
-// messages (results + 'done') drain to the parent before any exit.
-parentPort.on('message', () => {});
-(async () => {
-  let analyzeFile, readForAnalysis;
-  try {
-    const [analyzeMod, readMod] = await Promise.all([
-      import(workerData.analyzeUrl),
-      import(workerData.readUrl),
-    ]);
-    analyzeFile = analyzeMod.analyzeFile;
-    readForAnalysis = readMod.readForAnalysis;
-  } catch (err) {
-    // e.g. running from src under tsx: the compiled .js siblings don't exist.
-    parentPort.postMessage({ type: 'init-failed', error: String((err && err.message) || err) });
-    return;
-  }
-  parentPort.postMessage({ type: 'ready' });
-  for (const job of workerData.jobs) {
-    let loc;
-    try {
-      const read = await readForAnalysis(job.filePath);
-      loc = read.loc;
-      if (read.content === undefined) {
-        parentPort.postMessage({ type: 'result', index: job.index, loc: loc, ok: false });
-        continue;
-      }
-      const res = await analyzeFile(read.content, job.ext, loc || 0);
-      parentPort.postMessage({
-        type: 'result', index: job.index, loc: loc, ok: true,
-        metrics: res.metrics, imports: res.imports,
-      });
-    } catch (err) {
-      parentPort.postMessage({ type: 'result', index: job.index, loc: loc, ok: false });
-    }
-  }
-  parentPort.postMessage({ type: 'done' });
-})();
-`;
 
 function defaultCreateWorker(data: WorkerData): WorkerHandle {
   // spawnEvalWorker pins execArgv: [] (never inherit a TS loader). Not unref'd,
