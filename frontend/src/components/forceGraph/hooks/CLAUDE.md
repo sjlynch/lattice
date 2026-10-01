@@ -195,11 +195,15 @@ current values — a pre-population refresh/reheat is a byte-identical wake):
   `d3Force` + `d3ReheatSimulation`; the force pokes run on *every* run (incl.
   setup) so persisted non-defaults aren't left at d3 defaults. `repulsionMode`
   swaps `forceManyBody`↔`forceLocalRepulsion` only when the active force changes.
+  After replacement, the detached cached charge force is initialized with an
+  empty node array; reattachment supplies the current simulation nodes/context.
 - **Layout shape** (`alphaDecay`/`warmupTicks`/`collideRadius`) →
   `useLayoutShapeSettings`: push `d3AlphaDecay`/`warmupTicks` every run;
   install/remove the `forceCollideXZ` sim slot when its knob crosses 0; reheat on
   change to a populated graph (same guard/defer as physics). All neutral by
   default, so a default layout is untouched.
+  `applyCollisionRadius` drops the cached collision closure after removal,
+  releasing its nodes/scratch buffers; re-enable creates a fresh force.
 - **`linkWidth`** / **`pixelRatio`** → render-only prop + `wakeForRefresh`, no
   reheat. `batchedLinks`/`batchedNodes` are owned by their hooks, not effects.
 

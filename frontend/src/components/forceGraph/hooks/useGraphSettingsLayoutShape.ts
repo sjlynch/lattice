@@ -9,6 +9,30 @@ type LayoutShapeSettings = Pick<
   'alphaDecay' | 'warmupTicks' | 'collideRadius'
 >;
 
+export function applyCollisionRadius(
+  g: NonNullable<GraphRef['current']>,
+  collideForceRef: { current: CollideForceXZ | null },
+  radius: number,
+): void {
+  const d3Force = g.d3Force as unknown as (
+    name: string,
+    force?: unknown,
+  ) => unknown;
+
+  if (radius > 0) {
+    if (!collideForceRef.current) collideForceRef.current = forceCollideXZ();
+    collideForceRef.current.radius(radius);
+    if (d3Force('collide') !== collideForceRef.current) {
+      d3Force('collide', collideForceRef.current);
+    }
+  } else {
+    if (d3Force('collide')) d3Force('collide', null);
+    // Detached forces no longer receive simulation.nodes updates. Release the
+    // closure (including its nodes and scratch buffers) after removal succeeds.
+    collideForceRef.current = null;
+  }
+}
+
 export function useLayoutShapeSettings(
   settings: LayoutShapeSettings,
   graphRef: GraphRef,
@@ -26,20 +50,7 @@ export function useLayoutShapeSettings(
     g.d3AlphaDecay(settings.alphaDecay);
     g.warmupTicks(settings.warmupTicks);
 
-    const d3Force = g.d3Force as unknown as (
-      name: string,
-      force?: unknown,
-    ) => unknown;
-
-    if (settings.collideRadius > 0) {
-      if (!collideForceRef.current) collideForceRef.current = forceCollideXZ();
-      collideForceRef.current.radius(settings.collideRadius);
-      if (d3Force('collide') !== collideForceRef.current) {
-        d3Force('collide', collideForceRef.current);
-      }
-    } else if (d3Force('collide')) {
-      d3Force('collide', null);
-    }
+    applyCollisionRadius(g, collideForceRef, settings.collideRadius);
 
     const prev = appliedRef.current;
     const changed =

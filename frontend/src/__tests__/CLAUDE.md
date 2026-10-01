@@ -137,3 +137,6 @@ browser OOM report.
   once before registry clear; shared line materials remain intact.
 - `repulsionScratchReset.test.ts` — an empty repulsion tick drops scratch
   references to the previous labels, without waiting for another non-empty tick.
+- `graphSettingsForceOwnership.test.ts` — collision disable drops its cache;
+  both charge mode switches empty only the detached force. Structural swaps and
+  re-enable bind current nodes/settings/context, with existing reheat guards.

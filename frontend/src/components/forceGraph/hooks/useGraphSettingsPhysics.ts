@@ -20,15 +20,20 @@ type PhysicsSettings = Pick<
   | 'repulsionMode'
 >;
 
+type CachedChargeForce = {
+  // Only the empty-node initialization contract is needed for detachment.
+  initialize(nodes: never[]): void;
+  strength?: (n: number) => unknown;
+  theta?: (n: number) => unknown;
+};
+
 export function usePhysicsAndRepulsionSettings(
   settings: PhysicsSettings,
   graphRef: GraphRef,
 ): void {
   // Apply physics + DAG settings to the running simulation. Reheats so changes
   // visibly take effect, but skips reheat on initial/no-node runs.
-  const nbodyForceRef = useRef<
-    { strength?: (n: number) => unknown; theta?: (n: number) => unknown } | null
-  >(null);
+  const nbodyForceRef = useRef<CachedChargeForce | null>(null);
   const localForceRef = useRef<LocalRepulsionForce | null>(null);
   const appliedPhysicsRef = useRef<PhysicsSettings>(settings);
 
@@ -43,9 +48,8 @@ export function usePhysicsAndRepulsionSettings(
       force?: unknown,
     ) => unknown;
 
-    if (!nbodyForceRef.current) {
-      nbodyForceRef.current = d3Force('charge') as typeof nbodyForceRef.current;
-    }
+    const current = d3Force('charge') as CachedChargeForce | undefined;
+    if (!nbodyForceRef.current) nbodyForceRef.current = current ?? null;
     if (!localForceRef.current) {
       localForceRef.current = forceLocalRepulsion();
     }
@@ -60,8 +64,11 @@ export function usePhysicsAndRepulsionSettings(
     local.cellSize(localCellSize(settings.linkDistance));
 
     const desired = settings.repulsionMode === 'local' ? local : nbody;
-    if (desired && d3Force('charge') !== desired) {
+    if (desired && current !== desired) {
       d3Force('charge', desired);
+      // Only empty the former force after replacement succeeds. Reattachment
+      // lets d3 initialize it with current nodes, random source and dimensions.
+      current?.initialize([]);
     }
 
     const link = g.d3Force('link') as
