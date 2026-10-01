@@ -16,29 +16,46 @@ the next:
    tree gitignore-aware and returns `{files, directories}` (every
    directory crossed, plus every file whose extension is in
    `SOURCE_EXTS`). `collectSourceFiles` is the files-only shortcut.
-3. **`fileMetrics.ts`** — `computeFileMetrics(files, {cache})` runs in three
-   phases: (1) main-thread stat + `(mtime,size)` `HealthCache` lookup per file
-   (cheap, non-hanging); (2) cache-*misses* are analyzed in an **isolated worker
-   thread** via `healthWorkerRunner.ts` so a pathological file can't freeze the
-   backend's main event loop; (3) an in-thread fallback (`readForAnalysis` +
-   `analyzeFile`, the pre-worker path) for any job the worker couldn't handle.
-   Returns the `FileMetric[]` consumed by the next two phases (order preserved).
-   - **`readForAnalysis.ts`** — the single-file read + LOC count + minified/
+3. **`fileMetrics.ts`** — `computeFileMetrics(files, {cache, isCancelled})`
+   runs three passes: (1) main-thread stat + `(mtime,size)` cache/memo lookup;
+   (2) misses analyzed in an **isolated worker thread** via
+   `healthWorkerRunner.ts`; (3) in-thread `readForAnalysis` + `analyzeFile`
+   fallback for **only the returned `unhandled` tail**. Returns `FileMetric[]`
+   in input order for the next two phases.
+   - **`readForAnalysis.ts`** — single-file read + LOC count + minified/
      oversize content-drop guard (`isMinifiedForAnalysis`, shared with the
-     watcher). Extracted into its own module so the worker imports just this +
-     `analyze.js`; `fileMetrics.ts` re-exports it for back-compat.
-   - **`healthWorkerRunner.ts`** — `runHealthAnalysis(jobs, {onResult, …})`:
-     spawns an inline-eval worker (dynamic-imports the compiled `analyze.js` +
-     `readForAnalysis.js` by URL — under tsx/`src` those `.js` siblings don't
-     exist, so it reports the jobs as `unhandled` and the caller falls back
-     in-thread, i.e. never worse than before). A **per-file stall watchdog**
-     (default 10 s, resets on each completed file so it can't false-positive on
-     a big healthy scan) terminates a genuinely-hung file, marks it unanalyzable,
-     respawns, and continues. The worker is side-effect-free (reads + posts
-     only), so terminating it is safe. Injectable worker factory + `moduleUrls`
-     for testing (`__tests__/scannerHealthWorkerRunner.test.ts`). Worker spawn,
-     quiet terminate and the stall timer are shared with the watcher via
-     `../health/analysisWorker.ts`.
+     watcher). The worker imports this + `analyze.js`; `fileMetrics.ts`
+     re-exports it for back-compat.
+   - **Worker loading/fallback** — `runHealthAnalysis(jobs, {onResult, …})`
+     spawns an inline-eval worker that dynamic-imports compiled `analyze.js` +
+     `readForAnalysis.js` by URL, without inheriting a TS loader. Under tsx/`src`
+     the `.js` siblings may be absent: initialization failure returns jobs as
+     `unhandled`. Worker construction failure, unexpected death or respawn-budget
+     exhaustion likewise returns the unprocessed tail for in-thread fallback.
+     Worker factory + `moduleUrls` are injectable test seams.
+   - **Handled outcomes/watchdog** — completed `analysis: null` results are
+     failed/skipped analyses, excluded from fallback. The per-file stall watchdog
+     (default 10 s, reset on each completed file) terminates the worker, reports
+     the culprit as `analysis: null`, skips it and excludes it from `unhandled`;
+     remaining jobs continue on a fresh worker within the respawn budget.
+   - **Ownership/teardown** — each `HealthAnalysisRun` owns its current batch
+     worker, watchdog and optional cancellation poll. `finish()` settles once,
+     clears both timers and terminates the worker; callbacks from stale workers
+     are fenced by worker identity. Cancellation also terminates the worker and
+     returns its unprocessed tail, but `computeFileMetrics` rechecks cancellation
+     and throws before fallback. The worker and watchdog are not unref'd while
+     the scan awaits them, and the worker is not kept for process lifetime.
+     Spawn/terminate/timer primitives are shared via
+     [../health/analysisWorker.ts](../health/analysisWorker.ts); the shared warm
+     analyzer's lifetime and policy belong to the
+     [health/watcher guide](../health/watcher/CLAUDE.md).
+   - **Negative memo** — module-level `unanalyzable` retains absolute-path keys
+     with only mtime/size/optional LOC metadata for stat'd failed/skipped analyses.
+     An unchanged tuple avoids repeat reads/analysis; a changed tuple triggers
+     another attempt without itself deleting the old entry. A failed/skipped
+     result replaces that metadata; successful analysis removes the entry.
+     This process-lifetime negative memo is separate from the positive persistent
+     `HealthCache`, with no eviction cap or per-scan reset.
 4. **`coupling.ts`** — `computeCoupling(metrics, aliases, roots)` feeds the
    per-file `imports` lists into `computeCrossFile` to produce the
    cross-file `CouplingMap` (fan-in/fan-out plus dead-code reachability from
@@ -70,3 +87,13 @@ the next:
 - Phase boundaries are the seams: a new metric → extend
   `fileMetrics.ts`; a new cross-file signal → extend `coupling.ts`; a
   new graph shape → extend `graphAggregate.ts`. Don't reach across.
+
+## Reference checks
+
+Existing contracts: [scannerFileMetrics.test.ts](../__tests__/scannerFileMetrics.test.ts)
+(negative memo/LOC/re-attempt) and
+[scannerHealthWorkerRunner.test.ts](../__tests__/scannerHealthWorkerRunner.test.ts)
+(watchdog, fallback, cancellation and termination).
+
+Backend reference commands (cwd `backend/`): `npm run build`, `npm test`,
+`npx tsc --noEmit`.
