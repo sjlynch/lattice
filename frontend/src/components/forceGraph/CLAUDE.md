@@ -118,14 +118,17 @@ label physics in `labelPhysics/CLAUDE.md`.
   or incomplete gray. `useSecurityOverlay` starts scans only from the Security
   chip; no automatic refresh scans. Security keeps config files visible even
   when their extensions are on the health/LOC metrics-ignore list.
-- `labelTexture` / `labelSpriteResources` / `floatingLabelSprite` /
-  `metricOverlayFactory` — shared, module-owned (refcount-guarded)
-  label-texture/sprite/connector caches. `labelSpriteResources` holds the four
-  cache layers (label material, color, line material, connector geometry
-  template) + `disposeLabelMaterial`, with the "never dispose a shared resource
-  per-node" INVARIANT; `floatingLabelSprite` is just the public factories
-  (`makeFloatingLabelSprite`/`makeConnectorLine`/`disposeLabelEntry`) that draw
-  on them.
+- `measuredLabelTexture.ts` — lazy shared measuring context + fresh rasterized
+  textures. `labelTexture.ts` owns cache keying, refcounts, free-entry eviction
+  and texture/paired-material/canvas teardown. A cache miss finishes drawing
+  before eviction/insertion. Ownership coverage:
+  [labelTextureCache.test.ts](../../__tests__/labelTextureCache.test.ts).
+- `labelSpriteResources` / `floatingLabelSprite` / `metricOverlayFactory` —
+  module-owned shared sprite/connector caches. `labelSpriteResources` holds
+  label materials, colors, line materials and connector geometry templates +
+  `disposeLabelMaterial`; never dispose shared resources per node.
+  `floatingLabelSprite` supplies `makeFloatingLabelSprite`/`makeConnectorLine`/
+  `disposeLabelEntry`.
 - `labelSync.ts` — in-place Alt-overlay delta walker (no `graph.refresh()`).
   `labelRepulsion` (facade) + `labelRepulsionFrames` (scene-frame-driven, holds
   `labelPhysics` only while labels move) + `labelPhysics/` (pure physics, own doc).
@@ -212,30 +215,39 @@ label physics in `labelPhysics/CLAUDE.md`.
   one trailing settle frame, or forced-dirty after a rebuild/re-enable.
 
 **Batched (instanced) renderers**
-- `instancedLinks.ts` / `instancedNodes.ts` (+ `instancedBatching.ts` shared
-  lifecycle helpers, `matrixBuffer.ts` shared Float32Array writers for the
-  interleaved GPU buffers — named column-major matrix/vertex offsets, THREE-free) —
-  collapse the library's per-link `Line`s / per-node
-  `Group`s into one `LineSegments` / a few `InstancedMesh`es to cut orbit-time
-  draw calls. Default-on; position uploads follow `motionSyncGate`;
-  re-capture object arrays on every `graphData()` swap (`dataGeneration`
-  invariant). Driven by `hooks/useBatchedLinks` / `hooks/useInstancedNodes`.
-  A pre-hydration link capture (string endpoints) must be re-captured by `onFrame`
-  once endpoints hydrate so `linkVisibility` can filter it. Both controllers
-  rebuild on metric-view toggles (`metricOverlayActive`) to re-read the
-  `nodeVisibility` / `linkVisibility` set, including metrics-ignored files.
-- `instancedLinks.ts::setEnabled(false)` restores the library's default link
-  accessor (`linkThreeObject(null)`), detaches the motion subscription, and calls
-  `releaseResources`: remove the `LineSegments` from the scene, dispose the
-  controller-owned geometry/material, clear `positions`, captured `links` and
-  `needsRecapture`. Disabled rebuild/frame hooks allocate nothing; re-enabling
-  rebuilds from current `graphData()`. Disable keeps the graph's controller stamp
-  for `getInstancedLinks(graph)?.rebuild()` (used by `changeRingSync` after ghost
-  toggles); `dispose()` detaches motion, uses the same resource-release path and
-  removes the stamp only if it still belongs to this controller. Shared
-  sprite/label materials retain their separate owners. Regression coverage:
-  [instancedLinks.test.ts](../../__tests__/instancedLinks.test.ts) pins disabling
-  after a populated capture and re-enabling after a graph swap.
+- `instancedLinks.ts` / `instancedNodes.ts` — default-on controllers collapsing
+  per-link `Line`s / per-node `Group`s into one `LineSegments` / per-style
+  `InstancedMesh`es. Driven by `hooks/useBatchedLinks` / `hooks/useInstancedNodes`;
+  position uploads follow `motionSyncGate`. `instancedBatching.ts` shares
+  lifecycle helpers; `matrixBuffer.ts` supplies THREE-free column-major buffer
+  writers. Re-capture on every `graphData()` swap (`dataGeneration` invariant).
+  Both rebuild on metric-view toggles (`metricOverlayActive`) to re-read
+  `nodeVisibility` / `linkVisibility`, including metrics-ignored files.
+- `instancedLinks.ts` owns link capture, hydration re-capture, motion scheduling
+  and the graph's controller stamp. Pre-hydration string endpoints must be
+  re-captured by `onFrame` once hydrated so `linkVisibility` can filter them.
+  `instancedLinkResources.ts` owns graph-local geometry/material/`LineSegments`/
+  position storage. Growth must call `geometry.dispose()` while the old position
+  attribute is still installed, before replacement. `setEnabled(false)` restores
+  `linkThreeObject(null)` and detaches motion; `releaseResources` disposes the
+  helper's resources and clears the controller's captured `links` +
+  `needsRecapture`. Disabled rebuild/frame hooks allocate nothing; re-enable
+  rebuilds from current `graphData()`. Disable keeps the stamp for
+  `getInstancedLinks(graph)?.rebuild()` (`changeRingSync` ghost toggles);
+  `dispose()` detaches motion, uses the same release path and removes the stamp
+  only if still owned by this controller. Shared sprite/label materials retain
+  separate owners. Growth/disable/re-enable coverage:
+  [instancedLinks.test.ts](../../__tests__/instancedLinks.test.ts).
+- `instancedNodes.ts` owns style grouping, motion/visibility orchestration and
+  the shared quad. `instancedNodeResources.ts` owns billboard shader/material
+  construction and style-mesh allocation/disposal. Each style mesh owns its
+  `instanceMatrix` buffer and billboard material; growth replacement, style
+  removal and disable release both. Borrowed sprite-cache textures and the
+  controller's shared quad survive temporary disable; only final controller
+  disposal frees the quad. Re-enable rebuilds from current `graphData()`.
+  Recolor overlays hide batches and use per-node sprites; ghosts stay on the
+  per-node path. Ownership coverage:
+  [instancedNodes.test.ts](../../__tests__/instancedNodes.test.ts).
 
 **Settings, physics, misc**
 - `graphSettings.ts` — `GraphSettings`/`DEFAULT_SETTINGS`/`loadSettings`; perf
