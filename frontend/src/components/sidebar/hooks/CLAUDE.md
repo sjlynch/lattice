@@ -13,19 +13,17 @@ owns shared tab mutations, scoping and registry reconciliation.
 - `useTerminalSearch.ts` — current-panel label/cwd filtering, Escape clear, input ref and reset callback.
 - `useTabScrolling.ts` — strip/active-tab refs, scroll arrows and active-tab visibility; pure `computeTabScrollState` and DOM subscription `subscribeTabScroll`.
 - `useTabContextMenu.ts` / `tabBulkClose.ts` — menu state, dismiss and confirmed close actions; pure `bulkCloseTargets` resolves targets in visible order.
-- `useMountedTerminalIds.ts` — tracks tabs eligible to mount panes, including startup and missing-session cases.
+- `useMountedTerminalIds.ts` — pane eligibility and activation history reconciled against the full global `terminals` list from `useTerminals()`; scoped lists supply force-mount candidates only.
 - `useBusyAgentTerminals.ts` — project-scoped busy `serverId` set from the backend activity feed.
 
 ## Invariants
 
-- **Launch:** `createTerminalSpec` -> `createBackendSession` (`POST /api/terminals`)
-  for every shell/harness kind -> `addTerminal` with `id: terminalId`, `serverId`
-  and `registered: !!terminalId` -> pane attach by `serverId`. Startup launches
-  use the same pre-create/add/attach path with `owner: 'startup'` and `startupId`;
-  dropdown launches use `owner: 'user'`. This preserves registry identity and
-  harness spawn configuration. Only failed pre-creation adds a serverless,
-  unregistered fallback tab; `useMountedTerminalIds` mounts it so WS attach can
-  create its PTY. That tab is not restorable. Backend details belong to the
+- **Launch:** every shell/harness pre-creates via `createBackendSession` before
+  `addTerminal`, using backend `terminalId` as tab `id`, `serverId` for attach
+  and `registered: !!terminalId`. Dropdown/startup owners are `user`/`startup`
+  (startup also carries `startupId`), preserving registry identity and spawn
+  configuration. Only failed pre-creation adds an unregistered, serverless,
+  non-restorable fallback; pane WS attach then creates its PTY. Details belong to the
   [terminal](../../../../../backend/src/terminal/CLAUDE.md) and
   [registry](../../../../../backend/src/terminalRegistry/CLAUDE.md) guides.
 - **Scope:** compare project paths through `terminalBelongsToProject` /
@@ -51,12 +49,20 @@ owns shared tab mutations, scoping and registry reconciliation.
   Merging/Startup panels fall back to Terminals. New merge resolvers do not
   steal focus. Sidebar clears search on manual and automatic panel changes.
   Scroll subscriptions must attach when the strip appears after an empty list.
-- **Pane lifetime:** pre-created panes mount lazily on first activation;
-  startup panes are force-mounted. Pending/failed `restore` tabs never render
-  a pane (`SidebarPanes` gates even a remembered mounted id). Sidebar keys panes
+- **Pane lifetime:** activation history is bounded by the full global `terminals`
+  list passed by `Sidebar`, never `projectTerminals`, a panel or a search-filtered
+  list. Remove IDs only after global removal; surviving tabs retain viewed status
+  across project/panel switches and pending or failed registered closes. A stale
+  `activeId` cannot reinsert a removed ID; no-op reconciliation preserves `Set`
+  identity. Pre-created panes remain lazy until activation; startup and serverless
+  fallback tabs are force-mounted. Pending/failed `restore` tabs never render a
+  pane (`SidebarPanes` gates even remembered IDs), and restore tabs are excluded
+  from serverless fallback mounting to avoid duplicate launches. Sidebar keys panes
   on `relaunchNonce`, not captured `serverId`, so restore can remount a new PTY
-  without recreating xterm on initial id capture. See the
-  [view/connection guide](../../terminal/CLAUDE.md) for attach and WebGL ownership.
+  without recreating xterm on initial ID capture. Retained IDs are bookkeeping;
+  xterm and WebGL ownership stays in the
+  [view/connection layer](../../terminal/CLAUDE.md). Pruning history does not
+  identify the cross-PC browser OOM cause.
 - **Bulk close:** close the menu before confirming the count; only confirmation
   calls `closeTerminals`, which kills PTYs. Resolve targets against the current
   visible order; a menu whose tab disappeared/was filtered out closes nothing.
@@ -66,3 +72,12 @@ owns shared tab mutations, scoping and registry reconciliation.
   snapshot before the new-project commit and fence callbacks after cleanup.
   `api/terminals.ts` + `api/ws.ts` clear the transient set and shared replay cache
   on disconnect and reject stale socket callbacks; reconnect needs fresh data.
+
+## References
+
+[Bounded-history scenarios](../../../__tests__/useTerminalRegistrySync.test.ts)
+cover repeated removals/stale selection, `Set` identity, A -> B -> A and panel
+switches, pending/failed registered closes, lazy panes and restore gates.
+
+Reference commands (cwd `frontend/`): `npm run build`, `npm test`, `npx tsc -b`.
+Task agents do not execute these checks; the separate Run tests step verifies merged work.
