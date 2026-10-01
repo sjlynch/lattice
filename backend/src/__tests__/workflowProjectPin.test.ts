@@ -6,6 +6,7 @@ import path from 'node:path';
 import express from 'express';
 import { once } from 'node:events';
 import { canonicalProjectPath } from '../projectPath.js';
+import { flushAllProjectStatePersists } from '../projectStateManager.js';
 import { runs, type WorkflowRun } from '../workflowRuns/state.js';
 import { flushWorkflowRunPersist, writeWorkflowRunsNow } from '../workflowRuns/persistence.js';
 import { createWorkflow, getWorkflow } from '../workflows.js';
@@ -38,6 +39,9 @@ async function harness() {
     a, b, call,
     close: async () => {
       await new Promise<void>((r) => server.close(() => r()));
+      // Definition writes are debounced independently of run persistence;
+      // drain them before removing fixtures to avoid racing mkdir/write/rename.
+      await flushAllProjectStatePersists();
       for (const p of [a, b]) {
         await flushWorkflowRunPersist(p);
         await writeWorkflowRunsNow(p, []);
