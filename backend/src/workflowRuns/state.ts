@@ -169,14 +169,16 @@ export function persistRunsForProject(projectPath: string): void {
   scheduleWorkflowRunPersist(projectPath, () => getActiveRunsForProject(projectPath));
 }
 
-// Finished runs kept in `runs` per project. Nothing reads a finished run by id
-// after its terminal event: the frontend keeps its own `recentRuns` from the WS
-// event, `/api/workflow-runs/active` and `getRunningRunIds` filter to
-// `running`, and the completion route's `getRun` only needs a live run. So
-// this is a memory bound, not a retention contract — every terminal transition
-// used to leave the run in the map for the life of the process, and each
-// `getActiveRunsForProject` (called from every persist) then walked and cloned
-// the whole history. Running runs are never pruned.
+// Finished runs kept in `runs` per project. A finished run IS read by id after
+// its terminal event: `GET /api/workflow-runs/:runId` (routes/workflows/runs.ts)
+// serves it, and the frontend (`fetchWorkflowRun`, from `useWorkflowQueue`)
+// asks when a run leaves its active set without a terminal WS event — missed
+// while its socket was down — to tell "completed while disconnected" from
+// "lost". So a finished run must stay readable until this bound evicts it;
+// don't prune sooner. The bound itself exists because every terminal
+// transition used to leave the run in the map for the life of the process, and
+// each `getActiveRunsForProject` (called from every persist) then walked and
+// cloned the whole history. Running runs are never pruned.
 export const MAX_FINISHED_RUNS_PER_PROJECT = 20;
 
 export function pruneFinishedRuns(projectPath: string): void {

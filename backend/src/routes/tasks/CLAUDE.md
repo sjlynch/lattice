@@ -222,9 +222,14 @@ Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
   above) + kill-orphaned-resolver-pty to the shared
   `mergeRuns/abandonedResolver.ts` `recoverAbandonedResolverTask`, **then**
   `signalConflictWaiter(task.id)` to release any merge-run worker parked on this
-  task's untimed conflict waiter (else the run awaits forever, holding the
-  project run-lock → later merges 409). The aborted task is left at plain
-  ready_to_merge to retry on the next merge-all (no auto-restart, unlike
+  task's conflict waiter immediately. Without the signal the run isn't stuck
+  forever: both park sites (`mergeRuns/flaggedConflict.ts`,
+  `mergeRuns/resolverSpawn/park.ts`) use the bounded `awaitResolverWaiter`
+  (`mergeRuns/waiterLiveness.ts`). It treats a resolver as dead within about
+  75 s of its pty disappearing, and pauses the run after a 30-minute idle limit
+  with no resolver output. Until then the run holds the project run-lock, so
+  later merges get 409s; the signal releases it at once. The aborted task is
+  left at plain ready_to_merge to retry on the next merge-all (no auto-restart, unlike
   /complete + /merged). Runs the recovery **under the per-task `mergeLocks`
   lock** (`git merge --abort` mutates the worktree index), so a Cancel can't
   race a live `git merge`. A held lock is WAITED for (up to

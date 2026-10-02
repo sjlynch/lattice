@@ -6,11 +6,29 @@ attaches them to HTTP upgrades.
 - Most endpoints are project-scoped and should use `buildProjectWss` or
   `buildProjectSnapshotWss` from `../projectEndpoint.ts`; they require a
   `?project=` query and close on missing/invalid projects.
-- `/ws/terminal` is the exception: it proxies terminal-server sessions and uses
-  its own query (`id`, `cwd`, `cols`, `rows`, `initialCommand`). Do not force it
-  through project helpers.
+- Two endpoints sit outside the project helpers. Do not force either through
+  them:
+  - `/ws/terminal` proxies terminal-server sessions and uses its own query
+    (`id`, `cwd`, `cols`, `rows`, `initialCommand`).
+  - `/ws/harnesses` (`harnesses.ts`) is a raw `WebSocketServer({noServer:true})`
+    with no `?project=`. Harness availability is machine-global, so it pushes
+    every detection result to every client.
 - Initial snapshots should be small and safe to send once per connection;
   broadcast payloads are serialized once per event by the shared helper.
+- **`/ws/tasks` is the standing exception: a known large payload.** On connect
+  its `initial` sends the entire, unclipped board via `listTasks(project)`
+  (`tasks.ts`), including every done task's description and summary. On the
+  Lattice repo that is ~2.3 MB for ~750 tasks. It sends the whole board again
+  as `{type:'tasks', tasks}` on every coalesced task mutation (one frame per
+  project per event-loop turn, see `ProjectStateManager.notifyProject`), to
+  every open tab. `GET /api/tasks` returns a 413 above 256 KB
+  (`LIST_RESPONSE_CEILING_BYTES`), but this path has no cap. This matters for
+  the browser out-of-memory investigation: each frame is a fresh multi-MB
+  string the browser must allocate and `JSON.parse`. **Any change that raises
+  task-mutation frequency multiplies that cost per tab.** For example, writing
+  a task field on every agent activity event would turn each tool call into a
+  whole-board frame. Send such high-rate signals as their own transient event
+  type, as `task-activity` / `agent-activity` already are.
 - Keep event filtering by canonical project path on the server side so tabs for
   other projects never receive unrelated state. `/ws/terminal-activity` (the
   sidebar tab spinner) is the one deliberate exception: it takes `?project=` to

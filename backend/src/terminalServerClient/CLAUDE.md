@@ -38,21 +38,27 @@ process on `:5185`; see `terminalServer/CLAUDE.md` for that boundary).
   session creation; it reuses the exact request ID/body, pinned to that instance.
   Each attempt has a 30s cap (at most two attempts). Legacy/changed/unavailable
   executors receive no ambiguous replay, and failures never restart peer PTYs.
-  The error reports when allocation remains uncertain. Codex commands also get
-  the per-launch status-title default (`../codexTerminalActivity.ts`) here,
-  before allocation, so new launches on retained executors receive it too.
-  Serverless WS creation applies the same helper in `../terminalWsRelay.ts`.
-  Both paths also regenerate the project's `.lattice/LATTICE_API*.md`
-  (`refreshLatticeApiDocs`) before the pty exists — the terminal-server only
-  looks the doc up for its banner, so API-doc edits never make it stale.
-- `spawnBody.ts` — shared preparation, command recognition, harness dispatch,
-  and GC/LFS environment overlays; re-exports the public spawn types.
+  The error reports when allocation remains uncertain.
+- `spawnBody.ts` — defines `resolveHarnessSpawnBody`: shared preparation,
+  command recognition, harness dispatch, and GC/LFS environment overlays;
+  re-exports the public spawn types. Codex commands get the per-launch
+  status-title default (`../codexTerminalActivity.ts`) here, before
+  allocation, so new launches on retained executors receive it too. It also
+  regenerates the project's `.lattice/LATTICE_API*.md` (`refreshLatticeApiDocs`)
+  before the pty exists — the terminal-server only looks the doc up for its
+  banner, so API-doc edits never make it stale. Serverless WS creation applies
+  both helpers itself in `../terminalWsRelay.ts`.
 - `spawnTypes.ts` — wire types and shared harness context; type-only imports.
 - `spawnClaude.ts` — `resolveClaudeSpawn` + strict MCP config/flags helper.
 - `spawnCodex.ts` — `resolveCodexSpawn` + managed MCP key filtering,
   shell-aware prompts, and project activity hooks.
 - `spawnPi.ts` — `resolvePiSpawn` + cwd-local MCP and prompt extensions.
-- `shutdown.ts` — `POST /shutdown` (`proxyShutdown`), **2s**, fired by the dev
-  orchestrator on Ctrl+C (the detached server gets no signal of its own).
+- `shutdown.ts` — `POST /shutdown` (`proxyShutdown`), **2s**. Currently an
+  **unused re-export** (from `../terminalServerClient.ts` and
+  `../terminalProxy.ts`; no callers). The real sender on a full stop (the
+  detached server gets no signal of its own) is `shutdownTerminalServer` in
+  `backend/scripts/dev/backendLifecycle.mjs` (**2.5s**), called by the dev
+  runners (`backend/scripts/dev.mjs`, `scripts/orchestrate.mjs`,
+  `scripts/devLoop.mjs`).
 
 The three timeouts are intentionally separate — different intents.
