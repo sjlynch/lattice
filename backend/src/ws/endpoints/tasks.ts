@@ -39,6 +39,52 @@ type TasksWsEvent =
   | { kind: 'activity'; event: TaskActivityEvent }
   | { kind: 'agent-activity'; event: AgentActivityEvent };
 
+// `subscribe` below runs once PER CONNECTION, but one fan-out hands every
+// connection's listener the SAME source object: the task cache snapshots once
+// per notify and loops its listeners with that array, and the spawn/activity
+// emitters pass one event object to all of theirs. Wrapping it in a fresh
+// TasksWsEvent per connection made buildProjectWss's serialize-once cache
+// (keyed by event identity) always miss, so every open tab re-stringified the
+// whole board (1.4–6 MB) on each task change. Memoize the wrapper on its
+// source so all connections forward one event; the WeakMap entry is collected
+// with the source once the broadcast is done.
+const snapshotEvents = new WeakMap<Task[], TasksWsEvent>();
+
+function snapshotEvent(projectPath: string, tasks: Task[]): TasksWsEvent {
+  const cached = snapshotEvents.get(tasks);
+  if (cached?.kind === 'snapshot' && cached.projectPath === projectPath) return cached;
+  const event: TasksWsEvent = { kind: 'snapshot', projectPath, tasks };
+  snapshotEvents.set(tasks, event);
+  return event;
+}
+
+function sharedWrapper<TSource extends object>(
+  wrap: (source: TSource) => TasksWsEvent,
+): (source: TSource) => TasksWsEvent {
+  const bySource = new WeakMap<TSource, TasksWsEvent>();
+  return (source) => {
+    let event = bySource.get(source);
+    if (event === undefined) {
+      event = wrap(source);
+      bySource.set(source, event);
+    }
+    return event;
+  };
+}
+
+const spawnedEvent = sharedWrapper(
+  (event: TaskSpawnedEvent): TasksWsEvent => ({ kind: 'spawned', event }),
+);
+const spawnFailedEvent = sharedWrapper(
+  (event: TaskSpawnFailedEvent): TasksWsEvent => ({ kind: 'spawn-failed', event }),
+);
+const activityEvent = sharedWrapper(
+  (event: TaskActivityEvent): TasksWsEvent => ({ kind: 'activity', event }),
+);
+const agentActivityEvent = sharedWrapper(
+  (event: AgentActivityEvent): TasksWsEvent => ({ kind: 'agent-activity', event }),
+);
+
 export function buildTasksWss(): WebSocketServer {
   return buildProjectWss<TasksWsEvent>({
     initial: async (project) => ({
@@ -48,19 +94,19 @@ export function buildTasksWss(): WebSocketServer {
     initialError: 'ignore',
     subscribe: (listener) => {
       const unsubTasks = subscribeTasks((projectPath, tasks) => {
-        listener({ kind: 'snapshot', projectPath, tasks });
+        listener(snapshotEvent(projectPath, tasks));
       });
       const unsubSpawned = subscribeTaskSpawned((event) => {
-        listener({ kind: 'spawned', event });
+        listener(spawnedEvent(event));
       });
       const unsubSpawnFailed = subscribeTaskSpawnFailed((event) => {
-        listener({ kind: 'spawn-failed', event });
+        listener(spawnFailedEvent(event));
       });
       const unsubActivity = subscribeTaskActivity((event) => {
-        listener({ kind: 'activity', event });
+        listener(activityEvent(event));
       });
       const unsubAgentActivity = subscribeAgentActivity((event) => {
-        listener({ kind: 'agent-activity', event });
+        listener(agentActivityEvent(event));
       });
       return () => {
         unsubTasks();

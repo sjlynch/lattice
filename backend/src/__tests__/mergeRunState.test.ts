@@ -1,10 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import os from 'node:os';
 import path from 'node:path';
-import { canonicalProjectPath } from '../projectPath.js';
+import { canonicalProjectPath, homeProjectDir } from '../projectPath.js';
 import { ConflictWaiterRegistry } from '../mergeRuns/conflictWaiters.js';
 import { normalizeLoadedRuns } from '../mergeRuns/normalization.js';
 import { snapshotRun } from '../mergeRuns/snapshot.js';
+import { createRunState, MAX_PERSISTED_RUNS_PER_PROJECT } from '../mergeRuns/state.js';
 import type { MergeRun } from '../mergeRuns/types.js';
 
 const fallbackProject = path.join(process.cwd(), 'merge-run-state-test-project');
@@ -231,4 +234,69 @@ test('ConflictWaiterRegistry.abandon from a prior run does not release a re-queu
   assert.equal(waiters.abandon('task-a', 'run-b'), true);
   await waiterB;
   assert.equal(releasedB, true);
+});
+
+// Every workflow Merge round, disk-pressure merge and resolver restart adds a
+// run; the map used to keep all of them until the backend restarted, and every
+// emit / reapOrphanedRuns / resolver-spawn lookup scanned the whole of it.
+test('the in-memory run map keeps no more settled runs than are persisted, and never drops a running one', async () => {
+  const projectPath = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-mergerun-prune-'));
+  const state = createRunState();
+  const key = await state.loadProject(projectPath);
+  const makeRun = (id: string, status: MergeRun['status'], startedAt: number): MergeRun => ({
+    id, projectPath: key, status, startedAt,
+    total: 0, processed: 0, merged: [], conflicted: [], errored: [], cancelRequested: false,
+  });
+  const settledInMap = () => [...state.runs.values()].filter((run) => run.status !== 'running');
+  try {
+    // The oldest record of all is the running one: age alone must never drop it.
+    const running = makeRun('run_running', 'running', 1);
+    state.runs.set(running.id, running);
+    state.markRunLive(running.id);
+    state.emit({ type: 'started', run: snapshotRun(running) });
+
+    // Settled, but still referenced: a worker between finishRun's emit and its
+    // finalize, and a run parked on a resolver waiter.
+    const live = makeRun('run_settled_live', 'completed', 2);
+    state.runs.set(live.id, live);
+    state.markRunLive(live.id);
+    const parked = makeRun('run_settled_parked', 'cancelled', 3);
+    state.runs.set(parked.id, parked);
+    const waiter = state.registerConflictWaiter(parked.id, 'task-parked');
+
+    for (let i = 0; i < 60; i += 1) {
+      const run = makeRun(`run_${i}`, 'completed', 100 + i);
+      state.runs.set(run.id, run);
+      state.emit({ type: 'completed', run: snapshotRun(run) });
+    }
+
+    assert.ok(state.runs.has(running.id), 'a running run is never dropped');
+    assert.ok(state.runs.has(live.id), 'a run a live worker still references is kept');
+    assert.ok(state.runs.has(parked.id), 'a run a resolver waiter still references is kept');
+    const unreferenced = settledInMap().filter((run) => run.id !== live.id && run.id !== parked.id);
+    assert.equal(unreferenced.length, MAX_PERSISTED_RUNS_PER_PROJECT);
+    for (let i = 0; i < 10; i += 1) assert.equal(state.getRun(`run_${i}`), null, `oldest run_${i} is dropped`);
+    for (let i = 10; i < 60; i += 1) assert.equal(state.getRun(`run_${i}`)?.status, 'completed', `run_${i} is kept`);
+
+    // Once nothing references them, the next emit drops them too.
+    state.markRunSettled(live.id);
+    assert.equal(state.signalConflictWaiter('task-parked'), true);
+    await waiter;
+    state.emit({ type: 'progress', run: snapshotRun(running) });
+    assert.equal(settledInMap().length, MAX_PERSISTED_RUNS_PER_PROJECT);
+    assert.equal(state.runs.size, MAX_PERSISTED_RUNS_PER_PROJECT + 1);
+
+    // GET /api/merge-runs/active reads getActiveRunForProject: unchanged.
+    assert.equal(state.getActiveRunForProject(key)?.id, running.id);
+    running.status = 'completed';
+    running.finishedAt = Date.now();
+    state.markRunSettled(running.id);
+    state.emit({ type: 'completed', run: snapshotRun(running) });
+    assert.equal(state.getActiveRunForProject(key), null);
+    assert.ok(settledInMap().length <= MAX_PERSISTED_RUNS_PER_PROJECT);
+  } finally {
+    await state.flushPersist(key);
+    await fs.rm(projectPath, { recursive: true, force: true }).catch(() => {});
+    await fs.rm(homeProjectDir(key), { recursive: true, force: true }).catch(() => {});
+  }
 });

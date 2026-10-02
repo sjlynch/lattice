@@ -1,5 +1,6 @@
 import type { MergeRun, Task, TaskStatus } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminal } from '../../../terminal/terminalTypes';
 import type { LaneSortMode } from '../laneSort';
 import type { GroupedTasks } from './useTaskBoardState';
 import type { RunHarnessSelection } from './useHarnessSelector';
@@ -7,8 +8,6 @@ import { useTaskCrudActions } from './useTaskCrudActions';
 import { useTaskLifecycleActions } from './useTaskLifecycleActions';
 import { useTaskMergeActions } from './useTaskMergeActions';
 import { useTaskReorderActions } from './useTaskReorderActions';
-
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 
 type UseTaskActionsArgs = {
   activeFolder: string;
