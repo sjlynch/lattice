@@ -226,6 +226,10 @@ export class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
   // A path that no longer stats. For a directory that means its whole recorded
   // subtree went with it, and the OS may not report each child separately.
   private emitRemoval(filePath: string): void {
+    // Before the early return: a file held for write stability and gone by the
+    // next pass was never recorded, and its retry count would otherwise stay
+    // forever (the `.git` watcher sees a unique `*.lock` per task).
+    this.retries.delete(filePath);
     const entry = this.snapshot.get(filePath);
     if (!entry) return;
     if (entry.dir) {
@@ -238,7 +242,6 @@ export class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
       }
     }
     this.snapshot.delete(filePath);
-    this.retries.delete(filePath);
     this.emit(entry.dir ? 'unlinkDir' : 'unlink', filePath);
   }
 
@@ -301,6 +304,11 @@ export class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
     this.queueRescan(paths);
   }
 
+  // Test-only: paths currently held for a write-stability retry.
+  get stabilityRetryCount(): number {
+    return this.retries.size;
+  }
+
   async close(): Promise<void> {
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
@@ -314,5 +322,7 @@ export class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
     this.pending.clear();
     this.rescanQueue.clear();
     this.snapshot.clear();
+    this.retries.clear();
+    this.preSeed.clear();
   }
 }

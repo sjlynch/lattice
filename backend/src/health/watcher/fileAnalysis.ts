@@ -27,9 +27,15 @@ export type AnalyzedFile = {
   imports: string[];
 };
 
+// `knownSize` is the caller's already-stat'd byte size: an oversize file is
+// rejected without being read (a growing multi-hundred-MB log/JSON/CSV used to
+// be loaded whole on every `change`, only to be discarded). The post-read
+// length check stays as a backstop — the file can grow between stat and read.
 export async function readFileForAnalysis(
   filePath: string,
+  knownSize?: number,
 ): Promise<FileContentForAnalysis | null> {
+  if (knownSize !== undefined && knownSize > LOC_MAX_BYTES) return null;
   try {
     const buf = await fs.readFile(filePath);
     if (buf.length > LOC_MAX_BYTES) return null;
@@ -98,7 +104,7 @@ export async function loadOrAnalyzeFile(
   // check above stays outside the gate — a cache hit costs one stat.
   const analyzed = await analysisSlots.run(async (): Promise<AnalyzedFile | null> => {
     if (!isCurrent()) return null;
-    const read = await readFileForAnalysis(filePath);
+    const read = await readFileForAnalysis(filePath, stat.size);
     if (!isCurrent() || !read || read.content === undefined) return null;
 
     // Analyze in the WATCHER's warm isolated worker so a pathological changed file
