@@ -129,6 +129,8 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   `(mtime,size)` staleness. `cache.ts` is the `HealthCache` class: in-memory
   state + its load/get/set/delete/prune/save/flush transitions, debounced
   coalesced writes, save-chain serialization, dirty-bit rearm-on-failure.
+  `set()` dirties only a new or changed entry (stat fields, then a deep
+  compare of metrics/imports), so an unchanged rescan's flush writes nothing.
   `cachePaths.ts` owns the location + `CACHE_VERSION` (bump it on any import-
   extraction/resolver change — see the crossFile cache-coupling note above —
   and on any change to cached metric output, e.g. v5: Rust lifetimes in the

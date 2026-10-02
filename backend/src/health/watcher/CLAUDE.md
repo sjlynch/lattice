@@ -63,6 +63,7 @@ the watcher booted with an empty cache.
 - Keep `HealthCache.save()` debounced and best-effort; flush on scan commit
   and shutdown. [../cacheFile.ts](../cacheFile.ts) orders reads and writes
   across cache instances, so hydration waits behind an already queued flush.
+  A commit that re-seeds unchanged entries leaves the cache clean (no write).
 - `fileAnalysis.ts` holds a machine-wide eight-slot gate across file read and
   analyzer hand-off for all projects ([../../concurrencyLimit.ts](../../concurrencyLimit.ts));
   the `(mtime,size)` cache check stays outside it. Keep size/minification guards.
