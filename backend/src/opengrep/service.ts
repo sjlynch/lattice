@@ -20,7 +20,7 @@ import { getOpengrepInstallJob, type OpengrepInstallJob } from './install.js';
 import { chooseAssetForThisMachine, type AssetChoice } from './platform.js';
 import { listRulePacks, type RulePackStatus } from './rules.js';
 import {
-  isOpengrepScanRunning,
+  runningOpengrepScan,
   latestOpengrepScan,
   readOpengrepScan,
   runOpengrepScan,
@@ -45,7 +45,12 @@ export type OpengrepStatus = {
   installJob: OpengrepInstallJob | null;
   packs: RulePackStatus[];
   // Present when `project` was given: is a scan running, and the last one.
-  project?: { path: string; scanning: boolean; lastScan: OpengrepScanRecord | null };
+  project?: {
+    path: string;
+    scanning: boolean;
+    runningScan: { id: string; startedAt: number } | null;
+    lastScan: OpengrepScanRecord | null;
+  };
 };
 
 export async function getOpengrepStatus(project?: string): Promise<OpengrepStatus> {
@@ -66,10 +71,13 @@ export async function getOpengrepStatus(project?: string): Promise<OpengrepStatu
   };
   if (project) {
     const canonical = canonicalProjectPath(project);
+    const lastScan = await latestOpengrepScan(canonical);
+    const runningScan = runningOpengrepScan(canonical);
     status.project = {
       path: canonical,
-      scanning: isOpengrepScanRunning(canonical),
-      lastScan: await latestOpengrepScan(canonical),
+      scanning: runningScan !== null,
+      runningScan,
+      lastScan,
     };
   }
   return status;

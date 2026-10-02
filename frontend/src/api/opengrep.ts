@@ -31,16 +31,34 @@ const OPENGREP_GRAPH_SCAN_POLL_INTERVAL_MS = 1500;
 export async function runOpengrepGraphScan(
   project: string,
   signal: AbortSignal,
+  onAccepted?: (scan: { id: string; startedAt?: number }) => void,
 ): Promise<OpengrepGraphResult> {
-  const started = await asJson<OpengrepScanEnvelope | { scanId: string; status: 'running' }>(
+  const started = await asJson<OpengrepScanEnvelope | { scanId: string; status: 'running'; startedAt?: number }>(
     await fetch('/api/opengrep/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project, async: true }),
+      body: JSON.stringify({ project, async: true, acceptImmediately: true }),
       signal,
     }),
   );
   const id = 'scanId' in started ? started.scanId : started.scan.id;
+  onAccepted?.({ id, startedAt: 'scanId' in started ? started.startedAt : started.scan.startedAt });
+  return waitForOpengrepGraphScan(project, id, signal);
+}
+
+export async function cancelOpengrepGraphScan(project: string, id: string, signal: AbortSignal) {
+  return asJson<{ cancelled: boolean }>(await fetch(`/api/opengrep/scans/${encodeURIComponent(id)}/cancel`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project }), signal,
+  }));
+}
+
+// Attach to a scan that the backend already accepted, including after refresh.
+// Only GETs are issued here; the scan can finish even if its original tab closed.
+export async function waitForOpengrepGraphScan(
+  project: string,
+  id: string,
+  signal: AbortSignal,
+): Promise<OpengrepGraphResult> {
   const params = new URLSearchParams({ project, format: 'graph' });
   const deadline = Date.now() + OPENGREP_GRAPH_SCAN_TIMEOUT_MS;
   while (true) {

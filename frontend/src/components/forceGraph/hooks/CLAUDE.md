@@ -75,15 +75,24 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   + `useSecurityOverlay` + `useGraphFilter` into one setup point.
 - `useSecurityOverlay` — explicit Security chip activation starts one OpenGrep
   scan, polls its exact id, and refreshes colors without reheating the layout.
-  Shows a chip spinner and completed duration. No scan effect, persistence,
-  shortcut or automatic retry. Project-scoped results and request identity fence
+  Shows a chip spinner, an ETA based on the previous scan, and completed duration.
+  On refresh/project open, status discovers an already running scan and resumes
+  GET polling of its exact id; only clicks POST. The countdown uses the backend
+  start time, shows "Estimating…" without history, and keeps spinning past the
+  estimate. Its clock stays inside the chip so it never rerenders the graph.
+  Security recolor/visibility activates only when results arrive. A second click
+  while scanning cancels that exact id and shows "Cancelling…" until confirmed;
+  early cancellation waits for acceptance, and failed cancellation permits retry.
+  No shortcut or automatic scan retry. Project-scoped results and request identity fence
   late completion; project change/unmount abort waiting without cancelling an
   already accepted backend scan. Toggling off and back on starts a fresh scan.
 - `useOpengrepAvailability` — hides Security until `status.available` confirms
   a usable engine (managed or PATH). Reads status on mount and window focus/tab
   return, shares Settings' status responses, and polls only during an engine
-  installation so completion is noticed even if Settings closes. Failed reads
-  retain last confirmed availability. Cleanup aborts HTTP and removes listeners
+  installation so completion is noticed even if Settings closes. Reads include
+  the active project so `useSecurityOverlay` can reconnect to a running scan.
+  Shared project snapshots are scoped independently from machine availability.
+  Failed reads retain last confirmed availability. Cleanup aborts HTTP and removes listeners
   and timers. Availability changes never start a scan.
 - `useHoldKeyMode` — the shared hold-key chord lifecycle (keydown/keyup/blur/
   visibilitychange + text-input guard) behind every overlay. `momentaryLetterMode`

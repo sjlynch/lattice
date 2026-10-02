@@ -151,7 +151,10 @@ licence text + a source pointer) — keep it a runtime download.
   path — stable on one machine, not across machines; only the packs get the
   machine-stable relative ids. `scan.ts` keeps the single-flight, execution and
   error classes, and re-exports the two modules below so every `./scan.js`
-  import keeps working.
+  import keeps working. `runningOpengrepScan(project)` returns the current scan's
+  id and start time for read-only reconnection through the project status payload.
+  `cancelOpengrepScan(project, id)` aborts only a matching running id and waits
+  for the engine to settle, so a stale chip cannot cancel a newer scan.
 - `scanArgs.ts` — what a scan runs with: `resolveScanTargets` (+
   `OpengrepBadTargetError`), `defaultScanJobs` (`RESERVED_CORES`),
   `resolveRuleConfigs`, `buildScanArgs` (the `PER_FILE_*` / `MAX_TARGET_BYTES`
@@ -202,11 +205,15 @@ licence text + a source pointer) — keep it a runtime download.
 ## Consumers
 
 - `routes/opengrep.ts` — `/api/opengrep/{status,install,rules/install,
-  rules/:packId,scan,scans,scans/:id}`; 409 codes `busy` / `not-installed` /
+  rules/:packId,scan,scans,scans/:id,scans/:id/cancel}`; 409 codes `busy` / `not-installed` /
   `no-rules` / `installing` (DELETE of a pack mid-install). `POST /scan` with
   `async: true` waits at most `ASYNC_SCAN_ACCEPT_WINDOW_MS` (15 s): a scan done
   by then answers like the synchronous form, a longer one `202 {scanId,
-  status: 'running'}`. `GET /scans/:id` answers a still-running id with 202 and
+  status: 'running'}`. The chip also sends `acceptImmediately: true`, returning
+  the id without the 15 s wait so early cancellation can target it. `POST
+  /scans/:id/cancel {project}` waits for that exact scan to stop; a stale id
+  cannot cancel another scan. Aborted scan polls answer 409 `scan-cancelled`.
+  `GET /scans/:id` answers a still-running id with 202 and
   a failed one with the status/code its POST would have had; after a backend
   restart the id is unknown (404 — the restart killed the engine). The
   synchronous form (the Settings button) is unchanged; one scan per project
@@ -237,8 +244,13 @@ licence text + a source pointer) — keep it a runtime download.
   becomes a one-paragraph explanation and the step runs.
 - Settings → Tools tab (`frontend/src/components/settings/ToolsTab.tsx`).
 - Graph Security chip (`frontend/src/components/forceGraph/hooks/useSecurityOverlay.ts`):
-  POST only on activation, spinner while polling that scan id, duration on
-  completion. Disable/re-enable explicitly starts a new scan. Project changes
+  POST only on activation; refresh reconnects through `status.project.runningScan`
+  and GET polling of that exact id. Shows a spinner and an ETA from the previous
+  scan's duration, then duration on completion. Keeps the normal graph visible
+  until results arrive. Clicking while scanning cancels the exact id (including
+  a restored scan), with "Cancelling…" until the backend confirms. Cancellation
+  intent before acceptance is honored once the id arrives. Disable/re-enable
+  explicitly starts a new scan. Project changes
   and unmount abort HTTP waiting; an accepted backend scan may finish normally.
 
 ## Tests

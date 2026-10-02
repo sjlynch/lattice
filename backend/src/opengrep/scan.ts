@@ -146,6 +146,12 @@ export function isOpengrepScanRunning(project: string): boolean {
   return running.has(canonicalProjectPath(project));
 }
 
+// Read-only metadata lets a refreshed graph reconnect to the exact scan.
+export function runningOpengrepScan(project: string): { id: string; startedAt: number } | null {
+  const entry = running.get(canonicalProjectPath(project));
+  return entry ? { id: entry.id, startedAt: entry.startedAt } : null;
+}
+
 // Any project at all — the rule-pack routes refuse to swap or delete a pack
 // directory while an engine process may be reading it.
 export function isAnyOpengrepScanRunning(): boolean {
@@ -159,6 +165,16 @@ export function abortOpengrepScan(project: string): boolean {
   const entry = running.get(canonicalProjectPath(project));
   if (!entry) return false;
   entry.abort.abort();
+  return true;
+}
+
+// The chip cancels an exact id and waits for the engine to settle. A stale
+// browser must never cancel a newer scan that took the same project's slot.
+export async function cancelOpengrepScan(project: string, id: string): Promise<boolean> {
+  const entry = running.get(canonicalProjectPath(project));
+  if (!entry || entry.id !== id) return false;
+  entry.abort.abort();
+  await entry.promise.catch(() => {});
   return true;
 }
 

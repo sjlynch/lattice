@@ -193,6 +193,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | POST | `/api/opengrep/rules/install` | `{packId}` fetch/update a rule pack (**409** while a scan runs) |
 | DELETE | `/api/opengrep/rules/:packId` | Remove a rule pack (**409** while a scan runs) |
 | POST | `/api/opengrep/scan` | `{project, targets?, includeMarkdown?}` run a scan (**409** `busy`/`not-installed`/`no-rules`, **400** `bad-target`) |
+| POST | `/api/opengrep/scans/:id/cancel` | `{project}` cancel that exact running scan; waits for the engine to settle |
 | GET | `/api/opengrep/scans?project=` | Recent scan records |
 | GET | `/api/opengrep/scans/:id?project=&format=md&…` | One scan (`latest` ok) as the filtered agent digest; `format=graph` gives per-file severity and coverage |
 | POST | `/api/opengrep/ignore` | `{project, ruleIds?, fingerprints?}` append to the project's Opengrep ignore lists |
@@ -319,8 +320,12 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   The **Security** chip appears only after a usable OpenGrep engine is detected
   (managed or external). Availability refreshes on focus/return and during
   installation; status reads never start scans. It runs OpenGrep only on explicit activation, with an
-  in-chip spinner and completed scan time. Its colors take precedence over
-  H/Z/D, hide ghosts but keep metrics-ignored config files visible, and use
+  in-chip spinner and completed scan time. Refresh reconnects to the backend's
+  running scan and restores the spinner; an ETA counts down from the previous
+  scan's duration ("Estimating…" for the first scan). Security takes precedence
+  over H/Z/D only after results arrive, keeping the normal graph visible while
+  scanning. Clicking the running chip again cancels that exact backend scan.
+  Its colors hide ghosts but keep metrics-ignored config files visible and use
   the configured severity/ignore filters. Gray means unscanned or incomplete.
   No scans on graph load, file changes or project switches; disable/re-enable
   explicitly starts a fresh scan.

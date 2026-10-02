@@ -12,9 +12,11 @@ import {
   OpengrepNotInstalledError,
   OpengrepRulesBusyError,
   OpengrepScanBusyError,
+  OpengrepScanAbortedError,
   OpengrepScanFailedError,
   RulePackError,
   addOpengrepIgnores,
+  cancelOpengrepScan,
   digestOfStoredScan,
   findRulePackDef,
   getOpengrepStatus,
@@ -92,12 +94,13 @@ const STORED_SCAN_DRILL_DOWN_HINT =
 
 // The `POST /api/opengrep/scan` body: `targets` keeps only non-blank strings
 // (absent when not an array); `includeMarkdown` and `async` are strict `true`.
-function parseScanBody(raw: unknown): { targets: string[] | undefined; includeMarkdown: boolean; async: boolean } {
-  const body = (raw ?? {}) as { targets?: unknown; includeMarkdown?: unknown; async?: unknown };
+function parseScanBody(raw: unknown): { targets: string[] | undefined; includeMarkdown: boolean; async: boolean; acceptImmediately: boolean } {
+  const body = (raw ?? {}) as { targets?: unknown; includeMarkdown?: unknown; async?: unknown; acceptImmediately?: unknown };
   const targets = Array.isArray(body.targets)
     ? body.targets.filter((t): t is string => typeof t === 'string' && !!t.trim())
     : undefined;
-  return { targets, includeMarkdown: body.includeMarkdown === true, async: body.async === true };
+  return { targets, includeMarkdown: body.includeMarkdown === true, async: body.async === true,
+    acceptImmediately: body.acceptImmediately === true };
 }
 
 // Settle-or-timeout for an async scan: its outcome if it settles within
@@ -127,6 +130,7 @@ function statusFor(err: unknown): { status: number; code: string } | null {
   if (err instanceof OpengrepRulesBusyError) return { status: 409, code: 'busy' };
   if (err instanceof OpengrepNotInstalledError) return { status: 409, code: 'not-installed' };
   if (err instanceof OpengrepNoRulesError) return { status: 409, code: 'no-rules' };
+  if (err instanceof OpengrepScanAbortedError) return { status: 409, code: 'scan-cancelled' };
   if (err instanceof OpengrepScanFailedError) return { status: 500, code: 'scan-failed' };
   if (err instanceof OpengrepInstallError) return { status: 409, code: 'install-failed' };
   if (err instanceof RulePackError) return { status: 500, code: 'rule-pack-failed' };
@@ -218,7 +222,7 @@ export function buildOpengrepRouter(): Router {
   r.post('/api/opengrep/scan', async (req, res) => {
     const project = readProjectParam(req, res);
     if (project === null) return;
-    const { targets, includeMarkdown, async: acceptWithin } = parseScanBody(req.body);
+    const { targets, includeMarkdown, async: acceptWithin, acceptImmediately } = parseScanBody(req.body);
     const opts = { targets, render: { drillDownHint: SCAN_DRILL_DOWN_HINT } };
     if (!acceptWithin) {
       try {
@@ -234,17 +238,26 @@ export function buildOpengrepRouter(): Router {
       return null;
     });
     if (!started) return;
-    const settled = await awaitScanWithinWindow(started, ASYNC_SCAN_ACCEPT_WINDOW_MS);
+    const settled = await awaitScanWithinWindow(started, acceptImmediately ? 0 : ASYNC_SCAN_ACCEPT_WINDOW_MS);
     if (settled === null) {
+      const run = opengrepScanRunState(project, started.id);
       return res.status(202).json({
         canonicalProject: canonicalProjectPath(project),
         scanId: started.id,
         status: 'running',
+        startedAt: run?.state === 'running' ? run.startedAt : undefined,
         poll: `/api/opengrep/scans/${started.id}`,
       });
     }
     if ('error' in settled) return sendMappedError(res, settled.error);
     res.json(scanEnvelope(settled.result, includeMarkdown));
+  });
+
+  r.post('/api/opengrep/scans/:id/cancel', async (req, res) => {
+    const project = readProjectParam(req, res);
+    if (project === null) return;
+    res.json({ canonicalProject: canonicalProjectPath(project),
+      cancelled: await cancelOpengrepScan(project, String(req.params.id)) });
   });
 
   r.get('/api/opengrep/scans', async (req, res) => {

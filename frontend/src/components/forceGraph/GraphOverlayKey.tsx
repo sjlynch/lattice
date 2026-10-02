@@ -1,4 +1,4 @@
-import { memo } from 'react';
+import { memo, useEffect, useState } from 'react';
 import type { OverlayPinKey, OverlayPins } from './hooks/useOverlayPins';
 import type { SecurityOverlayControl } from './hooks/useSecurityOverlay';
 import { SECURITY_COLORS } from './securityOverlay';
@@ -29,6 +29,31 @@ type Props = {
   onTogglePin: (key: OverlayPinKey) => void;
   security: SecurityOverlayControl;
 };
+
+// Keep the one-second clock inside the chip so it never rerenders the graph.
+function SecurityScanEta({ startedAt, durationMs }: { startedAt: number; durationMs: number | null }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => {
+    if (durationMs === null) return;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = () => {
+      setNow(Date.now());
+      timer = setTimeout(tick, 1000);
+    };
+    tick();
+    return () => clearTimeout(timer);
+  }, [startedAt, durationMs]);
+  const seconds = durationMs === null ? null : Math.ceil((startedAt + durationMs - now) / 1000);
+  const label = seconds === null ? 'Estimating…' : seconds <= 0 ? 'Over estimate'
+    : `ETA ~${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
+  return (
+    <span className="graph-overlay-chip-key graph-security-eta" title={durationMs === null
+      ? 'An ETA will be available after the first scan finishes.'
+      : 'Approximate time remaining, based on the previous scan. The spinner stays until this scan finishes.'}>
+      {label}
+    </span>
+  );
+}
 
 // Always-visible key for the graph's hold-key overlays (top-left). Each chip
 // documents a view + its shortcut and, when clicked, PINS that view so it
@@ -69,17 +94,22 @@ export const GraphOverlayKey = memo(function GraphOverlayKey({
       {security.available && (
         <button
           type="button"
-          className={`graph-overlay-chip${security.active ? ' is-active is-pinned' : ''}`}
-          aria-pressed={security.active}
+          className={`graph-overlay-chip${security.active || security.scanning ? ' is-active is-pinned' : ''}`}
+          aria-pressed={security.active || security.scanning}
           aria-busy={security.scanning}
-          disabled={security.scanning}
-          title={security.scanning ? 'Scanning for security issues…' : security.active
+          disabled={security.cancelling}
+          title={security.cancelling ? 'Cancelling the security scan…' : security.scanning
+            ? 'Scanning for security issues… Click to cancel the scan.' : security.active
             ? 'Hide Security view. Turn it on again to run a fresh scan.'
             : 'Scan this project with OpenGrep and color files by severity'}
           onClick={() => void security.onToggle()}
         >
           {security.scanning && <span className="spinner graph-security-spinner" aria-hidden="true" />}
           <span className="graph-overlay-chip-label">Security</span>
+          {security.cancelling && <span className="graph-overlay-chip-key">Cancelling…</span>}
+          {security.scanning && !security.cancelling && security.startedAt !== null && (
+            <SecurityScanEta startedAt={security.startedAt} durationMs={security.estimatedDurationMs} />
+          )}
           {security.active && security.result && (
             <span className="graph-overlay-chip-key">{(security.result.scan.durationMs / 1000).toFixed(1)}s</span>
           )}

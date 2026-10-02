@@ -37,6 +37,7 @@ export {
   isOpengrepScanRunning,
   isAnyOpengrepScanRunning,
   abortOpengrepScan,
+  cancelOpengrepScan,
   resolveScanTargets,
   OpengrepBadTargetError,
   OpengrepScanAbortedError,

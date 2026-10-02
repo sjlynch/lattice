@@ -4,6 +4,10 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
+import express from 'express';
+import { buildOpengrepRouter } from '../routes/opengrep.js';
 import {
   OpengrepBadTargetError,
   OpengrepNoRulesError,
@@ -12,6 +16,7 @@ import {
   OpengrepScanBusyError,
   OpengrepScanFailedError,
   abortOpengrepScan,
+  cancelOpengrepScan,
   buildScanArgs,
   defaultScanJobs,
   isAnyOpengrepScanRunning,
@@ -19,6 +24,7 @@ import {
   readOpengrepScan,
   resolveScanTargets,
   runOpengrepScan,
+  runningOpengrepScan,
 } from '../opengrep/scan.js';
 import { rulePackDir, rulesRootDir, projectScansDir } from '../opengrep/paths.js';
 import { updateOpengrepState } from '../opengrep/state.js';
@@ -145,8 +151,15 @@ test('one scan per project: a concurrent request is refused with OpengrepScanBus
     assert.equal(isAnyOpengrepScanRunning(), false);
     const first = runOpengrepScan({ project, packIds: ['qodana-mit'] }, deps);
     assert.equal(isAnyOpengrepScanRunning(), true, 'the pack routes see a scan in flight');
+    const running = runningOpengrepScan(project);
+    assert.ok(running, 'refresh can discover a scan before its POST has settled');
+    assert.equal(typeof running.startedAt, 'number');
+    assert.equal(runningOpengrepScan(path.join(project, '.'))?.id, running.id, 'path aliases discover the same scan');
+    assert.equal(runningOpengrepScan(path.join(project, 'other')), null, 'metadata is project scoped');
     await assert.rejects(runOpengrepScan({ project, packIds: ['qodana-mit'] }, deps), OpengrepScanBusyError);
-    await first;
+    const completed = await first;
+    assert.equal(completed.id, running.id, 'the discovered id is the exact stored scan');
+    assert.equal(runningOpengrepScan(project), null, 'completed scans no longer report running metadata');
     assert.equal(isAnyOpengrepScanRunning(), false);
     // …and the slot frees once it settles.
     await runOpengrepScan({ project, packIds: ['qodana-mit'] }, deps);
@@ -176,8 +189,31 @@ test('abortOpengrepScan kills the running scan, frees the busy slot at once, and
     // the fake engine has installed its listener, so this tests a running scan.
     await spawned;
     assert.equal(isAnyOpengrepScanRunning(), true);
-    assert.equal(abortOpengrepScan(project), true);
-    await assert.rejects(scan, OpengrepScanAbortedError);
+    const id = runningOpengrepScan(project)!.id;
+    assert.equal(await cancelOpengrepScan(project, 'stale-id'), false, 'a stale chip cannot cancel a newer scan');
+    assert.equal(await cancelOpengrepScan(path.join(project, 'other'), id), false, 'cancellation is project scoped');
+    const app = express();
+    app.use(express.json());
+    app.use(buildOpengrepRouter());
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+    const cancelBody = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project }) };
+    const rejected = assert.rejects(scan, OpengrepScanAbortedError);
+    try {
+      const stale = await fetch(`${base}/api/opengrep/scans/stale-id/cancel`, cancelBody);
+      assert.equal((await stale.json()).cancelled, false);
+      const cancelled = await fetch(`${base}/api/opengrep/scans/${id}/cancel`, cancelBody);
+      assert.equal(cancelled.status, 200);
+      assert.equal((await cancelled.json()).cancelled, true, 'the route waits for the engine to settle');
+      await rejected;
+      const failedPoll = await fetch(`${base}/api/opengrep/scans/${id}?project=${encodeURIComponent(project)}`);
+      assert.equal(failedPoll.status, 409);
+      assert.equal((await failedPoll.json()).code, 'scan-cancelled', 'other viewers learn that the scan was cancelled');
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
     assert.equal(isAnyOpengrepScanRunning(), false, 'the slot frees when the abort settles');
     assert.equal(abortOpengrepScan(project), false, 'nothing left to abort');
     assert.deepEqual(await listOpengrepScans(project), [], 'no record for a cancelled scan');

@@ -33,6 +33,8 @@ qaRuns, workflows.
   `POST /api/opengrep/install` + `POST /api/opengrep/rules/install` /
   `DELETE /api/opengrep/rules/:packId` (202 + poll `/status`), and the
   agent-facing `POST /api/opengrep/scan` + `GET /api/opengrep/scans[/:id]`
+  and `POST /api/opengrep/scans/:id/cancel` (exact-id cancellation, waits for
+  the engine to stop)
   (`latest` allowed; `format=md`, `rule=`/`file=`/`severity=`/`budgetKb=`
   narrow the digest) and `POST /api/opengrep/ignore` (append to the project's
   ignore lists). 409 codes `busy` / `not-installed` / `no-rules`; 400

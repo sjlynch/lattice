@@ -69,7 +69,12 @@ export type OpengrepStatus = {
   platformAsset: { asset: string; note?: string } | null;
   installJob: OpengrepInstallJob | null;
   packs: OpengrepRulePackStatus[];
-  project?: { path: string; scanning: boolean; lastScan: OpengrepScanRecord | null };
+  project?: {
+    path: string;
+    scanning: boolean;
+    runningScan?: { id: string; startedAt: number } | null;
+    lastScan: OpengrepScanRecord | null;
+  };
 };
 
 export type OpengrepScanEnvelope = {
