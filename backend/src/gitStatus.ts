@@ -9,9 +9,10 @@
 // when it actually changed, so noise (a gitignored file that slipped the filter,
 // a `git status` index-stat refresh) never spams clients. We watch two things:
 //
-//   1. The repo's git metadata dir (HEAD / index / logs / refs / *_HEAD /
-//      packed-refs), minus the heavy `objects`/`lfs` subtrees — the precise,
-//      cheap signal for a commit / stage / checkout / merge / reset.
+//   1. The repo's git metadata dir (HEAD / index / refs / *_HEAD /
+//      packed-refs), minus the `objects`/`lfs`/`worktrees`/`logs` subtrees
+//      (see `createGitMetaIgnored`) — the precise, cheap signal for a commit /
+//      stage / checkout / merge / reset.
 //   2. The working tree (gitignore-aware, `.git` excluded) — so an unstaged
 //      edit that dirties the tree, or reverting it clean, is caught too.
 //
@@ -23,7 +24,7 @@
 // event-driven — no polling / continuous scanning; a single fast `git status`
 // runs only when a watched path actually changes, and only after a debounce.
 
-import type { Stats } from 'node:fs';
+import { promises as fs, type Stats } from 'node:fs';
 import path from 'node:path';
 import type { Ignore } from 'ignore';
 import { watchTree, type TreeWatcher } from './watchTree.js';
@@ -132,6 +133,44 @@ async function createGitignoreMatcher(
   return { current: () => gitignore, reload };
 }
 
+// The git-metadata watcher's prune predicate. Everything stays watched (HEAD,
+// index, refs/ incl. refs/heads + refs/remotes, packed-refs, config, *_HEAD)
+// except subtrees that churn without ever moving this checkout's
+// `git status --porcelain=v2 --branch` signature:
+//   - `objects/`, `lfs/` — content; a commit writes many loose objects.
+//   - `worktrees/` — every linked worktree's own HEAD / index / reflogs. Each
+//     Lattice task agent's `git add` / `commit` / `status` rewrites them, and
+//     none of it is the main checkout's state; a branch-tip move it causes
+//     still lands in the shared `refs/` (watched).
+//   - `logs/` — reflogs, appended by every commit / checkout / reset alongside
+//     the HEAD / ref write that is already watched, so they are redundant.
+//     EXCEPT in a linked worktree's own git dir (`<common>/worktrees/<name>`,
+//     a project opened on a linked worktree): its branch ref lives in the
+//     common dir, which isn't watched, so `logs/HEAD` is the only signal for a
+//     ref-only move (`reset --soft`, an amend with nothing new staged). Keep it.
+// Exported for tests.
+export function createGitMetaIgnored(
+  gitDir: string,
+  opts: { linkedWorktree: boolean },
+): (p: string) => boolean {
+  const prunedDirs = ['objects', 'lfs', 'worktrees'];
+  if (!opts.linkedWorktree) prunedDirs.push('logs');
+  const pruned = prunedDirs.map((d) => path.join(gitDir, d));
+  const underDir = (p: string, dir: string) =>
+    p === dir || p.startsWith(dir + path.sep);
+  return (p: string) => pruned.some((dir) => underDir(p, dir));
+}
+
+// A linked worktree's git dir carries a `commondir` pointer back to the shared
+// repo; the main `.git` (and a submodule's) does not.
+async function isLinkedWorktreeGitDir(gitDir: string): Promise<boolean> {
+  try {
+    return (await fs.stat(path.join(gitDir, 'commondir'))).isFile();
+  } catch {
+    return false;
+  }
+}
+
 // Route every change event of each watcher to its handler. Without an 'error'
 // listener the watcher re-emits into the void, which Node treats as an
 // unhandled exception and crashes the process. Log and swallow.
@@ -166,14 +205,12 @@ async function armGitStatusWatchers(proj: GitStatusWatcher): Promise<void> {
   const gitignore = await createGitignoreMatcher(root, () => treeWatcher.add(root));
   const rootGitignore = path.join(root, '.gitignore');
 
-  // 1. Git metadata: watch the whole git dir but prune the heavy content-object
-  //    subtrees (a commit writes many loose objects we don't care about).
-  const objectsDir = path.join(gitDir, 'objects');
-  const lfsDir = path.join(gitDir, 'lfs');
-  const underDir = (p: string, dir: string) =>
-    p === dir || p.startsWith(dir + path.sep);
+  // 1. Git metadata: watch the whole git dir minus the subtrees that churn
+  //    without moving the signature (see `createGitMetaIgnored`).
   const metaWatcher = watchTree(gitDir, {
-    ignored: (p: string) => underDir(p, objectsDir) || underDir(p, lfsDir),
+    ignored: createGitMetaIgnored(gitDir, {
+      linkedWorktree: await isLinkedWorktreeGitDir(gitDir),
+    }),
   });
 
   // 2. Working tree: gitignore-aware so build outputs / vendored dirs don't fire

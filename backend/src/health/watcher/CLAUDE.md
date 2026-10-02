@@ -8,6 +8,21 @@ test helpers), and shutdown cache flushing. [../../watchTree.ts](../../watchTree
 owns the filesystem backend: recursive `fs.watch` on win32 and chokidar
 elsewhere by default, exposing the same tree events.
 
+## Lifetime (memory invariant)
+
+Per-project watchers are never closed. The `subscribeHealth` unsubscribe only
+removes the callback from `subscribers`; only `_resetWatchersForTest` calls
+`watcher.close()`. Every project opened in a backend process therefore keeps,
+for the life of that process:
+
+- the tree watcher's state — on win32 a `RecursiveTreeWatcher` snapshot of
+  every non-ignored path ([../../watchTree/recursiveWatcher.ts](../../watchTree/recursiveWatcher.ts));
+- the per-file `metrics` and `imports` maps;
+- a full `HealthCache`.
+
+There is no eviction on project switch or last unsubscribe. Any per-file state
+added here grows with every file in every project ever opened in the process.
+
 ## Module map
 
 | File | Responsibility |

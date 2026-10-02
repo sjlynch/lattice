@@ -26,7 +26,7 @@ parentPort.on('message', () => {});
   for (const job of workerData.jobs) {
     let loc;
     try {
-      const read = await readForAnalysis(job.filePath);
+      const read = await readForAnalysis(job.filePath, job.size);
       loc = read.loc;
       if (read.content === undefined) {
         parentPort.postMessage({ type: 'result', index: job.index, loc: loc, ok: false });
