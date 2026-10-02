@@ -15,7 +15,7 @@ type Args = {
 // Owns the "create task from selection" flow: modal action + prompt
 // state, derived list of selected file nodes, plus the toast that
 // reports submission outcome. Returns plain values + actions so
-// ForceGraphView can hand them straight to GraphTaskModal without
+// useGraphInteraction can hand them straight to GraphTaskModal without
 // recomputing anything.
 export function useGraphTaskCreation({
   data,

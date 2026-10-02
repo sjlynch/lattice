@@ -31,10 +31,16 @@ label physics in `labelPhysics/CLAUDE.md`.
 
 **Coordinator & chrome (React)**
 - `ForceGraphView.tsx` — the exported component is a **retry shell** (WebGL
-  faults, below) around the coordinator: holds `selected`/`hoverNode`, threads
-  refs through `useGraphOverlays` + `useForceGraphInitialization`, and stays
-  focused on graph lifecycle / scene runtime orchestration. Imperative syncs +
-  keyboard live in focused hooks.
+  faults, below) around the coordinator. The coordinator owns the props,
+  `selected`/`hoverNode`, the shared refs (container, graph, pointer-drag/-outside,
+  ref mirrors) and the JSX, and calls its phases in a fixed order:
+  `hooks/useGraphSceneRuntime` (overlays → init → camera → data sync → tidy
+  layout → batched renderers → drag → agents → worktree rings), then
+  `hooks/useGraphInteraction` (search → context menu → box select → task
+  creation → halos → metrics-ignore refresh → Escape chord → tooltip dismiss),
+  then `useGraphViewChromeModel`. **Hook order and every dependency array are
+  load-bearing** — effect ordering follows call order — and refs are passed
+  through by identity, never copied.
 - `rendererStatus.ts` / `GraphRendererNotice.tsx` — classify initialization
   errors (including WebGL construction failures) and show a notice for them or
   `webglcontextlost`. A construction failure or context-loss event alone
@@ -262,7 +268,9 @@ label physics in `labelPhysics/CLAUDE.md`.
 
 `hooks/` holds the coordinator's extracted effects (data sync, overlays, hold-key/
 pin lifecycle, search, drag/hover, batched-render controllers, settings
-render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
+render-vs-physics splits, the Escape chord), grouped for the coordinator by the
+two phase hooks `useGraphSceneRuntime` and `useGraphInteraction`. See
+`hooks/CLAUDE.md` → "Coordinator phases".
 
 ## Load-bearing invariants (do not violate)
 

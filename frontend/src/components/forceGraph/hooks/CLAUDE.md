@@ -6,6 +6,28 @@ and don't churn per keystroke/frame. Pure decision logic is split into sibling
 non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 `refresh`) and unit-tested where noted.
 
+## Coordinator phases
+
+The coordinator calls the hooks below through two phase hooks, in this order
+(after its own shared refs / hover / drag tracking, before
+`../useGraphViewChromeModel`). Each is a straight extraction: it adds no state,
+takes the coordinator's refs by identity (never copies), and keeps every
+member's call order and dependency array — effect ordering follows call order,
+so don't reorder calls inside or across them.
+
+- `useGraphSceneRuntime` — `useGraphOverlays` → `batchedNodesRef` mirror +
+  `worktreeRingsRef` → `useForceGraphInitialization` → `useCameraPersistence`
+  → `resetSelection` → `useGraphDataSync` → `useRadialTidyLayout` →
+  `useBatchedLinks` → `useInstancedNodes` → `useNodeDragBehavior` →
+  `useAgentOverlay` → `useWorktreeHighlight`. Returns the overlay modes/settings,
+  `dataGeneration`, `runLayout`, `resetSelection` and `worktreeActive`.
+- `useGraphInteraction` — `useGraphSearchController` → `useNodeContextMenu`
+  (+ `closeContextMenu`) → `useBoxSelect` → `useGraphTaskCreation` →
+  `useSelectionHaloSync` → `useSelectionHaloPulse` → `useSelectionGlowSettings`
+  → `useMetricsIgnoreRefresh` → `useGraphViewKeyboard` →
+  `useOverlayTooltipDismiss`. Returns `contextMenu`, `dragRect`, `openMenuItem`,
+  `toast`, and `search` / `taskModal` already shaped for the chrome model.
+
 ## Init & data
 
 - `useForceGraphInitialization` — once-mounted layout effect supplying
