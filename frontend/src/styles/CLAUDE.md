@@ -28,8 +28,10 @@ ordered partial folder, each `@import`ed in its own cascade order:
   section/control/checkbox base is built on by the later tabs).
 - `graph.css` → `graph/` (`hud-search` — overlay/search/counts + loc-view chip;
   `overlay-key`; `context-menu` — box-select rect + selection chip + node menu;
-  `settings-panel` — gear FAB + settings popover; `toast`). Imported in the
-  original source order (each partial targets a disjoint class group).
+  `settings-panel` — gear FAB + settings popover; `toast`; `renderer-notice` —
+  `.graph-view-root` + `.graph-renderer-notice*`, the WebGL-renderer
+  failure/recovery notice). Imported in the original source order (each
+  partial targets a disjoint class group).
 
 Adding a partial means adding an `@import` to the aggregator at the position
 its cascade needs — files are not auto-globbed.
@@ -39,9 +41,9 @@ its cascade needs — files are not auto-globbed.
 - **Settings** — `settings.css` aggregator → `settings/` partials (`.settings-*`,
   `.startup-*`, `.env-note-*`, `.prompt-tpl-*`, `.mcp-*`, `.settings-info-*`).
 - **Graph** — `graph.css` aggregator → `graph/` partials (overlay, search/counts
-  cluster, context menu, settings fab/panel, toasts); `health-overlay.css` owns
-  the `H`/`D` health legend + tooltip; `legend.css` owns the per-extension
-  legend.
+  cluster, context menu, settings fab/panel, toasts, WebGL-renderer notice);
+  `health-overlay.css` owns the `H`/`D` health legend + tooltip; `legend.css`
+  owns the per-extension legend.
 - **Health** — `health-overlay.css` (`.health-legend*`, `.health-tooltip*`).
 - **Task board** — `taskboard.css` + `taskboard/` partials.
 - **Workflows** — `workflows.css` + `workflows/` partials.
