@@ -5,6 +5,7 @@ import { FitAddon } from '@xterm/addon-fit';
 import type { WebglAddon } from '@xterm/addon-webgl';
 import { attachClipboardPasteHandler } from './clipboardPaste';
 import { TERMINAL_OPTIONS } from './terminalConfig';
+import { disposeTerminalWebgl } from './terminalWebgl';
 
 type UseTerminalLifecycleArgs = {
   containerRef: RefObject<HTMLDivElement | null>;
@@ -61,13 +62,9 @@ export function useTerminalLifecycle({
       termRef.current = null;
       fitRef.current = null;
       // Dispose any live WebglAddon before tearing down the Terminal so
-      // the GL context is released cleanly.
-      try {
-        webglRef.current?.dispose();
-      } catch {
-        /* ignore */
-      }
-      webglRef.current = null;
+      // the GL context is released cleanly. This cleanup runs before
+      // useActiveTerminalWebgl's, so it must release the canvases too.
+      disposeTerminalWebgl(webglRef);
       term.dispose();
     };
     // serverId is intentionally NOT a dependency: capturing a backend session
