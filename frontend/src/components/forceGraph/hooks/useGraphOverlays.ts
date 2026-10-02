@@ -64,7 +64,7 @@ export function useGraphOverlays({
   // Pin state for the hold-key overlays — a pin latches a view on without
   // holding its key (the GraphOverlayKey chips toggle these; each overlay folds
   // its pin into the effective `held || pinned` mode). The `worktree` pin is
-  // applied by ForceGraphView, which owns the worktree-highlight hook.
+  // applied by useGraphSceneRuntime, which owns the worktree-highlight hook.
   const { pinned, togglePin } = useOverlayPins();
 
   const { locMode, locModeRef } = useLocOverlay(

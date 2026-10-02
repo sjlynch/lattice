@@ -5,9 +5,7 @@ import {
   subscribePostMergeHooks,
   type PostMergeHookRun,
 } from '../../../api';
-import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
-
-type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
+import type { AddTerminal } from '../../../terminal/terminalTypes';
 
 // Active/recent runs for the PostMergeHookRow, including terminal tabs and abort.
 export function usePostMergeHookRun(

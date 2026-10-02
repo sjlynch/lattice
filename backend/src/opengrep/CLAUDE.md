@@ -138,7 +138,9 @@ licence text + a source pointer) — keep it a runtime download.
   timeout (kill), last 10 scans kept as `<id>.json` + `<id>.meta.json`.
   Cancellable: a request `signal` or `abortOpengrepScan(project)` kills the
   engine, stores nothing, rejects with `OpengrepScanAbortedError` and frees
-  the slot at once (a cancelled workflow run uses this); a `process` `exit`
+  the slot at once. A cancelled workflow run aborts through the request
+  `signal` (`workflowRuns/stepTools.ts`); `abortOpengrepScan` has no
+  production caller beyond its `index.ts` re-export; a `process` `exit`
   handler aborts every running scan so a backend restart never leaves an
   orphaned engine writing an unrecorded `-o` file.
   `startOpengrepScan` returns the scan id synchronously (the id is minted
@@ -206,7 +208,8 @@ licence text + a source pointer) — keep it a runtime download.
 
 - `routes/opengrep.ts` — `/api/opengrep/{status,install,rules/install,
   rules/:packId,scan,scans,scans/:id,scans/:id/cancel}`; 409 codes `busy` / `not-installed` /
-  `no-rules` / `installing` (DELETE of a pack mid-install). `POST /scan` with
+  `no-rules` / `scan-cancelled` / `install-failed` / `installing` (DELETE of a
+  pack mid-install). `POST /scan` with
   `async: true` waits at most `ASYNC_SCAN_ACCEPT_WINDOW_MS` (15 s): a scan done
   by then answers like the synchronous form, a longer one `202 {scanId,
   status: 'running'}`. The chip also sends `acceptImmediately: true`, returning

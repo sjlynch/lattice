@@ -38,7 +38,7 @@ export function useTaskBoardDataView(
     searchActive,
     filteredTasks,
     filteredGrouped,
-  } = useTaskSearch(tasks);
+  } = useTaskSearch(tasks, grouped);
 
   // Selection runs over the search-filtered grouping — the cards actually on
   // screen — so a shift-range never sweeps in cards the search is hiding.

@@ -70,7 +70,8 @@ skip-permissions, the Codex `--yolo` toggle (default ON — part of
 drafts and feeds the sidebar's new-Codex-terminal command as well as being read
 by the backend for every Codex spawn; the UI labels it "Disable Codex sandbox
 and approval prompts (--yolo)" so its sandbox behavior is explicit), the instrument-Claude /
-disable-memory / qa-auto-close toggles, and the three terminal-tab restore
+disable-memory / qa-auto-close / keep-workflow-step-terminals
+(`keepWorkflowStepTerminals`, default OFF) toggles, and the three terminal-tab restore
 drafts (`restoreTerminalsOnOpen` — `always` / `ask` / `never` —,
 `restoreNudgeAgents`, `restoreNudgeUserTabs`; see the terminal-registry notes
 in the root `CLAUDE.md`). The terminal-default drafts and `startupTerminals`
@@ -83,7 +84,8 @@ defaults (App resets `terminalLaunchSettings` while unloaded rather than keeping
 the previous project's), and an unrelated save used to wipe the project's
 startup commands — pinned by `__tests__/saveSettingsUnloaded.test.ts`. The
 fetched toggles (instrument /
-memory / qa-auto-close / the three restore drafts) ride it only via
+memory / qa-auto-close / keep-workflow-step-terminals / the three restore
+drafts) ride it only via
 `getSavableFetchedToggles()` (`pickSavableFetchedToggles`): all of them once this
 open's GET (`fetchUserSettingsStrict`) succeeded, otherwise only the ones the
 user edited — an unloaded, untouched draft still holds its default and would
@@ -102,7 +104,13 @@ default + read in `fetchedToggles.ts`, plus its value/setter pair on
 those sections (the project-settings block atop the Terminals tab); it's a plain
 `drafts`-driven component with no ref handle, since the controller persists
 those drafts — `SettingsDialog` just composes it ahead of the
-`StartupTerminalsTab` panel.
+`StartupTerminalsTab` panel. Its single-checkbox sections (Codex `--yolo`,
+Claude instrumentation, Claude memory, QA terminal auto-close, keep workflow
+step terminals) are data-driven too: `terminalToggleSections.tsx`'s
+`TERMINAL_TOGGLE_SECTIONS` table (title, info popover, checkbox label, and the
+paired `draftKey`/`setterKey` on `SettingsDrafts`), mapped in order onto
+`CheckboxSettingsSection`. A new single-checkbox section = an entry there; the
+default-harness and restore sections stay hand-written (selects + extras).
 
 `InstructionTemplatesTab` also owns the "Task agents may type-check what they
 edited" checkbox (`taskAgentTypecheck`, default OFF; backend
@@ -199,7 +207,8 @@ empty). The backend reconciles all
 of this into `~/.pi/agent/models.json`, plus the curated "Pi — X" model-menu
 checklist. (A keyless endpoint is written with `apiKey: "local"` so Pi doesn't
 reject the whole file — see `backend/src/piModels.ts`.) `PiTab`'s draft state
-lives in three focused hooks in `usePiEndpoints.ts`: `useEndpointState` (the
+lives in three focused hooks, one file each under `piEndpoints/`
+(`usePiEndpoints.ts` is the compatibility barrel): `useEndpointState` (the
 endpoint list + `touched` flag + `patch`/`add`/`remove`; `add` uses
 `nextEndpointId` to avoid re-minting a saved id). Its shared `mutate` tracks row
 request identity synchronously, exposed by `getProvider`/`requestToken`/
