@@ -23,7 +23,10 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   `isPostMergeHookEnabled`, `isCodexYoloEnabled`, `isTaskAgentsLatticeMcpOnly`
   (+ its pure `taskAgentsLatticeMcpOnlyIn(settings)` for callers that already
   hold the settings) (all default ON — an absent field counts as `true`) and `isQaTerminalAutoCloseEnabled` (default
-  OFF/stay-open — only explicit `true` opts in), `isTaskAgentTypecheckEnabled`
+  OFF/stay-open — only explicit `true` opts in), `isKeepWorkflowStepTerminalsEnabled`
+  (default OFF — only explicit `true` keeps a finished workflow agent step's
+  pty alive; read by the workflow advance to pick `releaseWorkflowStepSession`
+  over the kill, see `../workflowRuns/CLAUDE.md`), `isTaskAgentTypecheckEnabled`
   / `taskAgentTypecheckIn` (default OFF — see `../taskVerification.ts`),
   `getTaskWorktreeLfsContent` / `taskWorktreeLfsContentIn` (default
   `'pointers'` — anything but an explicit `'full'`, junk included, is pointer

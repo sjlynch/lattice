@@ -31,16 +31,26 @@ label physics in `labelPhysics/CLAUDE.md`.
 
 **Coordinator & chrome (React)**
 - `ForceGraphView.tsx` — the exported component is a **retry shell** (WebGL
-  faults, below) around the coordinator: holds `selected`/`hoverNode`, threads
-  refs through `useGraphOverlays` + `useForceGraphInitialization`, and stays
-  focused on graph lifecycle / scene runtime orchestration. Imperative syncs +
-  keyboard live in focused hooks.
+  faults, below) around the coordinator. The coordinator owns the props,
+  `selected`/`hoverNode`, the shared refs (container, graph, pointer-drag/-outside,
+  ref mirrors) and the JSX, and calls its phases in a fixed order:
+  `hooks/useGraphSceneRuntime` (overlays → init → camera → data sync → tidy
+  layout → batched renderers → drag → agents → worktree rings), then
+  `hooks/useGraphInteraction` (search → context menu → box select → task
+  creation → halos → metrics-ignore refresh → Escape chord → tooltip dismiss),
+  then `useGraphViewChromeModel`. **Hook order and every dependency array are
+  load-bearing** — effect ordering follows call order — and refs are passed
+  through by identity, never copied.
 - `rendererStatus.ts` / `GraphRendererNotice.tsx` — classify initialization
   errors (including WebGL construction failures) and show a notice for them or
   `webglcontextlost`. A construction failure or context-loss event alone
   establishes neither OOM nor a GC defect. Retry **remounts the coordinator
   and its hooks**: re-running init alone would leave hooks wired to the old
-  graph instance. `webglcontextrestored` clears the notice and wakes rendering.
+  graph instance. Every project switch remounts too: `App.tsx` keys
+  `<ForceGraphView>` by `activeFolder`, tearing down and rebuilding renderer,
+  scene and overlays (GPU release: teardown order in
+  [hooks/CLAUDE.md](hooks/CLAUDE.md)). `webglcontextrestored` clears the notice
+  and wakes rendering.
   A browser restart may help, but is neither a guaranteed nor an exclusive
   cure; see the existing
   [browser memory troubleshooting and graph recovery advice](../../../README.md#browser-memory-troubleshooting).
@@ -88,6 +98,26 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `sprites` / `spriteShapes` / `spriteTextures` / `spritePicking` — per-(ext,
   shape,color) `SpriteMaterial` cache, shape geometry, canvas→`CanvasTexture`
   (sets `colorSpace = SRGBColorSpace`), sprite-quad pick bounds.
+- `spriteMaterialCache.ts` — `createSpriteMaterialCache` (`get`/`peek`/
+  `disposeAll`) behind every module-level sprite-material cache;
+  `disposeSharedGraphResources` disposes and empties them all, plus the halo
+  singletons' GPU side, once per graph teardown (see `hooks/CLAUDE.md` for the
+  order). Coverage:
+  [spriteMaterialCache.test.ts](../../__tests__/spriteMaterialCache.test.ts).
+  **Module-level caches survive remounts** (project switch, Retry,
+  error-boundary reset) and are bounded by key, not by graph:
+  - `sprites.materialFor`: one per `styleKey` (extensions, shapes and overlay
+    recolors).
+  - `claudeNodeSprite`'s `materialCache` / `satelliteMaterialCache` and
+    `worktreeRing`'s cache: one material + texture per color. Slots are reused,
+    but `taskColors.ts`'s id-hash fallback for slotless tasks can mean one
+    color per task id.
+  - `changeRingMaterials`: three ring kinds + one ghost. `haloResources`: two
+    singletons (below).
+  Removing a node, a ring or an agent (`AgentOverlay.destroy` included) never
+  drops an entry; graph teardown is their only release. Label-texture caches
+  (`labelsOverlay` / `metricOverlayFactory`) have their own owner, see
+  `labelTexture.ts`.
 - `locOverlay` / `healthOverlay` / `deadCodeOverlay` / `labelsOverlay` — overlay
   configs + per-overlay registries. `deadCodeOverlay` is a pure recolor;
   `labelsOverlay.applyNodeLabelState` is the per-node Alt name-label toggle.
@@ -100,7 +130,14 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `measuredLabelTexture.ts` — lazy shared measuring context + fresh rasterized
   textures. `labelTexture.ts` owns cache keying, refcounts, free-entry eviction
   and texture/paired-material/canvas teardown. A cache miss finishes drawing
-  before eviction/insertion. Ownership coverage:
+  before eviction/insertion. **Cache bounds:** `labelsOverlay.ts` (Alt names)
+  and `metricOverlayFactory.ts` (LOC + health, one shared cache) each keep a
+  module-level cache that survives graph remounts and project switches, capped
+  at `maxEntries: 256` AND `maxFreeBytes: LABEL_TEXTURE_FREE_BYTES_BUDGET`
+  (8 MB of canvas pixels, width×height×4 recorded at draw time) for FREE
+  entries only. Both caps evict the oldest free entry first; in-use entries
+  are never counted or evicted. The agent-label cache sets no byte budget.
+  Ownership coverage:
   [labelTextureCache.test.ts](../../__tests__/labelTextureCache.test.ts).
 - `labelSpriteResources` / `floatingLabelSprite` / `metricOverlayFactory` —
   module-owned shared sprite/connector caches. `labelSpriteResources` holds
@@ -115,8 +152,13 @@ label physics in `labelPhysics/CLAUDE.md`.
 **Sibling-child ring/halo toggles ("the halo pattern")**
 - `haloResources.ts` — owns the lazy ring/glow `CanvasTexture` and
   `SpriteMaterial` singletons. Every node borrows the same two materials and
-  their textures. Once created, they are retained for the module lifetime;
-  there is no halo resource teardown API. Removing a halo must not dispose them.
+  their textures. Once created, the JS objects are retained for the module
+  lifetime. Their GPU side is not: three-forcegraph's `_deallocate` disposes
+  the materials and maps attached to nodes on every `refresh()` and
+  `_destructor`, and three re-uploads them on next use. The only explicit
+  dispose is the teardown-only `disposeHaloResources`, called by
+  `disposeSharedGraphResources` (`spriteMaterialCache.ts`) once per graph
+  teardown; it keeps the singletons. Removing a halo must not dispose them.
 - `halo.ts` — owns selection-glow settings, shared pulse/reset, and per-node
   Group attachment. The Group contains a ring below the body and an additive
   glow above it; removal only detaches the Group. Pulse/reset use
@@ -152,9 +194,11 @@ label physics in `labelPhysics/CLAUDE.md`.
 
 **Agent Presence Layer**
 - `claudeNodeSprite.ts` — `makeClaudeNode` (presence disc+glow) /
-  `makeSatelliteNode` (subagent ring).
+  `makeSatelliteNode` (subagent ring). Their per-color materials are
+  module-level and outlive `AgentOverlay.destroy`; graph teardown releases
+  them (see `spriteMaterialCache.ts` above).
 - `agentOverlay.ts` — thin façade over the APL (`setAgents`/`addActivity`/
-  `addSubagent*`/`tick`/`setSizes`/`isActive`/`destroy`) delegating to siblings
+  `addSubagent*`/`tick`/`reapSatellites`/`setSizes`/`isActive`/`destroy`) delegating to siblings
   `agentOverlay{Context,Constants,Types,PathIndex,Reconcile,Activity,Satellites,
   Beams,BeamMath,Tick,Labels,LabelLayout,Placement}.ts` (pure math tested in
   `src/__tests__`). `hooks/useAgentOverlay.ts` supplies `showSubagentLabels` to
@@ -165,6 +209,11 @@ label physics in `labelPhysics/CLAUDE.md`.
   destroy; inactive overlays may never receive another frame. A remaining sibling
   keeps the index, and the next addition rebuilds it through `ensure`. Coverage:
   [agentOverlayPathIndex.test.ts](../../__tests__/agentOverlayPathIndex.test.ts).
+  For the same reason, releases must not wait for `tick`: the loop is paused
+  for a hidden tab or 0×0 graph while agents keep working. `applyActivity`
+  disposes expired beams before creating one (`disposeExpiredBeams`), and the
+  hook's 30 s timer calls `reapSatellites` directly, then wakes the loop.
+  Coverage: [agentOverlayPausedLoop.test.ts](../../__tests__/agentOverlayPausedLoop.test.ts).
   `agentLabelRects.ts` owns the dependency-free rectangle types and pure
   `spreadLabelRects` packing (labels only slide along their node's side).
   `agentOverlayLabelLayout.ts` is the scene adapter and compatibility re-export;
@@ -233,8 +282,9 @@ label physics in `labelPhysics/CLAUDE.md`.
   `showLinks` (Rendering tab "Show links" checkbox, default on — off returns
   `false` from `useGraphFilter`'s `linkVisibility` and re-captures the batched
   buffer; render-only, the links still drive the layout);
-  "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (neutral/off by
-  default) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
+  "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (defaults 0.014
+  vs d3's 0.0228 and 15 — a wider, pre-settled layout; only `collideRadius` is
+  off at 0) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
   default**); "Rendering" tab selection-glow fields
   `selectionGlowStrength`/`selectionGlowScale` (the pulsing bloom over selected
   nodes — see `halo.ts` + `hooks/useSelectionGlowSettings`).
@@ -244,6 +294,7 @@ label physics in `labelPhysics/CLAUDE.md`.
   (settle contract) and skips Y (pinned by the DAG). Registered by
   `hooks/useGraphSettings`' `useLayoutShapeSettings` (with `alphaDecay`/`warmupTicks`)
   only while `collideRadius > 0`.
+- `linkedCellGrid.ts` — the X/Z grid both forces and `labelPhysics/spatialGrid` share (packed cell keys, pooled buckets, a closure-free `visitNeighbors`/`nextNeighbor` cursor yielding each pair once as j > i in a fixed order); callers own cell rounding + pair math ([linkedCellGrid.test.ts](../../__tests__/linkedCellGrid.test.ts)).
 - `radialTidyLayout.ts` (`computeRadialTidyLayout`/`tidyRingStep`, pure/tested) +
   `hooks/useRadialTidyLayout` — default-on untangler: seeds the containment tree
   in separate angular wedges with an adaptive radius so the engine expands
@@ -262,7 +313,9 @@ label physics in `labelPhysics/CLAUDE.md`.
 
 `hooks/` holds the coordinator's extracted effects (data sync, overlays, hold-key/
 pin lifecycle, search, drag/hover, batched-render controllers, settings
-render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
+render-vs-physics splits, the Escape chord), grouped for the coordinator by the
+two phase hooks `useGraphSceneRuntime` and `useGraphInteraction`. See
+`hooks/CLAUDE.md` → "Coordinator phases".
 
 ## Load-bearing invariants (do not violate)
 
@@ -284,16 +337,33 @@ render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
 - **Label-registry teardown (GPU-buffer-leak guard).** Label/connector resources
   are module-owned + refcount-guarded: balance every `buildMeasuredLabelTexture`
   with a `releaseLabelTexture`; eviction skips in-use (refcount>0) textures and
-  evicts free ones (O(1), via the cache's `free` set) back down to the cap as
-  labels are released after an over-cap burst, even if the overlay stays off
-  and no new texture is built. Eviction/owner teardown also zeroes each owned
-  label canvas's dimensions to release native pixel storage without waiting
-  for GC; free entries retained for reuse and live/shared labels keep their
-  pixels. The repulsion scratch list is reset when an
-  overlay stops so it doesn't pin the last frame's sprites; route
-  every teardown through `clearAllLabelRegistries` (never `.clear()` a registry).
-  Each connector gets its own `clone()`d geometry — the only thing
-  `disposeLabelEntry` frees; `AgentOverlay.destroy` frees the agent-label cache.
+  evicts free ones (O(1), via the cache's `free` set, oldest first) down to both
+  caps. Eviction/owner teardown also zeroes each owned label canvas's dimensions
+  to release native pixel storage without waiting for GC; free entries retained
+  for reuse and live/shared labels keep their pixels. Never zero or dispose an
+  in-use entry. **Release paths:**
+  - **Blanket:** `clearAllLabelRegistries` (`hooks/refresh.ts`; never
+    `.clear()` a registry). `'batched'` mode (`clearLabelsAndRefresh`, and
+    `useGraphDataSync`'s structural swap and `!data` reset) releases refcounts
+    *without evicting*: on-screen labels move to `free` in order and the rebuild
+    re-acquires them, with no new canvases. Misses and single releases don't
+    evict while the batch is open either. Then one deferred trim
+    (`LABEL_TRIM_DELAY_MS`) runs after the library's debounced digest has re-run
+    `nodeThreeObject`. A newer batched clear reschedules it, and a batch that
+    left nothing free schedules none. The default `'teardown'` mode is graph
+    teardown's `clearLabels`: it evicts EVERY free entry, so the module-level
+    caches hold no free canvases after the graph is destroyed.
+  - **Per entry:** single releases trim at once. These are the Alt delta
+    walker's label toggle and the repulsion loop's `onDetached`
+    (`releaseNameLabelEntry` / `releaseMetricLabelEntry` for labels whose node
+    root left the scene; see `labelPhysics/CLAUDE.md`).
+  The library's `_deallocate` disposes each replaced node object's geometry,
+  material and `material.map` on `refresh()` / `graphData()` / `_destructor`,
+  so a re-acquired texture is re-uploaded from its retained canvas. The
+  repulsion scratch list is reset when an overlay stops so it doesn't pin the
+  last frame's sprites. Each connector gets its own `clone()`d geometry — the
+  only thing `disposeLabelEntry` frees (a harmless repeat for library-replaced
+  objects); `AgentOverlay.destroy` frees the agent-label cache.
 - **`dataGeneration` re-capture.** Both batched controllers cache their node/link
   arrays at `rebuild()`. A full `graph.graphData(...)` swap replaces every object
   — including the git-history **ghost merge** that leaves `structuralData`

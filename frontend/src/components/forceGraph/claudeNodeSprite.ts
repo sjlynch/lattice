@@ -3,20 +3,15 @@
 // "not a file" against the file sprites and the blue selection halo.
 //
 // Materials are cached per color string (there are at most a few dozen live
-// agents, and `colorIndex` slots are reused, so the cache stays tiny).
+// agents, and `colorIndex` slots are reused, so the cache stays tiny). Both
+// caches are disposed and emptied on graph teardown (spriteMaterialCache.ts).
 
 import * as THREE from 'three';
-import { finishCanvasTexture, newTextureCanvas } from './canvasTexture';
+import { finishCanvasTexture, newTextureCanvas, rgba } from './canvasTexture';
 import { CLAUDE_NODE_RENDER_ORDER } from './renderOrders';
+import { createSpriteMaterialCache } from './spriteMaterialCache';
 
 const TEX_SIZE = 128;
-
-function rgba(c: THREE.Color, a: number): string {
-  const r = Math.round(c.r * 255);
-  const g = Math.round(c.g * 255);
-  const b = Math.round(c.b * 255);
-  return `rgba(${r}, ${g}, ${b}, ${a})`;
-}
 
 function buildDiscTexture(color: string): THREE.CanvasTexture {
   const { canvas, ctx } = newTextureCanvas(TEX_SIZE);
@@ -66,20 +61,17 @@ function buildDiscTexture(color: string): THREE.CanvasTexture {
   return finishCanvasTexture(canvas);
 }
 
-const materialCache = new Map<string, THREE.SpriteMaterial>();
+const materialCache = createSpriteMaterialCache<string>();
 
 function discMaterial(color: string): THREE.SpriteMaterial {
-  let mat = materialCache.get(color);
-  if (!mat) {
-    mat = new THREE.SpriteMaterial({
+  return materialCache.get(color, () =>
+    new THREE.SpriteMaterial({
       map: buildDiscTexture(color),
       transparent: true,
       depthWrite: false,
       depthTest: false,
-    });
-    materialCache.set(color, mat);
-  }
-  return mat;
+    }),
+  );
 }
 
 export function makeClaudeNode(color: string, size: number): THREE.Sprite {
@@ -128,20 +120,17 @@ function buildSatelliteTexture(color: string): THREE.CanvasTexture {
   return finishCanvasTexture(canvas);
 }
 
-const satelliteMaterialCache = new Map<string, THREE.SpriteMaterial>();
+const satelliteMaterialCache = createSpriteMaterialCache<string>();
 
 function satelliteMaterial(color: string): THREE.SpriteMaterial {
-  let mat = satelliteMaterialCache.get(color);
-  if (!mat) {
-    mat = new THREE.SpriteMaterial({
+  return satelliteMaterialCache.get(color, () =>
+    new THREE.SpriteMaterial({
       map: buildSatelliteTexture(color),
       transparent: true,
       depthWrite: false,
       depthTest: false,
-    });
-    satelliteMaterialCache.set(color, mat);
-  }
-  return mat;
+    }),
+  );
 }
 
 export function makeSatelliteNode(color: string, size: number): THREE.Sprite {

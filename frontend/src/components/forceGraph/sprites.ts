@@ -21,6 +21,7 @@ import type { GraphNode } from '../../api';
 import type { GraphSettings } from './graphSettings';
 import { buildShapeTexture } from './spriteTextures';
 import { NODE_RENDER_ORDER } from './renderOrders';
+import { createSpriteMaterialCache } from './spriteMaterialCache';
 
 export { TEX_SIZE } from './spriteShapes';
 export { buildShapeTexture } from './spriteTextures';
@@ -30,14 +31,13 @@ export { buildShapeTexture } from './spriteTextures';
 // tuple is enumerated by `extensionStyles.ts` plus the
 // per-overlay-color variants minted by `metricOverlayFactory`. In
 // practice the cache caps at ~40 entries across a session and never
-// grows with the file count. No LRU needed.
-const materialCache = new Map<string, THREE.SpriteMaterial>();
+// grows with the file count. No LRU needed. Disposed and emptied on graph
+// teardown (see spriteMaterialCache.ts).
+const materialCache = createSpriteMaterialCache<string>();
 
 export function materialFor(style: ExtStyle): THREE.SpriteMaterial {
-  const key = styleKey(style);
-  let mat = materialCache.get(key);
-  if (!mat) {
-    mat = new THREE.SpriteMaterial({
+  return materialCache.get(styleKey(style), () =>
+    new THREE.SpriteMaterial({
       map: buildShapeTexture(style),
       transparent: true,
       depthWrite: false,
@@ -45,10 +45,8 @@ export function materialFor(style: ExtStyle): THREE.SpriteMaterial {
       // lines, which share the transparent pass and can otherwise paint
       // on top of the billboard depending on camera z-order.
       depthTest: false,
-    });
-    materialCache.set(key, mat);
-  }
-  return mat;
+    }),
+  );
 }
 
 export function spriteFor(node: GraphNode, settings: GraphSettings): THREE.Sprite {

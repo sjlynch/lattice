@@ -3,22 +3,30 @@
 The workflow **Run tests** step (`kind: 'test'`): an **agent** step with a
 fixed brief that runs the project's tests on the main checkout, fixes what it
 can, commits the fixes and reports. The facade's `dispatchStep` routes `'test'`
-to `dispatchRunTestsStep` (never `executeControlStep`); the spawn, hooks,
-`/complete` route and Claude quiescence gate are the agent step's, unchanged
-(`../stepSpawner.ts` takes `opts.runTests`). Covered by
+to `dispatchRunTestsStep` (never `executeControlStep`); the spawn (step dir,
+spawn queue), hooks, `/complete` route and Claude quiescence gate are the agent
+step's, unchanged (`../stepSpawner.ts` takes `opts.runTests`). Covered by
 `__tests__/workflowRunTestsStep.test.ts`.
 
 ## Modules
 
 - `runTestsStep.ts` — the orchestration and public surface. `dispatchRunTestsStep`
-  → `runRunTestsWorker`, which runs its phases in order (`preflightSkipNote` →
-  `acquireWithWait` → `captureStartState` → `buildRunTestsBrief` →
-  `armTimeoutOnSpawn` → `spawnWorkflowStep`); `finalizeRunTestsStep` (from the
+  → detached `runRunTestsWorker`, which runs its phases in order
+  (`preflightSkipNote` → `acquireWithWait` → `captureStartState` →
+  `buildRunTestsBrief` → `armTimeoutOnSpawn` → `spawnWorkflowStep`); `finalizeRunTestsStep` (from the
   advance), `abortRunTestsStep` (cancel / fail), `resumeRunTestsStep` (boot
   readopt), `noteRunTestsStep` (notes from outside the worker). IO goes through
-  `RunTestsDeps` (`setRunTestsDepsForTest`).
-- `runTestsLifecycle.ts` — internal entry tracking, lookups and shared timer /
-  subscription cleanup, separate from full teardown that releases the lock.
+  `RunTestsDeps` (`setRunTestsDepsForTest`), which it hands to the phase
+  modules below. `completeStep` is passed in, as for `executeControlStep`, so
+  nothing here imports the facade.
+- `lockWait.ts` — the lock label, `acquireWithWait` (+ its give-up note) and the
+  timeout (`armTimeoutOnSpawn` / `armTimeout` → kill, note, advance). Reads the
+  deps live through `LockWaitContext`: its waits and timers outlive the call.
+- `startState.ts` — the skip rule (`preflightSkipNote`), `captureStartState`
+  and `buildRunTestsBrief`.
+- `runTestsLifecycle.ts` — internal entry tracking, lookups, the shared
+  `isCurrent` / `progress` helpers and timer / subscription cleanup, separate
+  from full teardown that releases the lock.
 - `brief.ts` — renders `RUN_TESTS.md` from the `run-tests` instruction template
   (`../../instructionTemplates/templates/runTests.ts`); completion wording is
   `renderStepCompletionInstructions` from `../stepMarkdown.ts`.
@@ -46,8 +54,10 @@ to `dispatchRunTestsStep` (never `executeControlStep`); the spawn, hooks,
   `assertMainOnBranch`), or HEAD equal to `lastHead` in `run-tests.json`. An
   unborn / unreadable HEAD runs.
 - **Lock**: the project `run.lock` as `workflow-test:<runId>`, **non-lendable**,
-  held for the whole step (a manual Merge / Merge All gets a 409; resolver
-  finalize / snapshots / out-of-run post-merge hooks wait). A busy lock is
+  held for the whole step: a manual Merge / Merge All gets a 409 naming the
+  step; resolver finalize / snapshots / out-of-run post-merge hooks wait
+  (`withProjectMutation` / `waitForExclusiveProjectHold`); the dev runner defers
+  restarts for any `workflow-*` label without its 15-minute force. A busy lock is
   retried for up to 10 min, then note + skip. Released on **every** exit
   (advance → finalize, cancel / fail → abort) and before the next step
   dispatches. After a restart `resumeRunTestsStep` re-takes it (the dead

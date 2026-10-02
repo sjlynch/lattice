@@ -183,7 +183,7 @@ export type UserSettings = {
   // the full session. Default (absent/false) kills it on advance — the
   // leak/overlap guard in workflowRuns/sessionSpawner.ts. The run advances
   // identically either way; closing the tab ends the session. Cancel/error
-  // still tear sessions down. See workflowRuns.ts advanceCompletedStep.
+  // still tear sessions down. See workflowRuns/advance.ts advanceCompletedStep.
   keepWorkflowStepTerminals?: boolean;
   // Per-project overrides of the agent instruction templates Lattice writes
   // (LATTICE_TASK.md, MERGE_INSTRUCTIONS.md, the QA/push/post-merge/workflow

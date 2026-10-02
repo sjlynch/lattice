@@ -11,7 +11,10 @@ A scan runs through these phases, in order — each produces the input for
 the next:
 
 1. **`ignore.ts`** — `loadGitignore(root)` builds an `ignore` matcher
-   seeded with `IGNORE_DIR_NAMES` and the project's `.gitignore`.
+   that combines `IGNORE_DIR_NAMES`, the root `.gitignore`, and
+   common-gitdir `info/exclude` (`readInfoExclude`; resolved through a linked
+   worktree's `commondir`). `info/exclude` is where Lattice records its own
+   managed files, so the scan honours it as git does.
 2. **`collectSourceTree.ts`** — `collectSourceTree(root, ig)` walks the
    tree gitignore-aware and returns `{files, directories}` (every
    directory crossed, plus every file whose extension is in
@@ -24,8 +27,11 @@ the next:
    in input order for the next two phases.
    - **`readForAnalysis.ts`** — single-file read + LOC count + minified/
      oversize content-drop guard (`isMinifiedForAnalysis`, shared with the
-     watcher). The worker imports this + `analyze.js`; `fileMetrics.ts`
-     re-exports it for back-compat.
+     watcher). Each job carries its stat'd `size`, so a file over
+     `LOC_MAX_BYTES` is never read (the post-read length check stays as a
+     backstop for a file that grew; the watcher's `readFileForAnalysis` does
+     the same with `stat.size`). The worker imports this + `analyze.js`;
+     `fileMetrics.ts` re-exports it for back-compat.
    - **Worker loading/fallback** — `runHealthAnalysis(jobs, {onResult, …})`
      spawns an inline-eval worker that dynamic-imports compiled `analyze.js` +
      `readForAnalysis.js` by URL, without inheriting a TS loader. Under tsx/`src`

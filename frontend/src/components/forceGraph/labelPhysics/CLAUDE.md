@@ -17,9 +17,15 @@ overlapping labels apart (`PUSH_K`, tapering to zero at the requested
 separation). Velocity is integrated with per-frame friction (`FRICTION`) and
 snaps to rest once force + speed stay under threshold for `REST_FRAMES`.
 
-## Per-frame tick (`repelLabels(registry, minDist)`)
+## Per-frame tick (`repelLabels(registry, minDist, onDetached?)`)
 
 1. `cleanupStaleRegistryEntries` — drop entries whose sprite was unparented.
+   For a label whose node root has left the scene (e.g. a hidden-ext digest),
+   it also calls the owning overlay's `onDetached`: `releaseNameLabelEntry` /
+   `releaseMetricLabelEntry`. That drops the label-texture refcount (trimming
+   the cache at once, unless a batched blanket clear's deferred trim is
+   pending) and disposes the entry's connector geometry. This is the per-entry
+   release path beside `clearAllLabelRegistries`.
 2. `ensureCapacity(count)`, then snapshot each label's world XZ + collect
    entries into the shared scratch buffers in one pass.
 3. Seed `fx`/`fz` with the home-spring force (overwrites, so no separate zero).
@@ -48,17 +54,18 @@ snaps to rest once force + speed stay under threshold for `REST_FRAMES`.
   scratch buffers + grid + integration together. If the registry is empty
   after stale-entry cleanup, calls `resetRepulsionScratch()` and returns `true`.
 - `spatialGrid.ts` — uniform grid (cell = `minDist`) + pairwise phase: each
-  label only checks its 3×3 neighbourhood (O(N·k), not O(N²)). Cells are keyed
-  by a packed **integer** `(cx + BIAS) * STRIDE + (cz + BIAS)` so the hot loop
-  allocates no per-cell key strings (collision-free for any real graph; see the
-  render-path perf invariant in the parent `CLAUDE.md`). The build pass stashes
-  each label's integer `(cx, cz)` into `cellX`/`cellZ` for the pairwise pass to
-  reuse. `accumulatePairwiseForces` is a legacy entry kept for the tests.
+  label only checks its 3×3 neighbourhood (O(N·k), not O(N²)). The grid is the
+  shared `../linkedCellGrid.ts` (packed **integer** cell keys, so the hot loop
+  allocates no per-cell key strings; pooled buckets; the build stashes each
+  label's integer `(cx, cz)` for the pairwise pass). This module keeps its own
+  `floor(world / cellSize)` rounding and pair math. `accumulatePairwiseForces`
+  is a legacy entry kept for the tests.
 - `scratchBuffers.ts` — module-level reused typed arrays (`worldX`/`worldZ`/
-  `fx`/`fz`/`cellX`/`cellZ`), the `entries`/`tmpVec` temporaries, the integer-
-  keyed `cellGrid` Map + its recycled `bucketPool`. `ensureCapacity(n)` grows
-  them all in lockstep; the typed arrays are live `let` exports, so consumers
-  must read them fresh after `ensureCapacity` rather than caching the reference.
+  `fx`/`fz`), the `entries`/`tmpVec` temporaries, and the module-level
+  `labelGrid` (a `LinkedCellGrid` owning its cell scratch + recycled bucket
+  pool). `ensureCapacity(n)` grows the typed arrays in lockstep; they are live
+  `let` exports, so consumers must read them fresh after `ensureCapacity`
+  rather than caching the reference.
   `resetRepulsionScratch()` clears `entries` immediately, dropping last-frame
   label/line references while retaining typed-array capacity and grid/bucket
   reuse. Keep these buffers reusable rather than rebuilding arrays each frame.

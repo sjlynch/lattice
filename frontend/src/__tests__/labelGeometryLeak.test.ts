@@ -8,8 +8,11 @@ import { spriteForLoc, locLabelRegistry } from '../components/forceGraph/locOver
 import { spriteForHealth, healthLabelRegistry } from '../components/forceGraph/healthOverlay.ts';
 import { applyNodeLabelState, labelsRegistry } from '../components/forceGraph/labelsOverlay.ts';
 import { clearMetricLabelRegistry } from '../components/forceGraph/metricOverlayFactory.ts';
-import { clearAllLabelRegistries } from '../components/forceGraph/hooks/refresh.ts';
-import { installCanvasDocument } from './domDoubles.ts';
+import {
+  clearAllLabelRegistries,
+  LABEL_TRIM_DELAY_MS,
+} from '../components/forceGraph/hooks/refresh.ts';
+import { installCanvasDocument, installManualTimers } from './domDoubles.ts';
 
 const settings = { ...DEFAULT_SETTINGS, metricLabels: true };
 
@@ -161,4 +164,58 @@ test('metric registry owners balance shared label references across separate cle
   assert.deepEqual(loc.disposals, [1, 1, 1]);
   assert.deepEqual(health.disposals, [1, 1, 1]);
   for (const { disposals } of burst) assert.equal(disposals[0], 1, 'empty clears release no geometry again');
+});
+
+test('a batched clear keeps still-shown name labels for the rebuild, trims once after it, and teardown reclaims the rest', (t) => {
+  const timers = installManualTimers();
+  t.after(() => timers.restore());
+  const { scene, capture } = overlayFixture(t);
+  const nodes = Array.from({ length: 300 }, (_, i) => fileNode(`name-${i}.ts`));
+  const mount = (count: number) => {
+    for (const node of nodes.slice(0, count)) {
+      const root = new THREE.Group();
+      scene.add(root);
+      applyNodeLabelState(root, node, settings, 1, 1, true);
+    }
+  };
+  mount(300);
+  const names = [...labelsRegistry].map(capture);
+  assert.equal(names.length, 300);
+
+  // clearLabelsAndRefresh / the structural swap, ahead of the library digest.
+  clearAllLabelRegistries('batched');
+
+  assert.equal(labelsRegistry.size, 0);
+  for (const { disposals, texture } of names) {
+    assert.deepEqual(disposals, [1, 0, 0], 'only the connector geometry is freed before the rebuild');
+    assert.ok(texture.image.width > 0 && texture.image.height > 0);
+  }
+  assert.equal(timers.scheduled.length, 1, 'one deferred trim');
+  assert.equal(timers.scheduled[0].delay, LABEL_TRIM_DELAY_MS);
+
+  // The digest replaces the node objects; 250 of them still show their label.
+  scene.clear();
+  mount(250);
+  const rebuilt = [...labelsRegistry];
+  assert.equal(rebuilt.length, 250);
+  rebuilt.forEach((entry, i) => {
+    assert.equal(entry.label.material.map, names[i].texture, 'the rebuild re-acquired the cached texture');
+  });
+  for (const { disposals } of names) assert.equal(disposals[1], 0);
+
+  timers.fireAll();
+
+  // 300 cached, 250 in use: the trim evicts the 44 oldest free entries (cap 256).
+  names.forEach(({ disposals }, i) => {
+    assert.equal(disposals[1], i >= 250 && i < 294 ? 1 : 0, `name-${i}.ts`);
+  });
+  assert.equal(timers.scheduled.length, 0);
+
+  // Graph teardown (`clearLabels`): nothing rebuilds, so no free entry stays.
+  clearAllLabelRegistries();
+  for (const { disposals, texture } of names) {
+    assert.deepEqual(disposals.slice(1), [1, 1], 'teardown reclaims every released label once');
+    assert.equal(texture.image.width * texture.image.height, 0);
+  }
+  assert.equal(timers.scheduled.length, 0, 'teardown schedules no trim');
 });

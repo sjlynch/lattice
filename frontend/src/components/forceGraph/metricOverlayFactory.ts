@@ -11,7 +11,12 @@ import {
 import {
   buildMeasuredLabelTexture,
   createLabelTextureCache,
+  deferLabelTextureTrim,
+  LABEL_TEXTURE_FREE_BYTES_BUDGET,
   releaseLabelTexture,
+  settleLabelTextureBatch,
+  trimLabelTextureCache,
+  type LabelRegistryRelease,
   type LabelTextureOptions,
 } from './labelTexture';
 import { materialFor, spriteFor } from './sprites';
@@ -24,6 +29,7 @@ const METRIC_LABEL_TEXTURE_OPTIONS: LabelTextureOptions = {
   padX: 18,
   minWidth: 80,
   maxEntries: 256,
+  maxFreeBytes: LABEL_TEXTURE_FREE_BYTES_BUDGET,
 };
 
 const METRIC_LABEL_HEIGHT_MULT = 2;
@@ -133,12 +139,28 @@ export function createMetricOverlaySpriteFactory(
 // torn down by clearing their registry wholesale (they share
 // `sharedMetricLabelTextureCache`); releasing here keeps the texture refcounts
 // balanced against the build-time increments so freed metric textures stay
-// reclaimable across the constant clear→refresh→rebuild cycles, and disposing
-// each entry's per-line geometry frees the GPU buffer the library leaves
-// orphaned when `graph.refresh()` replaces the node objects.
-export function clearMetricLabelRegistry(registry: Set<FloatingLabelEntry>): void {
+// reclaimable across the constant clear→refresh→rebuild cycles. The geometry
+// dispose duplicates the library's own when `graph.refresh()` / destroy
+// deallocates the replaced node objects (harmless, idempotent). `release` picks
+// how the freed textures are reclaimed — see `LabelRegistryRelease`. Returns
+// true when a 'batched' clear left the shared cache waiting for its deferred
+// trim: the caller must then run `trimMetricLabelTextures()` after the rebuild.
+export function clearMetricLabelRegistry(
+  registry: Set<FloatingLabelEntry>,
+  release: LabelRegistryRelease = 'immediate',
+): boolean {
+  if (release === 'batched') deferLabelTextureTrim(sharedMetricLabelTextureCache);
   for (const entry of registry) releaseMetricLabelEntry(entry);
   registry.clear();
+  if (release === 'teardown') trimLabelTextureCache(sharedMetricLabelTextureCache, 0);
+  return release === 'batched' && settleLabelTextureBatch(sharedMetricLabelTextureCache);
+}
+
+// The single trim that ends a 'batched' clearMetricLabelRegistry (shared by
+// the LOC and health registries), once the rebuild has re-acquired the labels
+// it still shows.
+export function trimMetricLabelTextures(): void {
+  trimLabelTextureCache(sharedMetricLabelTextureCache);
 }
 
 // Per-entry counterpart of `clearMetricLabelRegistry`: the release the

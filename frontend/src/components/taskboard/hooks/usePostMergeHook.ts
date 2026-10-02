@@ -1,10 +1,8 @@
-import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
+import type { AddTerminal } from '../../../terminal/terminalTypes';
 import { usePostMergeHookForm } from './usePostMergeHookForm';
 import { usePostMergeHookRun } from './usePostMergeHookRun';
 
 export type { PostMergeHookFormState } from './usePostMergeHookForm';
-
-type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 
 // Per-project state for the PostMergeHookRow: the persisted prompt/harness
 // form values plus the live active/recent hook run. The component owns

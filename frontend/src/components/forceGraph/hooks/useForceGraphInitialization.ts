@@ -4,6 +4,7 @@ import type { GraphNode } from '../../../api';
 import { attachNodeMotionDriver } from '../nodeMotionDriver';
 import { attachIdleController, createIdleController } from '../idleController';
 import { attachFrameDriver, onFrame } from '../sceneFrameDriver';
+import { disposeSharedGraphResources } from '../spriteMaterialCache';
 import { clearAllLabelRegistries } from './refresh';
 import { initializeForceGraphLifecycle } from './forceGraphInitializationLifecycle';
 import {
@@ -63,6 +64,9 @@ export function useForceGraphInitialization(
       container,
       graphRef,
       clearLabels: clearAllLabelRegistries,
+      // Module-level sprite/ring/halo materials outlive this graph; release
+      // the old renderer's hold on them (see ../spriteMaterialCache).
+      disposeSharedResources: disposeSharedGraphResources,
       onRendererFailure,
       createGraph: () => new ForceGraph3D(container, { controlType: 'orbit' }),
       configureGraph: (graph) => {

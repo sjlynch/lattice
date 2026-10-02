@@ -16,18 +16,36 @@ type SetupStage = 'constructor'
   | typeof registrationStages[number];
 const cleanupOrder = [
   'context-lost', 'context-restored', 'frame-subscription', 'idle', 'resize',
-  'labels', 'graph',
+  'labels', 'graph', 'shared-resources', 'context-loss',
 ] as const;
+// Released for any graph the constructor returned, however far setup got.
+const graphOwnedStages: readonly string[] = [
+  'labels', 'graph', 'shared-resources', 'context-loss',
+];
 type CleanupStage = typeof cleanupOrder[number] | 'container';
+
+type FakeRenderer = { forceContextLoss(): void };
+type FakeGraph = {
+  backgroundColor(): FakeGraph;
+  nodeId(): FakeGraph;
+  _destructor(): void;
+  renderer?: () => FakeRenderer | null;
+};
 
 function fixture({
   failAt,
   cleanupErrors = {},
   children = [],
+  withRenderer = true,
+  withSharedResources = true,
 }: {
   failAt?: SetupStage;
   cleanupErrors?: Partial<Record<CleanupStage, unknown>>;
   children?: string[];
+  // A graph exposing `renderer()` owns a WebGL context ('context-loss').
+  withRenderer?: boolean;
+  // Supplies the optional `disposeSharedResources` lifecycle option.
+  withSharedResources?: boolean;
 } = {}) {
   const failure = new Error(
     failAt === 'constructor' ? 'Error creating WebGL context.' : `failed at ${failAt}`,
@@ -52,7 +70,15 @@ function fixture({
     acquired.push(stage);
     return () => release(stage);
   };
-  const graph = {
+  let destroyed = false;
+  let rendererCalls = 0;
+  const webglRenderer: FakeRenderer = {
+    forceContextLoss() {
+      assert.equal(this, webglRenderer);
+      release('context-loss');
+    },
+  };
+  const graph: FakeGraph = {
     backgroundColor() {
       step('background');
       return this;
@@ -64,10 +90,19 @@ function fixture({
     _destructor() {
       // The real library destructor is a method; keep its receiver intact.
       assert.equal(this, graph);
+      destroyed = true;
       children.length = 0;
       release('graph');
     },
   };
+  if (withRenderer) {
+    graph.renderer = () => {
+      rendererCalls++;
+      // Library state may be gone after the destructor, so teardown must
+      // capture the renderer before destroying the graph.
+      return destroyed ? null : webglRenderer;
+    };
+  }
   const graphRef: { current: typeof graph | null } = { current: null };
   const options: Parameters<typeof initializeForceGraphLifecycle<typeof graph>>[0] = {
     container: {
@@ -83,6 +118,7 @@ function fixture({
       children.push('canvas', 'nav');
       step('constructor');
       active.add('graph');
+      if (withRenderer) active.add('context-loss');
       return graph;
     },
     configureGraph(instance) {
@@ -116,14 +152,27 @@ function fixture({
       reports.push(error);
     },
   };
-  return { options, graph, graphRef, failure, setup, cleanup, active, acquired, children, reports };
+  if (withSharedResources) {
+    options.disposeSharedResources = () => release('shared-resources');
+  }
+  return {
+    options, graph, graphRef, failure, setup, cleanup, active, acquired, children, reports,
+    rendererCalls: () => rendererCalls,
+  };
 }
+
+const count = (stages: readonly string[], stage: CleanupStage) =>
+  stages.filter((s) => s === stage).length;
 
 for (const failAt of configurationStages) {
   test(`failure at ${failAt} destroys the captured instance once and clears ref/DOM`, () => {
     const f = fixture({ failAt });
     assert.equal(initializeForceGraphLifecycle(f.options), undefined);
-    assert.deepEqual(f.cleanup, ['labels', 'graph', 'container']);
+    // The graph exists, so its rollback also disposes shared resources and
+    // loses the WebGL context.
+    assert.deepEqual(f.cleanup, [
+      'labels', 'graph', 'shared-resources', 'context-loss', 'container',
+    ]);
     assert.equal(f.active.size, 0);
     assert.equal(f.graphRef.current, null);
     assert.deepEqual(f.children, []);
@@ -136,7 +185,7 @@ for (const failAt of registrationStages) {
     const f = fixture({ failAt });
     assert.equal(initializeForceGraphLifecycle(f.options), undefined);
     const expected = cleanupOrder.filter((stage) =>
-      stage === 'labels' || stage === 'graph' || f.acquired.includes(stage),
+      graphOwnedStages.includes(stage) || f.acquired.includes(stage),
     );
     assert.deepEqual(f.cleanup, [...expected, 'container']);
     assert.equal(f.active.size, 0);
@@ -152,7 +201,7 @@ test('normal unmount keeps setup/teardown order and destructor ownership is exac
   assert.equal(typeof unmount, 'function');
   assert.deepEqual(f.setup, ['constructor', ...configurationStages, ...registrationStages]);
   assert.equal(f.graphRef.current, f.graph);
-  assert.equal(f.active.size, 6);
+  assert.equal(f.active.size, 7);
   assert.deepEqual(f.children, ['canvas', 'nav']);
   assert.deepEqual(f.cleanup, []);
   assert.deepEqual(f.reports, []);
@@ -170,6 +219,7 @@ test('constructor refusal reports the existing recoverable failure without destr
   assert.equal(initializeForceGraphLifecycle(f.options), undefined);
   assert.deepEqual(f.setup, ['constructor']);
   assert.deepEqual(f.cleanup, ['container']);
+  assert.equal(f.rendererCalls(), 0, 'no renderer to capture or lose');
   assert.deepEqual(f.reports, [f.failure]);
   assert.deepEqual(describeRendererFailure(f.reports[0]), {
     kind: 'unavailable',
@@ -186,7 +236,8 @@ test('cleanup faults cannot suppress later cleanup or the original setup failure
   });
   assert.equal(initializeForceGraphLifecycle(f.options), undefined);
   assert.deepEqual(f.cleanup, [
-    'context-lost', 'frame-subscription', 'idle', 'resize', 'labels', 'graph', 'container',
+    'context-lost', 'frame-subscription', 'idle', 'resize', 'labels', 'graph',
+    'shared-resources', 'context-loss', 'container',
   ]);
   assert.equal(f.active.size, 0);
   assert.deepEqual(f.reports, [f.failure]);
@@ -233,4 +284,106 @@ test('a fresh mount after failure owns a new instance independently', () => {
   unmount();
   assert.equal(failed.cleanup.filter((stage) => stage === 'graph').length, 1);
   assert.equal(retry.cleanup.filter((stage) => stage === 'graph').length, 1);
+});
+
+test('normal unmount loses the WebGL context once, after the destructor and shared resources', () => {
+  const f = fixture();
+  const unmount = initializeForceGraphLifecycle(f.options)!;
+  unmount();
+  unmount();
+  // The fake renderer reads null once destroyed, so losing its context proves
+  // it was captured before the destructor ran.
+  assert.deepEqual(f.cleanup.slice(-3), ['graph', 'shared-resources', 'context-loss']);
+  assert.equal(count(f.cleanup, 'context-loss'), 1);
+  assert.equal(count(f.cleanup, 'shared-resources'), 1);
+  assert.equal(f.rendererCalls(), 1);
+  assert.equal(f.active.size, 0);
+});
+
+test('a throwing destructor still disposes shared resources and loses the context', () => {
+  const destructorError = new Error('destructor failed');
+  const f = fixture({ cleanupErrors: { graph: destructorError } });
+  const unmount = initializeForceGraphLifecycle(f.options)!;
+  assert.throws(unmount, (error) => error === destructorError);
+  assert.doesNotThrow(unmount);
+  assert.deepEqual(f.cleanup, cleanupOrder);
+  assert.equal(count(f.cleanup, 'shared-resources'), 1);
+  assert.equal(count(f.cleanup, 'context-loss'), 1);
+  assert.equal(f.active.size, 0);
+  assert.equal(f.graphRef.current, null);
+});
+
+test('a throwing forceContextLoss neither skips clearing graphRef nor masks an earlier error', () => {
+  const firstError = new Error('context listener cleanup failed');
+  const lossError = new Error('forceContextLoss failed');
+  const f = fixture({
+    cleanupErrors: { 'context-lost': firstError, 'context-loss': lossError },
+  });
+  const unmount = initializeForceGraphLifecycle(f.options)!;
+  assert.throws(unmount, (error) => error === firstError);
+  assert.deepEqual(f.cleanup, cleanupOrder);
+  assert.equal(f.graphRef.current, null);
+
+  // Alone, its error is the one normal unmount propagates.
+  const alone = fixture({ cleanupErrors: { 'context-loss': lossError } });
+  assert.throws(initializeForceGraphLifecycle(alone.options)!, (error) => error === lossError);
+  assert.deepEqual(alone.cleanup, cleanupOrder);
+  assert.equal(alone.graphRef.current, null);
+
+  // On failed setup it cannot replace the original report or skip the container.
+  const failed = fixture({ failAt: 'renderer', cleanupErrors: { 'context-loss': lossError } });
+  assert.equal(initializeForceGraphLifecycle(failed.options), undefined);
+  assert.deepEqual(failed.cleanup.slice(-2), ['context-loss', 'container']);
+  assert.deepEqual(failed.children, []);
+  assert.deepEqual(failed.reports, [failed.failure]);
+});
+
+test('a throwing shared-resource dispose cannot skip the context loss', () => {
+  const sharedError = new Error('shared dispose failed');
+  const f = fixture({ cleanupErrors: { 'shared-resources': sharedError } });
+  const unmount = initializeForceGraphLifecycle(f.options)!;
+  assert.throws(unmount, (error) => error === sharedError);
+  assert.deepEqual(f.cleanup, cleanupOrder);
+  assert.equal(f.active.size, 0);
+  assert.equal(f.graphRef.current, null);
+});
+
+test('without a renderer or shared-resource option, teardown is unchanged', () => {
+  const f = fixture({ withRenderer: false, withSharedResources: false });
+  const unmount = initializeForceGraphLifecycle(f.options)!;
+  assert.equal(f.active.size, 6);
+  unmount();
+  assert.deepEqual(f.cleanup, [
+    'context-lost', 'context-restored', 'frame-subscription', 'idle', 'resize',
+    'labels', 'graph',
+  ]);
+  assert.equal(f.active.size, 0);
+  assert.equal(f.graphRef.current, null);
+
+  const failed = fixture({ failAt: 'camera', withRenderer: false, withSharedResources: false });
+  assert.equal(initializeForceGraphLifecycle(failed.options), undefined);
+  assert.deepEqual(failed.cleanup, ['labels', 'graph', 'container']);
+  assert.deepEqual(failed.reports, [failed.failure]);
+});
+
+test('shared resources are disposed once per graph teardown, never for a refused constructor', () => {
+  const refused = fixture({ failAt: 'constructor' });
+  initializeForceGraphLifecycle(refused.options);
+  assert.equal(count(refused.cleanup, 'shared-resources'), 0);
+
+  const failed = fixture({ failAt: 'frame-driver' });
+  initializeForceGraphLifecycle(failed.options);
+  assert.equal(count(failed.cleanup, 'shared-resources'), 1);
+
+  // A project switch: the old graph's cleanup runs before the new one mounts.
+  const first = fixture();
+  const second = fixture();
+  const unmountFirst = initializeForceGraphLifecycle(first.options)!;
+  unmountFirst();
+  const unmountSecond = initializeForceGraphLifecycle(second.options)!;
+  assert.equal(count(second.cleanup, 'shared-resources'), 0, 'mounting never disposes');
+  unmountSecond();
+  unmountFirst();
+  assert.equal(count(first.cleanup, 'shared-resources'), 1);
+  assert.equal(count(second.cleanup, 'shared-resources'), 1);
 });

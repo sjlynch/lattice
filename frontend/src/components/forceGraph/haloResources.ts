@@ -130,3 +130,16 @@ export function peekRingMaterial(): THREE.SpriteMaterial | null {
 export function peekGlowMaterial(): THREE.SpriteMaterial | null {
   return _glowMaterial;
 }
+
+// Graph-teardown only, via `disposeSharedGraphResources` (spriteMaterialCache):
+// releases the old renderer's GPU side of whichever singletons exist, so its
+// `dispose` listeners stop pinning that context. The JS objects and canvases
+// stay for the module lifetime (identity, pulse tint and laziness unchanged);
+// the next renderer re-uploads them on first use. Removing a halo never calls
+// this.
+export function disposeHaloResources(): void {
+  _ringTexture?.dispose();
+  _ringMaterial?.dispose();
+  _glowTexture?.dispose();
+  _glowMaterial?.dispose();
+}
