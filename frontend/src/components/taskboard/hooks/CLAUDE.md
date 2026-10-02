@@ -9,7 +9,7 @@ consumed via composers (`useTaskBoardController`, `useTaskBoardState`,
 
 ## State / data-sync
 
-- `useTaskList.ts` — per-folder task list: initial fetch + live `/ws/tasks` subscription, structural sharing so unchanged cards skip re-render, and the shared error-toast slot (`showError`). Its returned list is project-guarded: on folder switch it reports `[]` until the new folder's fetch/WS snapshot arrives, so stale task IDs are never rendered/actionable under the next project.
+- `useTaskList.ts` — per-folder task list: initial fetch + live `/ws/tasks` subscription, structural sharing so unchanged cards skip re-render, and the shared error-toast slot (`showError`). Its returned list is project-guarded: on folder switch it reports `[]` until the new folder's fetch/WS snapshot arrives, so stale task IDs are never rendered/actionable under the next project. A `partial` `/ws/tasks` update (the in-progress-only replay a late joiner gets) is ignored entirely — it neither replaces the board nor counts as live state that would drop the HTTP fetch (`__tests__/taskListPartialReplay.test.ts`).
 - `useTaskBoardController.ts` — top-level taskboard controller: composes the concern hooks below and derives only cross-concern handlers (slot-drop wrappers, bulk strips, terminal focus). Keep new cross-concern wiring here so `TaskBoardLauncher.tsx` stays mostly panel chrome.
 - `useTaskBoardDataView.ts` — data/view slice: lane visibility, task list + grouping, search filtering, selection (over the *filtered* grouping, so shift-ranges skip cards the search hides), display sorting, and drag affordances.
 - `useTaskBoardDetailActions.ts` — detail/editing slice: viewed task sync, new-task overlay lane, and the callbacks that adapt CRUD/run actions to the viewed task.

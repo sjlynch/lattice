@@ -70,8 +70,9 @@ test('persisted merge-runs are capped to the newest 50 settled runs plus every r
     assert.ok(ids.has('run_running_oldest'), 'a running run is always persisted');
     for (let i = 0; i < 10; i += 1) assert.ok(!ids.has(`run_${i}`), `oldest settled run_${i} is dropped`);
     for (let i = 10; i < 60; i += 1) assert.ok(ids.has(`run_${i}`), `run_${i} is kept`);
-    assert.equal(state.runs.size, 61, 'the in-memory map is not trimmed');
-    assert.equal(state.getRun('run_0')?.status, 'completed');
+    assert.equal(state.runs.size, 51, 'the in-memory map is trimmed to the persisted set');
+    assert.equal(state.getRun('run_0'), null);
+    assert.equal(state.getRun('run_running_oldest')?.status, 'running');
   });
 });
 

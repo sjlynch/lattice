@@ -29,7 +29,8 @@ command lines.)
 Claude/Codex resolve config in the backend and APPLY it in the terminal-server
 (wire data). Pi's config is **cwd-local files** the adapter auto-discovers, so
 the **backend writes them at the spawn chokepoint** (`applyPiMcpForSpawn`, called
-from `terminalServerClient/createSession.resolveHarnessSpawnBody`) — the files
+from `resolvePiSpawn` in `terminalServerClient/spawnPi.ts`, which the chokepoint
+`resolveHarnessSpawnBody` in `spawnBody.ts` dispatches a Pi command to) — the files
 must exist in the session cwd before Pi starts, and the backend has fs access +
 knows the cwd. Two files per Lattice Pi session cwd with ≥1 enabled server:
 

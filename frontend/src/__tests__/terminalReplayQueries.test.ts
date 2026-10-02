@@ -1,17 +1,19 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { Terminal } from '@xterm/xterm';
-import { createTerminalOutput } from '../components/terminal/terminalOutput.ts';
+import { MAX_PENDING_OUTPUT_CHARS, createTerminalOutput } from '../components/terminal/terminalOutput.ts';
 import { handleTerminalMessage } from '../components/terminal/terminalSocket.ts';
 
 // Old startup DA/color queries in scrollback used to generate fresh onData
 // replies on every attach. Codex displayed those late replies in its prompt.
 // Control asynchronous parsing explicitly: history guards must survive until
 // xterm's write callback, without suppressing live queries or user input.
-function fixture() {
+function fixture(onOverflow?: () => void) {
   type Callback = (...args: unknown[]) => boolean;
   const callbacks = new Map<string, Callback>();
   const writes: { data: string; done: () => void }[] = [];
+  // write/clear order as xterm saw it.
+  const events: string[] = [];
   let disposed = 0;
   const register = (id: string, callback: Callback) => {
     callbacks.set(id, callback);
@@ -24,12 +26,15 @@ function fixture() {
       registerDcsHandler: (id: object, callback: Callback) => register(`dcs:${JSON.stringify(id)}`, callback),
       registerOscHandler: (id: number, callback: Callback) => register(`osc:${id}`, callback),
     },
-    write: (data: string, done: () => void) => writes.push({ data, done }),
-    clear() {},
+    write: (data: string, done: () => void) => {
+      events.push(`write:${data}`);
+      writes.push({ data, done });
+    },
+    clear: () => events.push('clear'),
   } as unknown as Terminal;
-  const output = createTerminalOutput(term);
+  const output = createTerminalOutput(term, onOverflow);
   const consume = (id: string, ...args: unknown[]) => callbacks.get(id)!(...args);
-  return { term, output, writes, consume, get disposed() { return disposed; } };
+  return { term, output, writes, events, consume, get disposed() { return disposed; } };
 }
 
 test('legacy history blocks DA/color replies until parsed, while live output waits and then answers normally', () => {
@@ -69,4 +74,45 @@ test('empty replay boundaries preserve the first live query and reattach restore
   h.writes[2].done();
   assert.equal(h.writes.length, 3, 'teardown releases pending writes without sending them to a disposed terminal');
   assert.ok(h.disposed >= 10, 'all parser listeners are disposed');
+});
+
+// A hidden browser tab throttles xterm's parse timers while ws.onmessage keeps
+// firing, so a busy pane's queue grew without limit and crashed the tab.
+test('a pane more than the cap behind drops its backlog once and keeps flowing', () => {
+  let overflows = 0;
+  const h = fixture(() => { overflows++; });
+  h.output.write('in flight', false);
+  h.output.write('x'.repeat(MAX_PENDING_OUTPUT_CHARS), false);
+  assert.equal(overflows, 0, 'a backlog of exactly the cap is kept');
+  h.output.write('y', false);
+  assert.equal(overflows, 1);
+  h.writes[0].done();
+  assert.equal(h.writes.length, 1, 'the dropped backlog never reaches xterm');
+  h.output.write('after', false);
+  h.output.write('more', false);
+  assert.equal(h.writes[1].data, 'after');
+  h.writes[1].done();
+  assert.equal(h.writes[2].data, 'more');
+  h.writes[2].done();
+  assert.equal(overflows, 1, 'the counter restarts after a drop');
+  h.output.dispose();
+});
+
+test('a reattach drops stale queued output and clears only after the chunk xterm is parsing', () => {
+  const h = fixture();
+  const handlers = { term: h.term, output: h.output, onAttached() {}, onServerId() {}, onTerminated() {} };
+  h.output.write('parsing', false);
+  h.output.write('stale 1', false);
+  h.output.write('stale 2', false);
+  handleTerminalMessage(JSON.stringify({ type: 'attached', id: 'same-session' }), handlers);
+  handleTerminalMessage(JSON.stringify({ type: 'data', data: 'history\x1b[c', replayed: true }), handlers);
+  assert.deepEqual(h.events, ['write:parsing'], 'the clear waits for the in-flight chunk');
+  h.writes[0].done();
+  assert.deepEqual(h.events, ['write:parsing', 'clear', 'write:history\x1b[c'], 'stale output is never parsed');
+  assert.equal(h.consume('csi:{"final":"c"}', [0]), true, 'replay still consumes history queries');
+  h.writes[1].done();
+  handleTerminalMessage(JSON.stringify({ type: 'data', data: 'live' }), handlers);
+  assert.deepEqual(h.events.slice(3), ['write:live']);
+  h.writes[2].done();
+  h.output.dispose();
 });

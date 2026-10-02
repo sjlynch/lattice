@@ -44,8 +44,12 @@ here instead of bloating the parent file.
   persistent run maps, notify/subscribe fan-out, active-run lookup/cancel, and
   delegation to snapshot/normalization/waiter helpers. `merge-runs.json` is
   rewritten on every event, so `syncProjectFromRunMap` persists only the newest
-  `MAX_PERSISTED_RUNS_PER_PROJECT` (50) settled runs plus every running one
-  (the in-memory map is not trimmed). Two rules keep the
+  `MAX_PERSISTED_RUNS_PER_PROJECT` (50) settled runs plus every running one,
+  and trims the in-memory map to the same set (`pruneSettledRuns` — never a
+  `running` run, nor one a live worker or parked resolver waiter references).
+  A run looked up by an id no longer in the map has settled: by-id waiters
+  (`waitForMergeRunFinished` in `../workflowRuns/controlSteps/merge.ts`) must
+  treat `null` as finished, never as still running. Two rules keep the
   "one active run per project" gate from turning into a permanent wedge:
   - **The in-memory run object is authoritative; `loadProject` may only ADD
     ids it doesn't already have.** The persisted cache holds *snapshots*

@@ -7,22 +7,28 @@ conflict resolver) and repairs the Claude Stop hook before a resolver spawns.
 
 The `LATTICE_TASK.md` and `MERGE_INSTRUCTIONS.md` bodies are now **editable
 templates**: their default markdown + `{{token}}` set live in
-`../../instructionTemplates/defs.ts`, and `renderTaskMarkdown` /
-`renderMergeInstructions` take the resolved (override-or-default) template as
-their last argument and `applyTemplate` the computed token values. The spawn
-caller does the `resolveInstructionTemplate(project, id)`. See
-`backend/src/instructionTemplates/CLAUDE.md`.
+`../../instructionTemplates/defs.ts`. `renderTaskMarkdown` /
+`renderMergeInstructions` take the resolved (override-or-default) `template`
+followed by a `typecheck` flag (`taskAgentTypecheck`) and `applyTemplate` the
+computed token values, including the `{{verification}}` block from
+`renderVerificationBlock(typecheck)` (`../../taskVerification.ts`). Who
+resolves differs: for the task brief, `../setupFiles.ts` calls
+`resolveInstructionTemplate(project, 'task')` and `isTaskAgentTypecheckEnabled`
+before rendering; `writeMergeInstructions` resolves the merge template and the
+flag itself. See `backend/src/instructionTemplates/CLAUDE.md`.
 
 ## Modules
 
 - `taskPrompt.ts` — `renderTaskMarkdown(task, backendOrigin, harness, envNotes,
-  deadCode, template)`: builds the `LATTICE_TASK.md` body. **Returns the
-  string** — the caller (`worktree/setupFiles.ts`) writes it into the worktree
-  root.
+  deadCode, template, typecheck)`: builds the `LATTICE_TASK.md` body. **Returns
+  the string** — the caller (`worktree/setupFiles.ts`) writes it into the
+  worktree root.
   Prepends the env-notes blockquote, then an optional dead-code block.
-- `mergePrompt.ts` — `writeMergeInstructions(...)`: **writes**
-  `MERGE_INSTRUCTIONS.md` *inside the worktree* (the resolver Claude runs with
-  `cwd = worktreePath`) and returns its path.
+- `mergePrompt.ts` — `writeMergeInstructions(...)`: resolves the merge template
+  and typecheck flag, renders via the pure `renderMergeInstructions(task,
+  branch, conflictedFiles, backendOrigin, envBlock, template, typecheck)`, then
+  **writes** `MERGE_INSTRUCTIONS.md` *inside the worktree* (the resolver Claude
+  runs with `cwd = worktreePath`) and returns its path.
 - `stashPrompt.ts` — `writeStashResolveInstructions` (per-task) +
   `writeRunStashResolveInstructions` (per merge-run): **write**
   `STASH_CONFLICT_*.md` at the *repo root*, not the worktree — a stash/snapshot

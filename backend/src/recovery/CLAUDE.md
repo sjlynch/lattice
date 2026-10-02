@@ -28,7 +28,10 @@ Boot-time crash recovery for project/task state. `../recovery.ts` is only the st
    - Reads each project's `~/.lattice/per-project/<hash>/workflow-runs.json` mirror (`workflowRuns/persistence.ts`) and applies `classifyWorkflowRunResume` per run:
      - an **agent** step whose pty is still alive in the detached terminal-server is re-adopted (record restored + pty re-attached via `adoptWorkflowStepSession` + presence node re-registered), so the agent's pending `/complete` advances the run as if nothing happened;
      - a **control** step (start/merge/push) died with the process and is re-dispatched (they are re-runnable, same property `resumeInterruptedMergeRuns` relies on);
-     - an agent step whose pty is gone is marked **errored** rather than left hanging.
+     - a `pending` agent step (queued, or still in its pre-run scan — no terminal was ever requested) is **re-dispatched**, whatever the probe says, unless a session is positively alive;
+     - a step checkpointed `completing` **completes** (its advance finishes without replaying the prompt);
+     - a lost **Run tests** terminal **advances** (`advancePastLostTestStep` notes it on the step summary — Run tests never stops the workflow);
+     - any other agent step whose pty is gone is marked **errored** rather than left hanging.
    - One terminal-server probe per sweep; `null` ("couldn't ask") re-adopts, so a wedged terminal-server can't mass-error healthy runs.
    - Parallel groups register every surviving member before readiness, then
      classify each member independently. Pending members redispatch with a
@@ -37,7 +40,7 @@ Boot-time crash recovery for project/task state. `../recovery.ts` is only the st
      Every member's held Stop re-arms its own gate. An all-completed checkpoint
      finishes the group join without requiring a live terminal.
    - A re-adopted step's quiescence state is marked `markAgentReadopted` (at registration, before callbacks are released): its live-subagent tracking died with the old process, so its Stop-hook gate needs `READOPTED_SETTLE_MS` (2 min) of silence instead of a few seconds — see `agentQuiescence.ts`; any other outcome drops the mark.
-   - A step whose Stop the dead process was still holding in its gate (`run.stopReceived` for the current step) has that gate re-armed here, with the quiet window counted from the Stop — the hook already got its 200 and the idle agent will never Stop again (3a does the same for a post-merge hook's `stopReceivedAt`).
+   - A step whose Stop the dead process was still holding in its gate (`run.stopReceived` for the current step) has that gate re-armed here (`markAgentReadopted` in `agentQuiescence.ts`). The quiet window counts from **boot** if the gate was busy at its last checkpoint (`stopReceived.busy` — downtime is not silence), otherwise from the later of the Stop (`stopReceived.at`) and `stopReceived.activeAt` — the hook already got its 200 and the idle agent will never Stop again (3a does the same for a post-merge hook's `stopReceivedAt`).
    - A re-dispatched **Push** step re-attaches to its still-live push session (3a re-adopted it) rather than spawning a second push.
    - Ordering is load-bearing: a resumed workflow owns its project's merge pipeline through its own Merge step, so step 5 skips any project with an active workflow run.
    - The sweep settles per run once its dispatch decision is applied — a re-dispatched (or `complete`-advanced) agent step counts as dispatched when it reaches its pre-run (`waitForStepPreRunBegin`, `workflowRuns/stepTools.ts`), so an Opengrep scan of several minutes carries on detached instead of holding the merge-run resume, owed post-merge hooks and outbox replay behind it.
