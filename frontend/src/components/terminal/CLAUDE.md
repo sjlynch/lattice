@@ -21,7 +21,14 @@ CLAUDE.md) — different directory, don't conflate.
 - `terminalWebgl.ts` — add-on ownership helpers used by the active-WebGL hook.
   Publish the ref only after successful activation, and best-effort dispose
   failed attempts: xterm registers an add-on before `activate` can throw.
-  The injected factory allows lifecycle regression tests without a GPU.
+  **Every dispose (deactivate, unmount, context loss, failed activation) goes
+  through `disposeTerminalWebgl`/its internal release**: xterm's dispose only
+  detaches the canvases, so the GL context and backing stores lingered until a
+  major GC (a Chrome OOM tab crash, and contexts toward the cap). The canvases
+  that appeared under `term.element` during `loadAddon` are recorded, then after
+  dispose each gets `WEBGL_lose_context.loseContext()`, width/height 0 and
+  `remove()`. The injected factory and canvas lister allow lifecycle regression
+  tests without a GPU or DOM.
 - `useTerminalConnection.ts` — the `/ws/terminal` WebSocket wiring: React refs,
   effect lifecycle, WebSocket construction, xterm input/resize forwarding, and
   message dispatch. The reconnect state machine is delegated to
