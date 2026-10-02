@@ -16,16 +16,9 @@ one that owns what you're touching before changing it.
 - `<project>/.lattice/` — per-project scratch (gitignored): `workflow-steps/`, `workflows.json`, `userSettings.json`, `health-cache.json`. **No longer holds worktrees, push-run scratch or tasks** — all moved to home-scoped paths below.
 
 Home-scoped state (`<hash>` = `projectHash(projectPath)` from
-`backend/src/projectPath.ts`):
-
-Physical identity uses `realpath` for existing directories; `projectHash`
-delegates to `projectIdentity.ts`/`projectStorageHash` to preserve and durably
-bind legacy storage keys. Projects without a binding or legacy store use
-`sha1(physicalPath)[:12]`; existing bindings are authoritative. Use the shared
-path/storage helpers: never recompute hashes, rename stores, or derive a second
-lock/worktree directory from a new path spelling. See
-[PROJECT_IDENTITY.md](backend/src/PROJECT_IDENTITY.md) and
-[projectIdentity/CLAUDE.md](backend/src/projectIdentity/CLAUDE.md).
+`backend/src/projectPath.ts`). Use the shared path/storage helpers: never
+recompute hashes, rename stores, or derive a second lock/worktree dir from a new
+path spelling ([PROJECT_IDENTITY.md](backend/src/PROJECT_IDENTITY.md)):
 
 - `~/.lattice/projects.json` — global index of projects with Lattice tasks.
 - `~/.lattice/per-project/<hash>/tasks.json` — task DB. Moved out of `<project>/.lattice/` after the 2026-05-09 catastrophic-deletion incident; legacy in-project files auto-migrate on first read. `run.lock` beside it is the cross-process per-project merge lock (`backend/src/projectRunLock/`).
@@ -34,8 +27,8 @@ lock/worktree directory from a new path spelling. See
 - `~/.lattice/per-project/<hash>/{workflow-runs,push-runs,qa-runs,post-merge-hooks}.json` — mirrors of RUNNING one-off/workflow runs, re-adopted at boot (`recovery/workflowRunResume.ts`, `recovery/oneOffRunResume.ts`).
 - `~/.lattice/per-project/<hash>/opengrep/` — stored Opengrep scans (last 10).
 - `~/.lattice/worktrees/<hash>/<slug>-<id>/` — per-task worktree checkout. **Outside the project tree on purpose** (2026-05-10): nesting them in `<repo>/.lattice/` caused three `.git`-deletion incidents. Only the `worktrees/<name>/gitdir` pointer lives in `<repo>/.git`.
-- `~/.lattice/snapshots/<hash>/<ts>-<label>/` — copy-based working-tree snapshots (replace `git stash --include-untracked`, which silently lost data); orphans restored at boot. Also holds `*-discarded-worktree-*` **archives** of a force-removed worktree's uncommitted edits — keep-for-the-user, never auto-restored, newest 20 kept; if archiving fails the worktree is not removed. See `backend/src/worktree/snapshot/CLAUDE.md`.
-- `~/.lattice/git-backups/<hash>/<ts>.bundle` — `git bundle --all` before each merge run (≤5, ≤8 GB per project). Last-resort recovery: `git fetch <bundle>`.
+- `~/.lattice/snapshots/<hash>/<ts>-<label>/` — copy-based working-tree snapshots (replace `git stash --include-untracked`, which silently lost data); orphans restored at boot. Also holds `*-discarded-worktree-*` **archives** of a force-removed worktree's uncommitted edits — keep-for-the-user, never auto-restored, newest 20 plus any under 7 days kept; if archiving fails the worktree is not removed. See `backend/src/worktree/snapshot/CLAUDE.md`.
+- `~/.lattice/git-backups/<hash>/<ts>.bundle` — `git bundle --all` before a merge run (one under 10 min old is reused; skipped when disk is short; ≤5, ≤8 GB per project — `backend/src/worktree/CLAUDE.md`). Last-resort recovery: `git fetch <bundle>`.
 - `~/.lattice/logs/` — crash forensics. **Check here first when something died** (the backend's console belongs to the user's terminal; the terminal-server runs `stdio: 'ignore'`): `crash-*.log`, `report.*.json` (JS-heap OOM / V8 fatal only — absence ≠ no crash), `live-*.log`, `crash-*-nojs.log` (the only record of a death that ran no JS: native fault, OS OOM-kill, `taskkill /F`), `dev-runner.log` (exit codes, Windows faults decoded). See `backend/src/CLAUDE.md`.
 - `~/.lattice/globalSettings.json` — machine-global settings (`backend/src/globalSettings/`); `~/.lattice/mcpSecrets.json` (`0600`) — MCP secrets; `~/.lattice/piManagedProviders.json` — Pi providers Lattice owns in `~/.pi/agent/models.json`.
 - `~/.lattice/bin/lattice-callback.cjs` + `~/.lattice/callback-outbox/` — durable completion callbacks: every Stop hook records, POSTs with retries, and the backend replays whatever was undelivered while it restarted (`backend/src/callbackOutbox/`).
@@ -192,7 +185,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | POST | `/api/opengrep/install` | Start the managed engine install (`202`, user-clicked only) |
 | POST | `/api/opengrep/rules/install` | `{packId}` fetch/update a rule pack (**409** while a scan runs) |
 | DELETE | `/api/opengrep/rules/:packId` | Remove a rule pack (**409** while a scan runs) |
-| POST | `/api/opengrep/scan` | `{project, targets?, includeMarkdown?}` run a scan (**409** `busy`/`not-installed`/`no-rules`, **400** `bad-target`) |
+| POST | `/api/opengrep/scan` | `{project, targets?, includeMarkdown?}` run a scan (**409** `busy`/`not-installed`/`no-rules`/`scan-cancelled`/`install-failed`, **400** `bad-target`) |
 | POST | `/api/opengrep/scans/:id/cancel` | `{project}` cancel that exact running scan; waits for the engine to settle |
 | GET | `/api/opengrep/scans?project=` | Recent scan records |
 | GET | `/api/opengrep/scans/:id?project=&format=md&…` | One scan (`latest` ok) as the filtered agent digest; `format=graph` gives per-file severity and coverage |
@@ -304,42 +297,27 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   language, add an entry there.
 - **`frontend/src/taskColors.ts`** is the single source of truth for per-task
   accent colors (card edge, graph agent node, `W` rings) and session colors
-  (Claude orange, Codex white, Pi blue). Each running task gets a stable palette
-  slot (`Task.colorIndex`, `backend/src/routes/tasks/colorSlot.ts`, with an
-  in-memory reservation so concurrent starts don't pick the same slot) through a
-  golden-angle palette, so colors never reshuffle when a sibling finishes.
+  (Claude orange, Codex white, Pi blue). Each running task keeps a stable palette
+  slot (`Task.colorIndex`, `backend/src/routes/tasks/colorSlot.ts`), so colors
+  never reshuffle when a sibling finishes.
 - **Graph overlays** — hold-key or click-to-pin chips in the overlay key:
   `H` health, `Z` lines of code, `D` dead code, `W` worktree-modified files,
   `Alt` labels. Metric views (`H`/`Z`/`D`) hide ghost nodes and
-  metrics-ignored extensions (`DEFAULT_METRICS_IGNORED_EXTS`) and suppress
-  change-rings. Dead code = reachability from detected entry points
-  (`backend/src/health/crossFile/`, extra roots in
-  `userSettings.deadCodeEntryGlobs`), also served to agents at
-  `/api/health/dead-code`. Camera/sprite/filtering rules (OrbitControls, +Y
-  up, `nodeVisibility` filtering): `frontend/src/components/forceGraph/CLAUDE.md`.
-  The **Security** chip appears only after a usable OpenGrep engine is detected
-  (managed or external). Availability refreshes on focus/return and during
-  installation; status reads never start scans. It runs OpenGrep only on explicit activation, with an
-  in-chip spinner and completed scan time. Refresh reconnects to the backend's
-  running scan and restores the spinner; an ETA counts down from the previous
-  scan's duration ("Estimating…" for the first scan). Security takes precedence
-  over H/Z/D only after results arrive, keeping the normal graph visible while
-  scanning. Clicking the running chip again cancels that exact backend scan.
-  Its colors hide ghosts but keep metrics-ignored config files visible and use
-  the configured severity/ignore filters. Gray means unscanned or incomplete.
-  No scans on graph load, file changes or project switches; disable/re-enable
-  explicitly starts a fresh scan.
+  metrics-ignored extensions and suppress change-rings. Dead code =
+  reachability from detected entry points (`backend/src/health/crossFile/`).
+  Camera/sprite/filtering rules (OrbitControls, +Y up, `nodeVisibility`
+  filtering): `frontend/src/components/forceGraph/CLAUDE.md`.
+  The **Security** chip appears only once a usable OpenGrep engine (managed or
+  external) is detected and scans only on an explicit click — never on graph
+  load, file change or project switch; the rest is `useSecurityOverlay`
+  (`forceGraph/hooks/CLAUDE.md`).
 - **Agent overlay (graph).** Every in-progress agent (Claude, Codex, Pi) is a
   node with TTL-fading focus beams to the files it touches and a current-file
   label; subagents are satellites with their own labels (`showSubagentLabels`
   graph setting, off by default, prefixes the `agent_type`). Claude hooks, Codex
   `.codex/hooks.json` and the Pi `lattice-activity.ts` extension all decode in
-  `backend/src/activityHook.ts`. Hosted Codex task sessions also use a bounded,
-  read-only rollout fallback (`backend/src/terminalRegistry/codexTaskActivity.ts`)
-  when their nested JavaScript tool calls bypass CLI hooks. Non-worktree
-  sessions are colored by harness like
-  terminal ones where the harness is known — workflow steps (the step's
-  effective harness), push — and fixed orange otherwise (QA / post-merge;
+  `backend/src/activityHook.ts` (hosted-Codex rollout fallback:
+  `backend/src/terminalRegistry/CLAUDE.md`; non-worktree session colors:
   `backend/src/agentSessions.ts`).
 - **Any agent session in an opened project** (even one the user started) gets a
   node: project open merges activity hooks into the project's
@@ -347,8 +325,7 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   `instrumentProjectClaudeSessions`); user-opened Codex tabs get per-launch
   `--config hooks.*` overrides plus `--dangerously-bypass-hook-trust`
   (`projectCodexHooks.ts`, nothing written to the repo or `~/.codex`); Pi gets a
-  project-root activity extension. Presence follows turns — up on prompt/tool
-  use, down 15 s after `Stop`, gone on SessionEnd or the tab's pty ending. A
+  project-root activity extension. Presence follows turns, not sessions. A
   session must be (re)started to pick up new hooks. See
   `backend/src/projectClaude/CLAUDE.md`.
 - **Codex ≥0.157 runs hook commands through PowerShell 5.1 on Windows**: a bare
@@ -388,9 +365,7 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   `PI_MODEL_RE` (`frontend/src/harnesses.ts`) must stay in lockstep with the
   backend pattern: a pattern either side rejects has its `--model` flag
   *silently dropped*, so the session runs Pi's default model instead of the
-  chosen one.** Probes never interpolate `$VAR` / `${VAR}` or execute `!command`
-  in `apiKey` or `headers`; unauthenticated endpoints or literal custom auth
-  headers can still succeed. Discovery and Pi-config management:
+  chosen one.** Discovery, probes and Pi-config management:
   `backend/src/piModels/CLAUDE.md`.
 - **Tasks store** is in-memory keyed by project with debounced JSON persistence;
   `~/.lattice/projects.json` is consulted lazily so Stop-hook callbacks resolve
@@ -406,11 +381,9 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   `/ws/terminal-activity`): Codex is classified by its explicit status terminal
   title (injected per launch, never global config), never by printable output;
   Claude/Pi by sustained printable output the user isn't driving; harness
-  sessions only. Backend-derived because unopened tabs have no WS. The same Codex
-  injection caps `tui.terminal_resize_reflow_max_rows` at 500 (9001 under
-  `WT_SESSION` made a resize take minutes). **Never kill live ptys to upgrade
-  this indicator.** See `frontend/src/components/sidebar/CLAUDE.md`,
-  `backend/src/terminal/CLAUDE.md`.
+  sessions only. Backend-derived because unopened tabs have no WS. **Never kill
+  live ptys to upgrade this indicator.** See
+  `frontend/src/components/sidebar/CLAUDE.md`, `backend/src/terminal/CLAUDE.md`.
 - **Terminal tabs survive restarts and reboots**: every pty is recorded in the
   per-project registry; the harness conversation is pinned at spawn (Claude
   `--session-id`, Pi `--session-id lattice-<uuid>`, Codex thread id learned
@@ -423,9 +396,7 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   activation so "Run All" can't blow past Chrome's per-page WebGL context cap.
 - **Codex trust is per terminal, not global** — a one-shot
   `projects={'<cwd>'={trust_level='trusted'}}` override via child-only env;
-  never writes `~/.codex/config.toml` (`backend/src/terminal/`). Codex splits a
-  `-c` *key* on every `.` without unquoting, so a path can never be a dotted
-  key (`projects.'<cwd>'.trust_level` silently misses).
+  never writes `~/.codex/config.toml` (`backend/src/terminal/CLAUDE.md`).
 - **Per-harness system-prompt overrides** (Append / Replace per harness,
   `UserSettings.harnessSystemPrompts`) are injected at the spawn chokepoint.
   Claude's built-in prompt is proprietary (the editor says so; the override
@@ -433,7 +404,7 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   `backend/src/harnessSystemPrompts/CLAUDE.md`.
 - **Lattice self-discovery is a system-prompt preamble** on that same append
   channel (`harnessSystemPrompts/latticePreamble.ts`), pointing at the project's
-  auto-generated `.lattice/LATTICE_API.md` — a short index (≤ ~3.5 KB) that
+  auto-generated `.lattice/LATTICE_API.md` — a short index (< 5 KB, test-enforced) that
   points at `.lattice/LATTICE_API_RECIPES.md`; both regenerate from
   `backend/src/latticeApiDocs/*.template.md` and are drift-tested against the
   live route table. It is a system prompt (not a typed first turn) so it stays
@@ -462,8 +433,7 @@ to avoid collisions with other local dev servers.
 
 ## Worktree paths
 
-For a repo at `<repoRoot>` (with `<hash>` = `projectHash(repoRoot)`, using the
-preserved storage binding described above):
+For a repo at `<repoRoot>` (with `<hash>` = `projectHash(repoRoot)`):
 
 - worktree dir: `~/.lattice/worktrees/<hash>/<slug>-<shortid>` — **outside**
   the project tree (see the `.git`-deletion defences above). `git worktree
