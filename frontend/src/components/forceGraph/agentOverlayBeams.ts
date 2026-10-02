@@ -82,6 +82,24 @@ export function disposeBeam(group: THREE.Group, beam: Beam): void {
   beam.material.dispose();
 }
 
+// Dispose every beam in `beams` whose TTL has run out — the same expiry the
+// per-frame `accumulateBeams` pass applies, for callers outside the render
+// loop. That pass only runs while frames render, and the loop is paused for a
+// hidden tab or a 0×0 graph, so without this an agent touching new files kept
+// every expired beam's line/geometry/material alive until the next frame.
+export function disposeExpiredBeams(
+  group: THREE.Group,
+  beams: Map<string, Beam>,
+  now: number,
+): void {
+  for (const beam of beams.values()) {
+    if (now >= beam.endAt) {
+      disposeBeam(group, beam);
+      beams.delete(beam.normPath);
+    }
+  }
+}
+
 // Opacity ramp: full until the last FADE_MS of the TTL, then linearly to 0.
 // Pure, so it can be unit-tested.
 export function beamFade(remaining: number): number {
