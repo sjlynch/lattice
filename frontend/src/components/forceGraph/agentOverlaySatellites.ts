@@ -99,6 +99,25 @@ export function shouldReapSatellite(
   return true;
 }
 
+// The same reap as `updateSatellites`, outside the frame loop: the tick only
+// runs while frames render, and the loop is paused for a hidden tab or a 0×0
+// graph, so a dead satellite (node, tether, label, beams) otherwise lived until
+// the graph was next shown. Returns whether any satellite was removed.
+export function reapIdleSatellites(
+  ctx: AgentOverlayCtx,
+  agent: Agent,
+  now: number,
+): boolean {
+  let reaped = false;
+  for (const sat of agent.satellites.values()) {
+    if (!shouldReapSatellite(sat, now)) continue;
+    disposeSatellite(ctx, sat);
+    agent.satellites.delete(sat.subagentId);
+    reaped = true;
+  }
+  return reaped;
+}
+
 export function updateSatellites(
   ctx: AgentOverlayCtx,
   agent: Agent,
