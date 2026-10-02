@@ -7,15 +7,17 @@ import {
   startQaRun as apiStartQaRun,
   type Task,
 } from '../../../api';
-import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
+import type { AddTerminal } from '../../../terminal/terminalTypes';
 import { shortLabel } from '../lanes';
 import {
   pollWithErrorSentinel,
   useVisibilityPolling,
 } from './useVisibilityPolling';
 
-type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 type CloseTerminal = (id: string) => void;
+
+// Poll cadence for active QA runs, each waiting on its Stop hook to flip it to `done`.
+const QA_RUN_POLL_INTERVAL_MS = 2500;
 
 type ActiveQaRun = { runId: string; taskId: string; terminalId: string };
 
@@ -120,7 +122,7 @@ export function useQaRuns(
 
   useVisibilityPolling({
     enabled: activeRuns.length > 0,
-    intervalMs: 2500,
+    intervalMs: QA_RUN_POLL_INTERVAL_MS,
     poll: pollActiveRuns,
   });
 

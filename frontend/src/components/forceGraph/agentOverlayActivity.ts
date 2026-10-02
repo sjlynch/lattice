@@ -7,7 +7,7 @@
 import type { AgentOverlayCtx } from './agentOverlayContext';
 import { BEAM_END_FADE_MS, BEAM_TTL_MS } from './agentOverlayConstants';
 import { baseName, normalizePath } from './agentOverlayPathIndex';
-import { createBeam } from './agentOverlayBeams';
+import { createBeam, disposeExpiredBeams } from './agentOverlayBeams';
 import type { Beam } from './agentOverlayTypes';
 
 // The beam-bearing fields shared by an Agent and a Satellite, so the focus-beam
@@ -59,6 +59,10 @@ export function applyActivity(
     existing.endAt = Infinity;
     return;
   }
+  // Release expired beams before adding one: the per-frame prune never runs
+  // while the render loop is paused (hidden tab / collapsed graph), so this
+  // keeps the beam map bounded by what's actually lit.
+  disposeExpiredBeams(ctx.group, host.beams, now);
   const beam = createBeam(host.color, norm, now);
   host.beams.set(norm, beam);
   ctx.group.add(beam.line);

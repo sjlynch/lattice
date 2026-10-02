@@ -149,6 +149,10 @@ the cause of the cross-PC Chrome OOM report.
 - `terminalWebgl.test.ts` — an injected fake add-on and terminal pin failure-path
   add-on/listener cleanup, usable DOM fallback, and exactly-once disposal across
   context loss and teardown.
+- `terminalReplayQueries.test.ts` — a pane's unparsed output queue past
+  `MAX_PENDING_OUTPUT_CHARS` drops its backlog, fires `onOverflow` once and keeps
+  flowing; an `attached` frame discards stale queued output and clears only after
+  the chunk xterm is still parsing (a deferred fake write callback).
 - `labelTextureCache.test.ts` — refcounts protect mounted/shared labels;
   release-time eviction reclaims excess textures, paired materials and canvas
   pixels without another cache miss. Owner teardown clears the cache and pixels.
@@ -175,3 +179,7 @@ the cause of the cross-PC Chrome OOM report.
 - `graphSettingsForceOwnership.test.ts` — collision disable drops its cache;
   both charge mode switches empty only the detached force. Structural swaps and
   re-enable bind current nodes/settings/context, with existing reheat guards.
+- `wsReconnect.test.ts` — the final shared-channel unsubscribe releases its
+  last-message replay cache and teardown cancels reconnect/stability timers (d5bed1f1).
+- `terminalReplayQueries.test.ts` — replayed scrollback history never answers
+  terminal DA/color/status queries; only live output does (de5aa14b).

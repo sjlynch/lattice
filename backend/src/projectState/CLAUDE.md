@@ -1,10 +1,12 @@
 # projectState helpers
 
 Keep [../projectStateManager.ts](../projectStateManager.ts) as the public import
-surface; these helpers are private. The manager owns canonical cache keys,
-single-flight loads, per-project write locks, debounce/dirty tracking, exit
-flushing and subscriber coalescing/isolation. Domain stores own validation,
-mutation semantics and the strategy for loading known projects.
+surface (it re-exports `flushAllProjectStatePersists`); these helpers are
+private. The manager owns canonical cache keys, single-flight loads,
+per-project write locks and subscriber coalescing/isolation, and composes the
+helpers below, passing them already-canonical keys and callbacks bound to its
+own (overridable) `runProjectWrite` / `writeStateNow`. Domain stores own
+validation, mutation semantics and the strategy for loading known projects.
 
 - **Disk preservation** ([diskPersistence.ts](./diskPersistence.ts)): among read
   failures, only `ENOENT` creates default state. Other failures propagate and
@@ -30,6 +32,17 @@ mutation semantics and the strategy for loading known projects.
   store name plus canonical project. See the task store's
   [crash-safety contract](../taskCache/CLAUDE.md#crash-safety-contract) for
   disk-before-cache updates.
+- **Persist scheduling** ([persistScheduler.ts](./persistScheduler.ts)):
+  `PersistScheduler` owns the debounce timers (the manager's protected
+  `persistTimers` map, shared), dirty generations, `persistLatest` and the
+  synchronous exit write. The manager's `schedulePersist`,
+  `cancelPendingPersist`, `flushPersist`, `flushAllPendingPersists` and
+  `flushPendingPersistsSync` keep their signatures and delegate; `flushPersist`
+  still cancels through the manager's `cancelPendingPersist`.
+- **Exit-flush registry** ([exitFlush.ts](./exitFlush.ts)): the once-only
+  process `exit` hook over schedulers with pending persists (tracked only for
+  `flushOnExit` stores), and the weakly held set of every store behind
+  `flushAllProjectStatePersists`.
 - **Load/flush lifetime**: concurrent cold reads share the manager's load
   promise; mark loaded only after populating cache. A fired debounce timer does
   **not** mean its disk write completed. Dirty generations remain until a

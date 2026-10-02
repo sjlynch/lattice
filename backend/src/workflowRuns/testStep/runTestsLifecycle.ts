@@ -1,8 +1,10 @@
-// Internal entry tracking and resource cleanup for the Run tests step.
-// Orchestration and injected IO dependencies stay in runTestsStep.ts.
+// Internal entry tracking, the step helpers its phases share, and resource
+// cleanup for the Run tests step. Orchestration and injected IO dependencies
+// stay in runTestsStep.ts.
 
 import type { ProjectRunLockHandle } from '../../projectRunLock.js';
 import type { WorkflowRun } from '../state.js';
+import { emitControlProgress } from '../controlSteps/shared.js';
 
 export type CompleteStepCallback = (
   runId: string,
@@ -33,6 +35,14 @@ export type ActiveRunTestsStep = {
   outcome: RunTestsOutcome;
   finalized: boolean;
 };
+
+export function isCurrent(run: WorkflowRun, stepIndex: number): boolean {
+  return run.status === 'running' && run.currentStepIndex === stepIndex;
+}
+
+export function progress(run: WorkflowRun, stepIndex: number, message: string): void {
+  emitControlProgress(run, stepIndex, 'test', 0, 0, message);
+}
 
 // One Run tests step in flight per run (a run has one current step).
 const activeSteps = new Map<string, ActiveRunTestsStep>();

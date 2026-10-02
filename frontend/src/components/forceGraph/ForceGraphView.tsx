@@ -6,30 +6,12 @@ import { GraphRendererNotice } from './GraphRendererNotice';
 import { describeRendererFailure, type RendererStatus } from './rendererStatus';
 import { useGraphViewChromeModel } from './useGraphViewChromeModel';
 import { useStructuralScan } from '../../hooks/useStructuralScan';
-import { useBoxSelect } from './hooks/useBoxSelect';
-import { useAgentOverlay } from './hooks/useAgentOverlay';
-import { useBatchedLinks } from './hooks/useBatchedLinks';
-import { useInstancedNodes } from './hooks/useInstancedNodes';
-import { useNodeDragBehavior } from './hooks/useNodeDragBehavior';
-import { useForceGraphInitialization } from './hooks/useForceGraphInitialization';
-import { useCameraPersistence } from './hooks/useCameraPersistence';
-import { useRadialTidyLayout } from './hooks/useRadialTidyLayout';
-import { useGraphDataSync } from './hooks/useGraphDataSync';
-import { useGraphOverlays } from './hooks/useGraphOverlays';
-import { useGraphSearchController } from './hooks/useGraphSearchController';
-import { useGraphTaskCreation } from './hooks/useGraphTaskCreation';
-import { useNodeContextMenu } from './hooks/useNodeContextMenu';
-import { useWorktreeHighlight } from './hooks/useWorktreeHighlight';
+import { useGraphSceneRuntime } from './hooks/useGraphSceneRuntime';
+import { useGraphInteraction } from './hooks/useGraphInteraction';
 import { useHoverNodeDebounce } from './hooks/useHoverNodeDebounce';
 import { useCanvasDragTracking } from './hooks/useCanvasDragTracking';
 import { usePointerLeaveTooltipDismiss } from './hooks/usePointerLeaveTooltipDismiss';
 import { useRefMirror } from './hooks/useRefMirror';
-import { useSelectionHaloSync } from './hooks/useSelectionHaloSync';
-import { useSelectionHaloPulse } from './hooks/useSelectionHaloPulse';
-import { useSelectionGlowSettings } from './hooks/useSelectionGlowSettings';
-import { useMetricsIgnoreRefresh } from './hooks/useMetricsIgnoreRefresh';
-import { useGraphViewKeyboard } from './hooks/useGraphViewKeyboard';
-import { useOverlayTooltipDismiss } from './hooks/useOverlayTooltipDismiss';
 
 type Props = {
   data: ScanResult | null;
@@ -92,10 +74,13 @@ export function ForceGraphView(props: Props) {
 }
 
 // Hosts the 3d-force-graph instance and stitches together the per-concern
-// hooks under ./hooks/: graph initialization, settings persistence, git
-// timeline, LOC / health / labels overlays, shift-drag box-select, and the
-// right-click "create task" menu. Render-only chrome lives in the
-// Graph*.tsx siblings.
+// hooks under ./hooks/ in phases: shared refs + hover state here, then the
+// scene runtime (`useGraphSceneRuntime` — init, camera, data sync, layout,
+// batched renderers, drag, agents, worktree rings), then the interaction layer
+// (`useGraphInteraction` — search, menus, box select, task creation, halos,
+// keyboard), then the chrome model. Hook order is load-bearing: the phases run
+// in exactly this order, and refs are passed through, never copied.
+// Render-only chrome lives in the Graph*.tsx siblings.
 function ForceGraphViewCoordinator({
   data,
   loading,
@@ -157,75 +142,41 @@ function ForceGraphViewCoordinator({
   );
   const metricsIgnoredExtsRef = useRefMirror(metricsIgnoredExtsSet);
 
-  // ----- Phase 2: graph initialization + overlays -----
+  // ----- Phase 2: scene runtime (init, camera, data sync, layout, renderers) -----
   const {
     settings,
     setSettings,
-    settingsRef,
     history,
     range,
     setRange,
-    changeMapRef,
     locMode,
-    locModeRef,
-    healthModeRef,
     deadMode,
-    deadModeRef,
     security,
-    securityModeRef,
-    securityFilesRef,
     labelMode,
-    labelModeRef,
     labelShift,
-    labelShiftRef,
     labelLevel,
-    labelLevelRef,
     maxDepthRef,
     maxDirDepthRef,
-    nodeDepthsRef,
     pinned,
     togglePin,
-  } = useGraphOverlays({
-    activeFolder,
-    graphRef,
+    resetSelection,
+    dataGeneration,
+    runLayout,
+    worktreeActive,
+  } = useGraphSceneRuntime({
     containerRef,
+    graphRef,
+    activeFolder,
     data,
+    structuralData,
     hiddenExts,
-    metricsIgnoredExtsRef,
     healthMode,
     onHealthModeChange,
     selected,
-  });
-
-  // Mirror of the batched-nodes toggle, read live by nodeObjectFactory to hide
-  // the per-node base sprite (kept as the raycast pick proxy) — seeded from the
-  // persisted setting on first render so init builds sprites at the right
-  // visibility, then kept in sync for runtime toggles.
-  const batchedNodesRef = useRefMirror(settings.batchedNodes);
-
-  // The `W` worktree overlay's live path→color snapshot (null while inactive).
-  // Written by useWorktreeHighlight, read by nodeObjectFactory so any full
-  // sprite rebuild while the view is active re-attaches the rings instead of
-  // dropping them (see worktreeRingSync).
-  const worktreeRingsRef = useRef<Map<string, string> | null>(null);
-
-  useForceGraphInitialization(containerRef, graphRef, {
-    settingsRef,
+    setSelected,
     selectedRef,
     dataRef,
-    locModeRef,
-    healthModeRef,
-    deadModeRef,
-    securityModeRef,
-    securityFilesRef,
-    labelModeRef,
-    labelShiftRef,
-    labelLevelRef,
-    nodeDepthsRef,
-    changeMapRef,
     metricsIgnoredExtsRef,
-    batchedNodesRef,
-    worktreeRingsRef,
     pointerOutsideRef,
     onHoverNodeChange: debouncedSetHoverNode,
     onRendererFailure,
@@ -233,172 +184,26 @@ function ForceGraphViewCoordinator({
     onContextRestored,
   });
 
-  // Save the camera position/orbit target per project and restore it on mount /
-  // project switch, so a page refresh keeps the user's vantage point.
-  useCameraPersistence(graphRef, activeFolder);
+  // ----- Phase 3: interaction (search, menus, box select, tasks, halos, keys) -----
+  const { contextMenu, dragRect, openMenuItem, search, taskModal, toast } =
+    useGraphInteraction({
+      containerRef,
+      graphRef,
+      activeFolder,
+      data,
+      dataGeneration,
+      settings,
+      selected,
+      setSelected,
+      selectedRef,
+      hiddenExtsRef,
+      metricsIgnoredExtsSet,
+      locMode,
+      healthMode,
+      cancelPendingHoverClear,
+    });
 
-  // True while a recolor view (health/loc/dead) is showing. These views pare the
-  // graph down to the metric signal — hiding ghost nodes + metrics-ignored files
-  // and suppressing change-rings — so the batched-link buffer must re-capture
-  // its visible set when this flips (see useBatchedLinks).
-  const metricOverlayActive = security.active || healthMode || locMode || deadMode;
-
-  const resetSelection = useCallback(() => setSelected(new Set()), []);
-
-  // `dataGeneration` bumps on every full graphData() swap (incl. the git-history
-  // ghost merge, which doesn't touch `structuralData`). Threaded into the
-  // batched renderers below so they re-capture the fresh node/link arrays after
-  // a swap instead of rendering the orphaned pre-swap objects.
-  const { dataGeneration } = useGraphDataSync({
-    graphRef,
-    data,
-    history,
-    onResetSelection: resetSelection,
-    healthModeRef,
-    locModeRef,
-    deadModeRef,
-  });
-
-  // Radial tidy-tree untangle: on first load (and via the Spread tab's "Untangle
-  // now" button) seed each subtree into its own angular wedge so sibling
-  // subtrees don't tangle, then let the physics settle from that seed. On by
-  // default. Placed after the data sync so the nodes are in the sim.
-  const runLayout = useRadialTidyLayout(
-    graphRef,
-    structuralData,
-    settingsRef,
-    activeFolder,
-  );
-
-  // Batched link rendering: collapse the library's per-link Line objects into a
-  // single LineSegments so orbiting a settled graph isn't E extra draw calls per
-  // frame. Keyed off graphData swaps, so identical structural rescans neither
-  // rebuild GPU buffers nor wake an otherwise settled scene.
-  useBatchedLinks(
-    graphRef,
-    settings.batchedLinks,
-    hiddenExts,
-    dataGeneration,
-    metricOverlayActive,
-    settings.showLinks,
-    security.active,
-  );
-
-  // Batched node rendering: draw the base node shapes as a few instanced meshes
-  // (one per file type) instead of N Sprite-bearing Groups, so orbiting a
-  // settled graph isn't ~N node draw calls per frame. The per-node sprite stays
-  // mounted-but-invisible as the pick proxy (see nodeObjectFactory); recolor
-  // overlays (health/loc/dead) fall back to the per-node path. Like links, the
-  // buffers rebuild only when graphData or the visible rendering settings change.
-  useInstancedNodes(
-    graphRef,
-    settings.batchedNodes,
-    hiddenExts,
-    settings,
-    { settingsRef, healthModeRef, locModeRef, deadModeRef, securityModeRef },
-    dataGeneration,
-    metricOverlayActive,
-  );
-
-  // Drag UX: dragging a node carries its descendant subtree along and locks the
-  // node to its DAG level (Y) so a drag only slides it within its plane. Rides
-  // the shared node-motion driver's drag callback; active regardless of the
-  // batched-render toggles.
-  useNodeDragBehavior(graphRef);
-
-  // Claude agent nodes + focus beams (in-progress Claude tasks), and the
-  // `W`-hold worktree-modified file outline. Both read live task data over
-  // their own `/ws/tasks` subscription and draw straight into the scene.
-  useAgentOverlay(graphRef, settingsRef, activeFolder);
-  const { worktreeActive } = useWorktreeHighlight(
-    graphRef,
-    settingsRef,
-    activeFolder,
-    pinned.worktree,
-    worktreeRingsRef,
-  );
-
-  // Search: query + regex/contents toggle state, the filename/contents passes,
-  // and the prev/next match cursor are all wired together in the controller. It
-  // returns the HUD-ready handlers/status/position plus the
-  // `searchQuery`/`setSearchQuery`/`clearCurrentMatch` the Escape chord needs.
-  const {
-    searchQuery,
-    setSearchQuery,
-    searchRegex,
-    searchContents,
-    toggleSearchRegex,
-    toggleSearchContents,
-    handleSearchQueryChange,
-    searchStatus,
-    searchMatchPosition,
-    goPrevMatch,
-    goNextMatch,
-    clearCurrentMatch,
-  } = useGraphSearchController({ data, activeFolder, graphRef, setSelected, dataGeneration });
-
-  const { contextMenu, setContextMenu } = useNodeContextMenu(containerRef);
-  const closeContextMenu = useCallback(() => setContextMenu(null), [setContextMenu]);
-  const { dragRect } = useBoxSelect(
-    containerRef,
-    graphRef,
-    hiddenExtsRef,
-    setSelected,
-    closeContextMenu,
-  );
-
-  const {
-    modalAction,
-    promptText,
-    setPromptText,
-    submitting,
-    toast,
-    selectedFiles,
-    openMenuItem,
-    submitTask,
-    closeModal,
-  } = useGraphTaskCreation({
-    data,
-    activeFolder,
-    selected,
-    setSelected,
-    closeContextMenu,
-  });
-
-  // Targeted halo updates — toggle the halo Sprite on only the affected node
-  // ids instead of a full `graph.refresh()` (see the hook). Runtime scene sync.
-  useSelectionHaloSync(graphRef, selected, settings);
-  // Pulse the shared halo material (brighter/whiter ⇄ base) while any node is
-  // selected so selection rings stay visible in dense graphs. O(1) per frame;
-  // holds the idle controller's slow-only `halo` reason only while selected.
-  useSelectionHaloPulse(graphRef, selected.size > 0);
-  // Push the Rendering-tab glow knobs (strength/size) into the halo module and
-  // apply changes to the current selection (strength live, size rebuilds halos).
-  useSelectionGlowSettings(settings, graphRef, selected);
-
-  // Re-render node sprites when the LOC/health ignore list changes so the new
-  // filter takes effect without touching the d3 simulation (skips the mount
-  // run; see the hook).
-  useMetricsIgnoreRefresh(graphRef, metricsIgnoredExtsSet);
-
-  // Escape-key behavior (close context menu → clear search → clear selection),
-  // bound once and reading its branch state through refs.
-  useGraphViewKeyboard({
-    contextMenu,
-    setContextMenu,
-    modalOpen: modalAction !== null,
-    searchQuery,
-    setSearchQuery,
-    clearCurrentMatch,
-    selectedRef,
-    setSelected,
-  });
-
-  // Dismiss a stuck hover tooltip when the LOC/health overlay view ends, so it
-  // doesn't cling to the cursor after Z/H is released (see the hook).
-  useOverlayTooltipDismiss(locMode, healthMode, cancelPendingHoverClear);
-
-  // ----- Phase 3: render data + JSX overlays -----
+  // ----- Phase 4: render data + JSX overlays -----
   const chrome = useGraphViewChromeModel({
     containerRef,
     loading,
@@ -424,32 +229,13 @@ function ForceGraphViewCoordinator({
     resetSelection,
     hoverNode,
     contextMenu,
-    search: {
-      searchQuery,
-      onSearchQueryChange: handleSearchQueryChange,
-      searchRegex,
-      onSearchRegexToggle: toggleSearchRegex,
-      searchContents,
-      onSearchContentsToggle: toggleSearchContents,
-      searchStatus,
-      searchMatchPosition,
-      onSearchPrevMatch: goPrevMatch,
-      onSearchNextMatch: goNextMatch,
-    },
+    search,
     pinned,
     security,
     togglePin,
     dragRect,
     openMenuItem,
-    taskModal: {
-      action: modalAction,
-      promptText,
-      onPromptChange: setPromptText,
-      submitting,
-      selectedFiles,
-      onSubmit: submitTask,
-      onClose: closeModal,
-    },
+    taskModal,
     toast,
     settings,
     setSettings,

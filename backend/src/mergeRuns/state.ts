@@ -20,7 +20,8 @@ const MERGE_RUNS_FILENAME = 'merge-runs.json';
 // `merge-runs.json` is rewritten on EVERY progress event, with every run the
 // project ever recorded; unbounded, a long-lived project made each event a
 // multi-megabyte write. Persist only the newest settled runs (plus every
-// running one — a live run must never fall off the persisted record).
+// running one — a live run must never fall off the persisted record). The
+// in-memory map is trimmed to the same set (see syncProjectFromRunMap).
 export const MAX_PERSISTED_RUNS_PER_PROJECT = 50;
 
 function projectMergeRunsFile(projectPath: string): string {
@@ -90,6 +91,22 @@ export class MergeRunStateManager extends ProjectStateManager<
       .map(snapshotRun);
     this.setCached(key, projectRuns);
     this.schedulePersist(key);
+    this.pruneSettledRuns(all, new Set(settled.map((run) => run.id)));
+  }
+
+  // Drop settled runs that fell off the persisted slice from the in-memory map
+  // too: every workflow Merge round, disk-pressure merge and resolver restart
+  // adds one, and every emit / reapOrphanedRuns / resolver-spawn lookup scans
+  // the whole map. Never drops a `running` run, nor one a worker or a parked
+  // resolver waiter still references (a settled run is only still live
+  // between finishRun's emit and its worker's finalize).
+  private pruneSettledRuns(projectRuns: MergeRun[], kept: Set<string>): void {
+    for (const run of projectRuns) {
+      if (run.status === 'running' || kept.has(run.id)) continue;
+      if (this.liveRunIds.has(run.id)) continue;
+      if (this.conflictWaiters.taskIdsForRun(run.id).length > 0) continue;
+      this.runs.delete(run.id);
+    }
   }
 
   public emit(ev: MergeRunEvent): void {

@@ -5,12 +5,14 @@
 // change-rings. Shown while `W` is held to mark every file changed by a
 // not-yet-merged task.
 //
-// Textures and materials are cached per color (there are at most a few dozen
-// live task colors, and slots are reused, so the cache stays small).
+// Materials (each owning its texture) are cached per color (there are at most
+// a few dozen live task colors, and slots are reused, so the cache stays
+// small). Disposed and emptied on graph teardown (spriteMaterialCache.ts).
 
 import * as THREE from 'three';
-import { finishCanvasTexture, newTextureCanvas } from './canvasTexture';
+import { finishCanvasTexture, newTextureCanvas, rgba } from './canvasTexture';
 import { WORKTREE_RING_RENDER_ORDER } from './renderOrders';
+import { createSpriteMaterialCache } from './spriteMaterialCache';
 
 const RING_TAG = 'lattice:worktree-ring';
 const SIZE = 128;
@@ -23,17 +25,7 @@ export function normalizeWorktreePath(p: string): string {
   return p.replace(/\\/g, '/').toLowerCase();
 }
 
-function rgba(c: THREE.Color, a: number): string {
-  return `rgba(${Math.round(c.r * 255)}, ${Math.round(c.g * 255)}, ${Math.round(
-    c.b * 255,
-  )}, ${a})`;
-}
-
-const textureCache = new Map<string, THREE.CanvasTexture>();
-
 function ringTexture(color: string): THREE.CanvasTexture {
-  let tex = textureCache.get(color);
-  if (tex) return tex;
   const { canvas, ctx } = newTextureCanvas(SIZE);
   const cx = SIZE / 2;
   const cy = SIZE / 2;
@@ -59,25 +51,20 @@ function ringTexture(color: string): THREE.CanvasTexture {
   ctx.arc(cx, cy, SIZE * 0.35, 0, Math.PI * 2);
   ctx.stroke();
 
-  tex = finishCanvasTexture(canvas);
-  textureCache.set(color, tex);
-  return tex;
+  return finishCanvasTexture(canvas);
 }
 
-const materialCache = new Map<string, THREE.SpriteMaterial>();
+const materialCache = createSpriteMaterialCache<string>();
 
 function ringMaterial(color: string): THREE.SpriteMaterial {
-  let mat = materialCache.get(color);
-  if (!mat) {
-    mat = new THREE.SpriteMaterial({
+  return materialCache.get(color, () =>
+    new THREE.SpriteMaterial({
       map: ringTexture(color),
       transparent: true,
       depthWrite: false,
       depthTest: false,
-    });
-    materialCache.set(color, mat);
-  }
-  return mat;
+    }),
+  );
 }
 
 function findRingChild(root: THREE.Object3D): THREE.Sprite | null {

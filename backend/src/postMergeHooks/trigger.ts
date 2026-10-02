@@ -199,165 +199,219 @@ async function validateAndPrepare(
   return { kind: 'proceed', settings, prompt, harness };
 }
 
-// The side-effecting half: reserve + record the run, set up its scratch
-// session, build the command, spawn the pty, and register the agent-session
-// node. Owns its own
-// error cleanup so a failure at any step (thrown or a spawn `error` result)
-// finishes the run `errored` (only once it's been recorded) and removes the
-// scratch dir before returning the error outcome — preserving the original
-// cleanup ordering.
+type ProceedPostMergeHook = Extract<PreparedPostMergeHook, { kind: 'proceed' }>;
+
+// The side-effecting half, as a short sequence of phases: claim + record the
+// run, then launch it (`launchPostMergeHook`), settling a thrown launch here.
+// Owns its own error cleanup so a failure at any step (thrown or a spawn
+// `error` result) finishes the run `errored` (only once it's been recorded)
+// and removes the scratch dir before returning the error outcome — preserving
+// the original cleanup ordering.
 async function spawnAndRegister(
   options: TriggerPostMergeHookOptions,
   deps: TriggerPostMergeHookDeps,
-  prepared: Extract<PreparedPostMergeHook, { kind: 'proceed' }>,
+  prepared: ProceedPostMergeHook,
 ): Promise<TriggerPostMergeHookOutcome> {
-  const { projectPath, backendOrigin, trigger } = options;
-  const { settings, prompt, harness } = prepared;
-
   // validateAndPrepare necessarily awaits settings. Two trigger calls can
   // therefore both pass its earlier active-run check before either resumes.
   // Re-check and synchronously record before the first await; this is the
   // atomic per-project claim in JavaScript's run-to-completion turn.
-  const existing = deps.getActiveHookForProject(projectPath);
+  const existing = deps.getActiveHookForProject(options.projectPath);
   if (existing) {
     return { kind: 'skipped', reason: 'already-running', existing };
   }
-
-  const id = createPostMergeHookId();
-  const cwd = assertSafePostMergeHookPath(projectPath, id);
-  const run: PostMergeHookRun = {
-    id,
-    projectPath,
-    harness,
-    prompt,
-    cwd,
-    status: 'running',
-    startedAt: Date.now(),
-    trigger,
-  };
+  const run = newPostMergeHookRun(options, prepared);
   deps.recordPostMergeHook(run);
-  const launch = deps.trackPostMergeHookLaunch(id);
-
-  // The run is recorded before either await below, so `/abort` can land while
-  // scratch setup or the queued spawn is still in flight. Re-check after each:
-  // without this the queued thunk created the pty anyway, `patch` emitted a
-  // `progress` for a finished run, and `registerAgentSession` re-added the
-  // orange node the abort had just removed.
-  const abortedDuringLaunch = (): PostMergeHookRun | null => {
-    const current = deps.getPostMergeHook(id);
-    return current && current.status !== 'running' ? current : null;
-  };
+  const launch = deps.trackPostMergeHookLaunch(run.id);
 
   try {
-    const session = await deps.setupPostMergeHookSession({
-      projectPath,
-      backendOrigin,
-      prompt,
-      harness,
-      id,
-    });
-
-    const abortedAfterSetup = abortedDuringLaunch();
-    if (abortedAfterSetup) {
-      // The abort's cleanup may have raced the scratch write; remove it again.
-      await deps.cleanupPostMergeHookSession(projectPath, id);
-      return { kind: 'skipped', reason: 'aborted', run: abortedAfterSetup };
-    }
-
-    // The run is already visible before scratch setup and pty creation, so the
-    // workflow Merge-step gate cannot observe a false idle window here. The
-    // waiter map is also in place if the harness curls /complete unusually
-    // fast. The pty cwd is the scratch dir, matching pushRuns.
-    // Claude reads `.claude/settings.local.json` (Stop hook) from cwd, and
-    // Pi loads `.pi/extensions/` from cwd; running with cwd=projectPath would
-    // miss both backstops and the merge run would hang waiting for a Stop
-    // hook callback that never fires (this exact bug shipped in the first
-    // cut). The agent cds into the project as its first step — see
-    // renderPostMergeHookInstructions.
-    const command = buildPostMergeHookCommand({
-      harness,
-      instructionsFile: session.instructionsFile,
-      piModel:
-        harness === 'pi' ? normalizePiModel(settings.postMergeHookPiModel) : undefined,
-      // Codex `--yolo` toggle (default ON — only explicit `false` disables).
-      codexYolo: harness === 'codex' ? settings.codexYolo !== false : undefined,
-    });
-
-    console.log(
-      `[post-merge-hook] spawning ${harness} for run ${id} ` +
-        `(trigger=${trigger}, cwd=${session.cwd}, prompt=${prompt.length}ch)`,
-    );
-
-    // `priority` band — the post-merge hook gates merge-run / manual-merge
-    // completion, so it must not be starved behind batch task spawns.
-    // Keyed per HOOK, not per project: per-project exclusivity is already the
-    // synchronous `getActiveHookForProject` claim above, and a project key let
-    // a new hook dedupe onto an aborted hook's still-queued request — spawning
-    // with the old hook's cwd/instructions, which that hook's trigger then
-    // killed, leaving the new hook "started" on a dead pty. `signal` lets
-    // Abort cancel the queued spawn (launchAbort.ts).
-    const sess = await deps.queuedCreateSession({
-      kind: 'post-merge-hook',
-      priority: 'priority',
-      dedupeKey: `post-merge-hook:${id}`,
-      signal: launch.signal,
-      opts: {
-        cwd: session.cwd,
-        initialCommand: command,
-        projectPath,
-        registry: { owner: 'post-merge', label: `post-merge:${id.slice(-6)}` },
-      },
-    });
-
-    if ('error' in sess) {
-      // Spawn failed — mark the hook errored so anyone awaiting it unblocks.
-      console.error(
-        `[post-merge-hook] spawn failed for run ${id}: ${sess.error}`,
-      );
-      deps.finishPostMergeHook(id, 'errored', sess.error);
-      await deps.cleanupPostMergeHookSession(projectPath, id);
-      return { kind: 'error', message: sess.error };
-    }
-
-    const abortedAfterSpawn = abortedDuringLaunch();
-    if (abortedAfterSpawn) {
-      // The pty was created for a hook the user already aborted: reclaim it,
-      // and neither record it (no `progress` event) nor register a node.
-      try {
-        await deps.killSession(sess.id);
-      } catch {
-        /* best-effort */
-      }
-      await deps.cleanupPostMergeHookSession(projectPath, id);
-      return { kind: 'skipped', reason: 'aborted', run: abortedAfterSpawn };
-    }
-
-    const updated = deps.patchPostMergeHook(id, { serverId: sess.id, terminalId: sess.terminalId });
-    // Presence: an orange agent node for this non-worktree session — any
-    // harness (each reports activity through its own hooks; see stopHook.ts).
-    deps.registerAgentSession({
-      agentId: postMergeHookAgentId(id),
-      projectPath,
-      label: 'post-merge hook',
-    });
-    return { kind: 'started', run: updated ?? run, serverId: sess.id };
+    return await launchPostMergeHook(options, deps, prepared, run, launch.signal);
   } catch (err) {
-    const abortedWhileQueued = launch.signal.aborted ? abortedDuringLaunch() : null;
-    if (abortedWhileQueued) {
-      // Abort cancelled the queued spawn (or reclaimed a pty created in
-      // flight): the run is already terminal — nothing to finish.
-      if (err !== launch.signal.reason) {
-        console.warn(`[post-merge-hook] cancelled spawn for aborted run ${id} did not end cleanly:`, err);
-      }
-      await deps.cleanupPostMergeHookSession(projectPath, id);
-      return { kind: 'skipped', reason: 'aborted', run: abortedWhileQueued };
-    }
-    const message = (err as Error).message;
-    console.error('[post-merge-hook] trigger failed:', err);
-    deps.finishPostMergeHook(id, 'errored', message);
-    await deps.cleanupPostMergeHookSession(projectPath, id);
-    return { kind: 'error', message };
+    return await settleThrownLaunch(deps, run, launch.signal, err);
   } finally {
     launch.release();
   }
+}
+
+// The record the claim reserves. Synchronous on purpose: it sits between the
+// active-run re-check and `recordPostMergeHook`, which must share one turn.
+function newPostMergeHookRun(
+  options: TriggerPostMergeHookOptions,
+  prepared: ProceedPostMergeHook,
+): PostMergeHookRun {
+  const id = createPostMergeHookId();
+  return {
+    id,
+    projectPath: options.projectPath,
+    harness: prepared.harness,
+    prompt: prepared.prompt,
+    cwd: assertSafePostMergeHookPath(options.projectPath, id),
+    status: 'running',
+    startedAt: Date.now(),
+    trigger: options.trigger,
+  };
+}
+
+// The launch itself: set up the scratch session, build the command, spawn the
+// pty, then record it and register the agent-session node. A setup/spawn
+// throw propagates to `spawnAndRegister`'s `settleThrownLaunch`.
+//
+// The run is recorded before either await below, so `/abort` can land while
+// scratch setup or the queued spawn is still in flight. Re-check after each:
+// without this the queued thunk created the pty anyway, `patch` emitted a
+// `progress` for a finished run, and `registerAgentSession` re-added the
+// orange node the abort had just removed.
+async function launchPostMergeHook(
+  options: TriggerPostMergeHookOptions,
+  deps: TriggerPostMergeHookDeps,
+  prepared: ProceedPostMergeHook,
+  run: PostMergeHookRun,
+  signal: AbortSignal,
+): Promise<TriggerPostMergeHookOutcome> {
+  const { projectPath, backendOrigin, trigger } = options;
+  const { settings, prompt, harness } = prepared;
+  const { id } = run;
+
+  const session = await deps.setupPostMergeHookSession({
+    projectPath,
+    backendOrigin,
+    prompt,
+    harness,
+    id,
+  });
+
+  const abortedAfterSetup = abortedPostMergeHook(deps, id);
+  if (abortedAfterSetup) {
+    // The abort's cleanup may have raced the scratch write; remove it again.
+    return skipAbortedLaunch(deps, run, abortedAfterSetup);
+  }
+
+  // The run is already visible before scratch setup and pty creation, so the
+  // workflow Merge-step gate cannot observe a false idle window here. The
+  // waiter map is also in place if the harness curls /complete unusually
+  // fast. The pty cwd is the scratch dir, matching pushRuns.
+  // Claude reads `.claude/settings.local.json` (Stop hook) from cwd, and
+  // Pi loads `.pi/extensions/` from cwd; running with cwd=projectPath would
+  // miss both backstops and the merge run would hang waiting for a Stop
+  // hook callback that never fires (this exact bug shipped in the first
+  // cut). The agent cds into the project as its first step — see
+  // renderPostMergeHookInstructions.
+  const command = buildPostMergeHookCommand({
+    harness,
+    instructionsFile: session.instructionsFile,
+    piModel:
+      harness === 'pi' ? normalizePiModel(settings.postMergeHookPiModel) : undefined,
+    // Codex `--yolo` toggle (default ON — only explicit `false` disables).
+    codexYolo: harness === 'codex' ? settings.codexYolo !== false : undefined,
+  });
+
+  console.log(
+    `[post-merge-hook] spawning ${harness} for run ${id} ` +
+      `(trigger=${trigger}, cwd=${session.cwd}, prompt=${prompt.length}ch)`,
+  );
+
+  // `priority` band — the post-merge hook gates merge-run / manual-merge
+  // completion, so it must not be starved behind batch task spawns.
+  // Keyed per HOOK, not per project: per-project exclusivity is already the
+  // synchronous `getActiveHookForProject` claim in `spawnAndRegister`, and a
+  // project key let a new hook dedupe onto an aborted hook's still-queued
+  // request — spawning with the old hook's cwd/instructions, which that hook's
+  // trigger then killed, leaving the new hook "started" on a dead pty.
+  // `signal` lets Abort cancel the queued spawn (launchAbort.ts).
+  const sess = await deps.queuedCreateSession({
+    kind: 'post-merge-hook',
+    priority: 'priority',
+    dedupeKey: `post-merge-hook:${id}`,
+    signal,
+    opts: {
+      cwd: session.cwd,
+      initialCommand: command,
+      projectPath,
+      registry: { owner: 'post-merge', label: `post-merge:${id.slice(-6)}` },
+    },
+  });
+
+  if ('error' in sess) {
+    // Spawn failed — mark the hook errored so anyone awaiting it unblocks.
+    console.error(
+      `[post-merge-hook] spawn failed for run ${id}: ${sess.error}`,
+    );
+    return failLaunch(deps, run, sess.error);
+  }
+
+  const abortedAfterSpawn = abortedPostMergeHook(deps, id);
+  if (abortedAfterSpawn) {
+    // The pty was created for a hook the user already aborted: reclaim it,
+    // and neither record it (no `progress` event) nor register a node.
+    try {
+      await deps.killSession(sess.id);
+    } catch {
+      /* best-effort */
+    }
+    return skipAbortedLaunch(deps, run, abortedAfterSpawn);
+  }
+
+  const updated = deps.patchPostMergeHook(id, { serverId: sess.id, terminalId: sess.terminalId });
+  // Presence: an orange agent node for this non-worktree session — any
+  // harness (each reports activity through its own hooks; see stopHook.ts).
+  deps.registerAgentSession({
+    agentId: postMergeHookAgentId(id),
+    projectPath,
+    label: 'post-merge hook',
+  });
+  return { kind: 'started', run: updated ?? run, serverId: sess.id };
+}
+
+// A thrown setup/spawn. When Abort cancelled the queued spawn (or reclaimed a
+// pty created in flight) the run is already terminal — nothing to finish;
+// anything else finishes the run `errored`.
+async function settleThrownLaunch(
+  deps: TriggerPostMergeHookDeps,
+  run: PostMergeHookRun,
+  signal: AbortSignal,
+  err: unknown,
+): Promise<TriggerPostMergeHookOutcome> {
+  const abortedWhileQueued = signal.aborted ? abortedPostMergeHook(deps, run.id) : null;
+  if (abortedWhileQueued) {
+    if (err !== signal.reason) {
+      console.warn(`[post-merge-hook] cancelled spawn for aborted run ${run.id} did not end cleanly:`, err);
+    }
+    return skipAbortedLaunch(deps, run, abortedWhileQueued);
+  }
+  const message = (err as Error).message;
+  console.error('[post-merge-hook] trigger failed:', err);
+  return failLaunch(deps, run, message);
+}
+
+// The hook's current record if something (the `/abort` route, a tab close,
+// the wait expiry) finished it while its launch was still in flight.
+function abortedPostMergeHook(
+  deps: TriggerPostMergeHookDeps,
+  id: string,
+): PostMergeHookRun | null {
+  const current = deps.getPostMergeHook(id);
+  return current && current.status !== 'running' ? current : null;
+}
+
+// Exit for a hook aborted mid-launch: whatever ended it already made the run
+// terminal, so there is nothing to finish — only the scratch dir to remove.
+async function skipAbortedLaunch(
+  deps: TriggerPostMergeHookDeps,
+  run: PostMergeHookRun,
+  aborted: PostMergeHookRun,
+): Promise<TriggerPostMergeHookOutcome> {
+  await deps.cleanupPostMergeHookSession(run.projectPath, run.id);
+  return { kind: 'skipped', reason: 'aborted', run: aborted };
+}
+
+// Exit for a failed launch: finish the recorded run `errored` (unblocking its
+// waiters), then remove the scratch dir.
+async function failLaunch(
+  deps: TriggerPostMergeHookDeps,
+  run: PostMergeHookRun,
+  message: string,
+): Promise<TriggerPostMergeHookOutcome> {
+  deps.finishPostMergeHook(run.id, 'errored', message);
+  await deps.cleanupPostMergeHookSession(run.projectPath, run.id);
+  return { kind: 'error', message };
 }

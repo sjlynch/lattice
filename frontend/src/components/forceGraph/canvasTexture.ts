@@ -42,3 +42,12 @@ export function finishCanvasTexture(
   tex.needsUpdate = true;
   return tex;
 }
+
+// CSS `rgba()` for a THREE color at alpha `a`, for canvas gradient stops and
+// fills (agent discs, worktree rings).
+export function rgba(c: THREE.Color, a: number): string {
+  const r = Math.round(c.r * 255);
+  const g = Math.round(c.g * 255);
+  const b = Math.round(c.b * 255);
+  return `rgba(${r}, ${g}, ${b}, ${a})`;
+}
