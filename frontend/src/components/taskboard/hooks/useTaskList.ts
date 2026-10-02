@@ -1,10 +1,11 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   fetchTasks,
   subscribeTasks,
   type Task,
   type TaskSpawnedEvent,
 } from '../../../api';
+import { useAutoDismissMessage } from '../../shared/useAutoDismissMessage';
 
 // Cheap per-task signature: every backend mutation bumps `updatedAt` (via
 // `stampTimestamps`) and a reorder rewrites `status`/`sortOrder`, so a task
@@ -52,27 +53,12 @@ export function useTaskList(
     project: string;
     tasks: Task[];
   }>({ project: '', tasks: [] });
-  const [error, setError] = useState<string | null>(null);
-  // Hold the auto-dismiss timer so we can clear it on unmount / before
-  // re-scheduling instead of leaking a 5 s timer per error (mirrors the
-  // copy-timer pattern in shared/ErrorToast.tsx).
-  const errorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const showError = useCallback((msg: string) => {
-    setError(msg);
-    if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    errorTimerRef.current = setTimeout(
-      () => setError((cur) => (cur === msg ? null : cur)),
-      5000,
-    );
-  }, []);
-
-  useEffect(
-    () => () => {
-      if (errorTimerRef.current) clearTimeout(errorTimerRef.current);
-    },
-    [],
-  );
+  // `showError` is stable, so it can stay a dependency of the effect below.
+  const {
+    message: error,
+    setMessage: setError,
+    show: showError,
+  } = useAutoDismissMessage();
 
   // Initial load + WS subscription per active folder.
   useEffect(() => {

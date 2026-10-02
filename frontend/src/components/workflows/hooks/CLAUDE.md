@@ -201,7 +201,8 @@ there.
   twice" note (informational only; answers are stamped with their folder so a
   project switch never shows the previous project's).
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing toast state (errors,
-  plus `useWorkflowManualRun`'s "Queued behind" notice).
+  plus `useWorkflowManualRun`'s "Queued behind" notice); a thin rename over
+  `shared/useAutoDismissMessage`.
 - `useWorkflowPromptCustomization.ts` — owns per-step customization state,
   custom-step instruction prompting, terminal creation, polling, editor patching,
   and prompt-customization errors.
