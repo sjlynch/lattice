@@ -194,6 +194,8 @@ export function useAgentOverlay(
     if (!activeFolder) return;
     const unsub = subscribeTasks(
       activeFolder,
+      // A late joiner's partial replay holds every in-progress task — all that
+      // taskDescriptors reads — so it is applied like a full snapshot.
       (tasks) => {
         const next = taskDescriptors(tasks);
         if (sameDescriptors(next, taskDescRef.current)) return;
