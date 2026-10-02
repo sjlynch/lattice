@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useMemo, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useMemo, type ReactNode } from 'react';
 import type { Task, TaskStatus } from '../../api';
 import { LaneHeader } from './LaneHeader';
 import { TaskCard } from './TaskCard';
@@ -81,7 +81,7 @@ export function Lane({
   onClearSelection: () => void;
   strip?: ReactNode;
 }) {
-  const { isOver, hoverIndex, onDragOver, onDragLeave, onDrop, slotProps } =
+  const { isOver, hoverIndex, onDragOver, onDragLeave, onDrop, slotHandlers } =
     useLaneDropTargets(lane.id, draggingId, {
       onMove,
       onDropAt,
@@ -143,16 +143,18 @@ export function Lane({
             className={`taskboard-lane-empty ${
               dragging && hoverIndex === 0 ? 'slot-active' : ''
             }`}
-            {...slotProps(0)}
+            data-slot-index={0}
+            {...slotHandlers}
           >
             {isOver ? 'Drop here' : 'No tasks'}
           </div>
         ) : (
           <>
             <DropSlot
+              index={0}
               active={hoverIndex === 0}
               laneColor={lane.color}
-              slotProps={slotProps(0)}
+              handlers={slotHandlers}
             />
             {tasks.map((t, i) => (
               <Fragment key={t.id}>
@@ -183,9 +185,10 @@ export function Lane({
                   onRangeSelect={handleRangeSelect}
                 />
                 <DropSlot
+                  index={i + 1}
                   active={hoverIndex === i + 1}
                   laneColor={lane.color}
-                  slotProps={slotProps(i + 1)}
+                  handlers={slotHandlers}
                 />
               </Fragment>
             ))}
@@ -197,21 +200,26 @@ export function Lane({
 }
 
 // Single between-card drop target. Visually a thin strip whose `--lane-color`
-// CSS var paints the active state in the lane's accent color.
-function DropSlot({
+// CSS var paints the active state in the lane's accent color. Memoized: every
+// slot shares the lane's stable `handlers`, which find the slot by its
+// `data-slot-index`, so only slots whose `active` flag flips re-render.
+const DropSlot = memo(function DropSlot({
+  index,
   active,
   laneColor,
-  slotProps,
+  handlers,
 }: {
+  index: number;
   active: boolean;
   laneColor: string;
-  slotProps: LaneSlotProps;
+  handlers: LaneSlotProps;
 }) {
   return (
     <div
       className={`taskboard-dropslot ${active ? 'active' : ''}`}
       style={{ ['--lane-color' as string]: laneColor }}
-      {...slotProps}
+      data-slot-index={index}
+      {...handlers}
     />
   );
-}
+});

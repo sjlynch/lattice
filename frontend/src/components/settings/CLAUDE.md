@@ -70,7 +70,8 @@ skip-permissions, the Codex `--yolo` toggle (default ON — part of
 drafts and feeds the sidebar's new-Codex-terminal command as well as being read
 by the backend for every Codex spawn; the UI labels it "Disable Codex sandbox
 and approval prompts (--yolo)" so its sandbox behavior is explicit), the instrument-Claude /
-disable-memory / qa-auto-close toggles, and the three terminal-tab restore
+disable-memory / qa-auto-close / keep-workflow-step-terminals
+(`keepWorkflowStepTerminals`, default OFF) toggles, and the three terminal-tab restore
 drafts (`restoreTerminalsOnOpen` — `always` / `ask` / `never` —,
 `restoreNudgeAgents`, `restoreNudgeUserTabs`; see the terminal-registry notes
 in the root `CLAUDE.md`). The terminal-default drafts and `startupTerminals`
@@ -83,7 +84,8 @@ defaults (App resets `terminalLaunchSettings` while unloaded rather than keeping
 the previous project's), and an unrelated save used to wipe the project's
 startup commands — pinned by `__tests__/saveSettingsUnloaded.test.ts`. The
 fetched toggles (instrument /
-memory / qa-auto-close / the three restore drafts) ride it only via
+memory / qa-auto-close / keep-workflow-step-terminals / the three restore
+drafts) ride it only via
 `getSavableFetchedToggles()` (`pickSavableFetchedToggles`): all of them once this
 open's GET (`fetchUserSettingsStrict`) succeeded, otherwise only the ones the
 user edited — an unloaded, untouched draft still holds its default and would

@@ -39,7 +39,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `projectRunLock.ts` / `projectRunLock/` — cross-process per-project `run.lock` (labels, lendability, `inspectProjectRunLock`). See `projectRunLock/CLAUDE.md`.
 - `diskPressureMerge.ts` — starts a merge run when task runs wait on disk, plus the once-a-minute low-disk monitor (opt-out `autoMergeOnLowDisk: false`).
 - `workflows.ts` / `workflows/` — workflow definitions (`<project>/.lattice/workflows.json`) + `{{var}}` interpolation. See `workflows/CLAUDE.md`.
-- `workflowRuns.ts` / `workflowRuns/` — sequential workflow-run engine facade. See `workflowRuns/CLAUDE.md`.
+- `workflowRuns.ts` / `workflowRuns/` — workflow-run engine facade: step groups advance in order; adjacent `parallel: true` agent (planning) steps run together as one group (`execution.ts` `nextStepGroup`). See `workflowRuns/CLAUDE.md`.
 - `workflowPromptCustomizations.ts` / `workflowPromptCustomizations/` — spawn a harness to tailor a workflow step prompt. See its `CLAUDE.md`.
 - `homeScratch/` — shared home-scoped scratch contract (path guard, session setup, bounded cleanup, persistence) for push / QA / post-merge runs. **Path-guard / cleanup changes go here.** See its `CLAUDE.md`.
 - `pushRuns.ts` / `pushRuns/` — one-off push sessions: QA-lane Push (brief `push`) and workflow Push (brief `workflow-push`). See `pushRuns/CLAUDE.md`.
@@ -108,7 +108,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 
 - `gitBranch.ts` — navbar branch label + read-only `.git/HEAD` watcher (`/ws/git-branch`); `rearmGitBranchWatcher` is called by `projectInit` after `git init`.
 - `gitStatus.ts` — read-only git-dir + working-tree watchers → status signature (`/ws/git-status`); the git-dir watcher prunes `objects`/`lfs`/`worktrees`/`logs` (`createGitMetaIgnored`; `logs` kept for a linked-worktree git dir, whose ref lives in the unwatched common dir); `computeStatusSignature` never rejects; `rearmGitStatusWatcher` likewise.
-- `gitWatcherRegistry.ts` — the per-project watcher registry behind both: one lazy watcher per canonical root shared by all subscribers, per-subscriber-isolated fan-out, the `rearm` path.
+- `gitWatcherRegistry.ts` — the per-project watcher registry behind both: one lazy watcher per canonical root shared by all subscribers, per-subscriber-isolated fan-out, the `rearm` path. **Slots live for the process lifetime** (no close on last unsubscribe — avoids churn on WS reconnect storms): each distinct canonical root opened keeps its HEAD watcher + `gitStatus.ts`'s two recursive `watchTree` handles, bounded by the number of distinct roots. Keep that design unless replacing it, and always key by `canonicalProjectPath` — every new path spelling would add a duplicate set of recursive watchers.
 - `gitDir.ts` — `resolveGitDir`: walks up like git and follows a worktree's / submodule's `.git` pointer file (`gitdir: <path>`), so watchers watch the real git dir.
 - `gitHistory.ts` / `gitHistory/` — the timeline scrubber's `git log`, ghost-node `deletedPaths`, status signature. See `gitHistory/CLAUDE.md`.
 - `watchTree.ts` — win32 recursive `fs.watch` (one handle) replacing chokidar's per-dir handles, which locked directories; `LATTICE_WATCH_MODE` overrides; symlinks not followed.

@@ -103,3 +103,19 @@ export function routeAgentActivity(
     : ov.addActivity(parentId, event.file, event.phase, now);
   if (applied) kick();
 }
+
+// One beat of the hook's slow satellite-reap timer (the missed-SubagentStop
+// safety net). Reaps right here rather than waking the loop for `tick` to do
+// it, since the loop can't render while the tab is hidden or the graph is
+// 0×0. Then wakes the loop: `kick` for the parent easing back over its own
+// files, `wakeRefresh` for the removal itself, as a SubagentStop does above.
+export function reapStaleSatellites(
+  ov: Pick<AgentOverlay, 'reapSatellites'>,
+  now: number,
+  kick: () => void,
+  wakeRefresh: () => void,
+): void {
+  if (!ov.reapSatellites(now)) return;
+  kick();
+  wakeRefresh();
+}

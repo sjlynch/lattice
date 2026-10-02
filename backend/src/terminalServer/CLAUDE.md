@@ -54,10 +54,13 @@ close admission. Unknown/unhealthy listeners are never force-killed.
   before any PTY can throw asynchronously. Fail-fast contract regression-covered
   by `../__tests__/processGuards.test.ts`.
 - `routes.ts` — `registerTerminalRoutes(app, { fingerprint, shutdown, authToken,
-  admission?, instanceId?, sessionCount?, sessionHandler? })` (the optional
-  ones default to a fresh admission gate, a random instance id, the live
-  session count, and `createSessionHandler()`; `sessionHandler` is a test
-  seam): the JSON HTTP surface — `GET /health` (fingerprint, protocol, instance
+  admission?, instanceId?, sessionCount?, sessionHandler?,
+  onAuthenticatedRequest? })` (the optional ones default to a fresh admission
+  gate, a random instance id, the live session count, and
+  `createSessionHandler()`; `sessionHandler` is a test seam;
+  `onAuthenticatedRequest` fires on each token-authenticated request —
+  `terminal-server.ts` stamps the last-backend-contact time `parentWatch` relies
+  on): the JSON HTTP surface — `GET /health` (fingerprint, protocol, instance
   ID and capabilities), protected
   `GET /sessions`, `POST /sessions`, `DELETE /sessions/by-cwd` (**must** precede
   `/:id` — Express matches in registration order), `DELETE /sessions/:id`, and
@@ -112,6 +115,8 @@ close admission. Unknown/unhealthy listeners are never force-killed.
 ## Why detached / why no `&` kill
 
 Because it's detached + unref'd, this process does **not** see the dev
-orchestrator's Ctrl+C — that's exactly what `POST /shutdown` (client:
-`proxyShutdown`, called by `scripts/dev.mjs`) and the `parentWatch` fallback are
-for. Don't "fix" the detachment; it's what keeps agents alive across restarts.
+orchestrator's Ctrl+C — that's exactly what `POST /shutdown` (sent by
+`shutdownTerminalServer` in `backend/scripts/dev/backendLifecycle.mjs`, 2.5 s
+timeout; the backend's `proxyShutdown` is an unused re-export) and the
+`parentWatch` fallback are for. Don't "fix" the detachment; it's what keeps
+agents alive across restarts.
