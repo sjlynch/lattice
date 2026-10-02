@@ -14,7 +14,7 @@ consumed via composers (`useTaskBoardController`, `useTaskBoardState`,
 - `useTaskBoardDataView.ts` — data/view slice: lane visibility, task list + grouping, search filtering, selection (over the *filtered* grouping, so shift-ranges skip cards the search hides), display sorting, and drag affordances.
 - `useTaskBoardDetailActions.ts` — detail/editing slice: viewed task sync, new-task overlay lane, and the callbacks that adapt CRUD/run actions to the viewed task.
 - `useTaskBoardState.ts` — wraps `useTaskList`; adds lane grouping/sorting and derived board counts.
-- `useTaskSearch.ts` — case-insensitive search box state; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane "run all".
+- `useTaskSearch.ts` — case-insensitive search box state; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane "run all". Lowercased haystacks are cached per Task object in a `WeakMap` (valid because `useTaskList` structurally shares unchanged tasks and never mutates one in place), and with search off `filteredGrouped` is the caller's `grouped` itself, not a re-sort (`__tests__/taskBoardUpdateChurn.test.ts`).
 - `useTaskSelection.ts` — multi-selection on cards: selected ids, shift-range anchor, and the lane the selection is anchored in (cross-lane ranges reset).
 - `useVisibleLanes.ts` — lane-visibility toggle set for the filter chips (all visible by default).
 - `useLaneSort.ts` — per-lane arrival-date sort mode (`recent`/`oldest`/`manual`, default `recent`), persisted per project (`lattice.laneSort.<path>`); backs the lane header clock + caret. `setManual` is wired to slot drops so manual reorder survives.
