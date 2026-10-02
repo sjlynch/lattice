@@ -8,6 +8,8 @@ import {
   WS_RECONNECT_CAP_MS,
   WS_STABLE_MS,
 } from '../api/ws.ts';
+import { subscribeTasks, type TasksUpdateMeta } from '../api/tasks.ts';
+import type { Task } from '../api/types.ts';
 import {
   FakeWebSocket,
   installFakeWebSocket,
@@ -229,6 +231,101 @@ test('ordinary shared feeds retain their existing cached snapshot across disconn
   const late: unknown[] = [];
   trackSubscription(subscribeWsShared('/ordinary-snapshot', (value) => late.push(value), replay));
   assert.deepEqual(late, [{ tasks: ['task-1'] }]);
+});
+
+test('without a replay projection a late joiner receives the cached frame object itself', () => {
+  const replay = (_value: unknown) => true;
+  const first: unknown[] = [];
+  trackSubscription(subscribeWsShared('/unprojected-snapshot', (value) => first.push(value), replay));
+  const ws = latestSocket();
+  ws.serverAccept();
+  ws.onmessage?.({ data: JSON.stringify({ tasks: ['task-1'] }) });
+  const late: unknown[] = [];
+  trackSubscription(subscribeWsShared('/unprojected-snapshot', (value) => late.push(value), replay));
+  assert.equal(late.length, 1);
+  assert.equal(late[0], first[0], 'the parsed frame is what stays cached');
+});
+
+type BoardFrame = { type: string; tasks: { id: string; status: string }[]; partial?: boolean };
+
+test('a replay projection caches its projected value instead of the original frame', () => {
+  const path = '/projected-snapshot';
+  const replay = (msg: BoardFrame) => msg.type === 'tasks';
+  const replayValue = (msg: BoardFrame): BoardFrame => ({
+    type: 'tasks',
+    tasks: msg.tasks.filter((t) => t.status === 'in_progress'),
+    partial: true,
+  });
+  const frame: BoardFrame = {
+    type: 'tasks',
+    tasks: [{ id: 'running', status: 'in_progress' }, { id: 'finished', status: 'done' }],
+  };
+  const first: unknown[] = [];
+  trackSubscription(subscribeWsShared(path, (msg) => first.push(msg), replay, { replayValue }));
+  const ws = latestSocket();
+  ws.serverAccept();
+  ws.onmessage?.({ data: JSON.stringify(frame) });
+  assert.deepEqual(first, [frame], 'live subscribers still receive the whole frame');
+
+  const late: unknown[] = [];
+  trackSubscription(subscribeWsShared(path, (msg) => late.push(msg), replay, { replayValue }));
+  assert.equal(late.length, 1);
+  assert.notEqual(late[0], first[0], 'the original parsed frame is not retained');
+  assert.deepEqual(late[0], {
+    type: 'tasks',
+    tasks: [{ id: 'running', status: 'in_progress' }],
+    partial: true,
+  });
+
+  ws.onmessage?.({ data: '{"type":"other"}' });
+  assert.deepEqual(first.at(-1), { type: 'other' }, 'non-replayable frames still fan out');
+  const later: unknown[] = [];
+  trackSubscription(subscribeWsShared(path, (msg) => later.push(msg), replay, { replayValue }));
+  assert.deepEqual(later, [late[0]], 'non-replayable frames leave the projected replay alone');
+});
+
+test('a throwing replay projection caches nothing and still delivers the frame', () => {
+  const path = '/throwing-projection';
+  const replay = (_value: unknown) => true;
+  let fail = false;
+  const replayValue = (msg: unknown) => {
+    if (fail) throw new Error('projection failed');
+    return msg;
+  };
+  const first: unknown[] = [];
+  trackSubscription(subscribeWsShared(path, (msg) => first.push(msg), replay, { replayValue }));
+  const ws = latestSocket();
+  ws.serverAccept();
+  ws.onmessage?.({ data: '{"value":1}' });
+  fail = true;
+  ws.onmessage?.({ data: '{"value":2}' });
+  assert.deepEqual(first, [{ value: 1 }, { value: 2 }]);
+  const late: unknown[] = [];
+  trackSubscription(subscribeWsShared(path, (msg) => late.push(msg), replay, { replayValue }));
+  assert.deepEqual(late, [], 'neither the unprojected frame nor the stale replay is cached');
+});
+
+test('subscribeTasks replays only in-progress tasks to a late joiner, flagged partial', () => {
+  const project = 'C:/replay-projection';
+  const board: Task[] = [
+    { id: 'open-1', projectPath: project, title: 'Open', status: 'open', createdAt: 1 },
+    { id: 'run-1', projectPath: project, title: 'Running', status: 'in_progress', createdAt: 2 },
+    { id: 'done-1', projectPath: project, title: 'Done', status: 'done', createdAt: 3 },
+  ];
+  const first: [string[], TasksUpdateMeta][] = [];
+  trackSubscription(subscribeTasks(project, (tasks, meta) => first.push([tasks.map((t) => t.id), meta])));
+  const ws = latestSocket();
+  ws.serverAccept();
+  ws.onmessage?.({ data: JSON.stringify({ type: 'tasks', tasks: board }) });
+  assert.deepEqual(first, [[['open-1', 'run-1', 'done-1'], { partial: false }]]);
+
+  const late: [string[], TasksUpdateMeta][] = [];
+  trackSubscription(subscribeTasks(project, (tasks, meta) => late.push([tasks.map((t) => t.id), meta])));
+  assert.equal(FakeWebSocket.instances.length, 1, 'the late joiner shares the socket');
+  assert.deepEqual(late, [[['run-1'], { partial: true }]]);
+
+  ws.onmessage?.({ data: JSON.stringify({ type: 'tasks', tasks: board.slice(0, 1) }) });
+  assert.deepEqual(late.at(-1), [['open-1'], { partial: false }], 'live frames after joining are whole');
 });
 
 for (const finalState of ['open', 'dropped'] as const) {
