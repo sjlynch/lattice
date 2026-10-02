@@ -24,8 +24,14 @@ call `completeWorkflowStep` themselves.
   `agent` steps with `parallel: true` form a group; all other steps are
   singletons. Form authored boundaries before skipping frozen members.
 - `teardown.ts` — shared cancellation/error cleanup for every active member.
+- `failRun.ts` — `failWorkflowRun` (re-exported by the facade), so `dispatch.ts`
+  / `advance.ts` can error a run without importing the facade.
 
 **Step dispatch / spawning** (agent steps)
+- `dispatch.ts` — `dispatchStep` (kind → spawner / Run tests / control-step
+  executor) and `dispatchGroup` (every active member; a setup failure errors
+  the run). Takes `completeWorkflowStep` as a parameter, never importing
+  `advance.ts`.
 - `stepSpawner.ts` — `spawnWorkflowStep`, split into `prepareStepScratch` →
   `writeStepAssets` → `installStepCallbacks` → `spawnStepSession`. Writes the
   step dir (`<project>/.lattice/workflow-steps/<runId>/step-<N>/`) and installs
@@ -59,8 +65,10 @@ call `completeWorkflowStep` themselves.
 - `stopHookGate.ts` — the Claude Stop-hook **quiescence gate**
   (`requestStopHookStepComplete`, `recordStopReceived`, `cancelStopHookGate`),
   fed by `../agentQuiescence.ts`. See the invariant below.
-- The advance itself is the facade's `completeWorkflowStep` /
-  `workflowStepCompletionAdvance`; the route is `routes/workflows/`.
+- `advance.ts` — the advance engine, re-exported by the facade:
+  `completeWorkflowStep` / `workflowStepCompletionAdvance`, the in-flight
+  `completions` join, member settlement + group join, `completeRun`; dispatches
+  the next group via `dispatch.ts`. The route is `routes/workflows/`.
 
 **Persistence / recovery**
 - `persistence.ts` — the `~/.lattice/per-project/<hash>/workflow-runs.json`
