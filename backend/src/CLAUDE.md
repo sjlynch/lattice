@@ -107,7 +107,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 ### Git watchers, search & graph
 
 - `gitBranch.ts` — navbar branch label + read-only `.git/HEAD` watcher (`/ws/git-branch`); `rearmGitBranchWatcher` is called by `projectInit` after `git init`.
-- `gitStatus.ts` — read-only git-dir + working-tree watchers → status signature (`/ws/git-status`); `computeStatusSignature` never rejects; `rearmGitStatusWatcher` likewise.
+- `gitStatus.ts` — read-only git-dir + working-tree watchers → status signature (`/ws/git-status`); the git-dir watcher prunes `objects`/`lfs`/`worktrees`/`logs` (`createGitMetaIgnored`; `logs` kept for a linked-worktree git dir, whose ref lives in the unwatched common dir); `computeStatusSignature` never rejects; `rearmGitStatusWatcher` likewise.
 - `gitWatcherRegistry.ts` — the per-project watcher registry behind both: one lazy watcher per canonical root shared by all subscribers, per-subscriber-isolated fan-out, the `rearm` path.
 - `gitDir.ts` — `resolveGitDir`: walks up like git and follows a worktree's / submodule's `.git` pointer file (`gitdir: <path>`), so watchers watch the real git dir.
 - `gitHistory.ts` / `gitHistory/` — the timeline scrubber's `git log`, ghost-node `deletedPaths`, status signature. See `gitHistory/CLAUDE.md`.
