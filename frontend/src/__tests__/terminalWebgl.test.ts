@@ -5,8 +5,53 @@ import {
   disposeTerminalWebgl,
 } from '../components/terminal/terminalWebgl.ts';
 
+class FakeCanvas {
+  width = 300;
+  height = 150;
+  loseContextCalls = 0;
+  failGetExtension = false;
+  container: FakeCanvas[] | null = null;
+  readonly kind: 'webgl2' | '2d';
+  readonly events: string[];
+
+  constructor(kind: 'webgl2' | '2d', events: string[]) {
+    this.kind = kind;
+    this.events = events;
+  }
+
+  // Like a real canvas: returns the context it already holds, or null when
+  // it holds a different kind (xterm's 2D link layer).
+  getContext(contextId: 'webgl2') {
+    if (contextId !== this.kind) return null;
+    return {
+      getExtension: (name: 'WEBGL_lose_context') => {
+        assert.equal(name, 'WEBGL_lose_context');
+        if (this.failGetExtension) throw new Error('getExtension failed');
+        return {
+          loseContext: () => {
+            this.loseContextCalls += 1;
+            this.events.push('loseContext');
+          },
+        };
+      },
+    };
+  }
+
+  remove() {
+    const index = this.container ? this.container.indexOf(this) : -1;
+    if (this.container && index >= 0) this.container.splice(index, 1);
+    this.container = null;
+  }
+}
+
 class FakeWebglAddon {
   disposeCalls = 0;
+  events: string[] = [];
+  linkCanvas: FakeCanvas | null = null;
+  glCanvas: FakeCanvas | null = null;
+  // Canvases the renderer owns and detaches on dispose; empty when
+  // activation failed, as WebglRenderer registers its cleanup last.
+  rendererCanvases: FakeCanvas[] = [];
   readonly contextLossListeners = new Set<() => void>();
   terminal: FakeTerminal | null = null;
   failListenerRegistration = false;
@@ -25,25 +70,37 @@ class FakeWebglAddon {
 
   activate(terminal: FakeTerminal) {
     this.terminal = terminal;
+    // Mirror WebglRenderer: the link layer and WebGL canvases are appended
+    // to the screen element before activation can still fail.
+    this.linkCanvas = new FakeCanvas('2d', this.events);
+    this.glCanvas = new FakeCanvas('webgl2', this.events);
+    terminal.appendCanvas(this.linkCanvas);
+    terminal.appendCanvas(this.glCanvas);
     if (this.failActivation) throw new Error('WebGL2 context creation refused');
+    this.rendererCanvases = [this.linkCanvas, this.glCanvas];
     terminal.renderer = 'webgl';
   }
 
   dispose() {
     this.disposeCalls += 1;
+    this.events.push('dispose');
     this.contextLossListeners.clear();
     if (this.terminal) this.terminal.renderer = 'dom';
+    // Like WebglRenderer.dispose: detach only, never lose the context.
+    for (const canvas of this.rendererCanvases) canvas.remove();
+    this.rendererCanvases = [];
     this.terminal = null;
     if (this.failDisposal) throw new Error('Disposal failed');
   }
 
-  loseContext() {
+  fireContextLoss() {
     for (const listener of [...this.contextLossListeners]) listener();
   }
 }
 
 class FakeTerminal {
   readonly addons = new Set<FakeWebglAddon>();
+  readonly canvases: FakeCanvas[] = [];
   renderer: 'dom' | 'webgl' = 'dom';
   loadCalls = 0;
   disposed = false;
@@ -65,6 +122,11 @@ class FakeTerminal {
     addon.activate(this);
   }
 
+  appendCanvas(canvas: FakeCanvas) {
+    canvas.container = this.canvases;
+    this.canvases.push(canvas);
+  }
+
   write(data: string) {
     assert.equal(this.disposed, false);
     this.output += data;
@@ -80,15 +142,35 @@ function makeHarness() {
   const term = new FakeTerminal();
   const webglRef: { current: FakeWebglAddon | null } = { current: null };
   const attempts: FakeWebglAddon[] = [];
+  const events: string[] = [];
   const activate = (configure?: (addon: FakeWebglAddon) => void) => {
-    attachTerminalWebgl(term, webglRef, () => {
-      const addon = new FakeWebglAddon();
-      configure?.(addon);
-      attempts.push(addon);
-      return addon;
-    });
+    attachTerminalWebgl(
+      term,
+      webglRef,
+      () => {
+        const addon = new FakeWebglAddon();
+        addon.events = events;
+        configure?.(addon);
+        attempts.push(addon);
+        return addon;
+      },
+      () => term.canvases,
+    );
   };
-  return { term, webglRef, attempts, activate };
+  return { term, webglRef, attempts, events, activate };
+}
+
+function assertReleased(addon: FakeWebglAddon) {
+  const gl = addon.glCanvas;
+  const link = addon.linkCanvas;
+  assert.ok(gl && link);
+  assert.equal(gl.loseContextCalls, 1);
+  assert.equal(link.loseContextCalls, 0);
+  for (const canvas of [gl, link]) {
+    assert.equal(canvas.width, 0);
+    assert.equal(canvas.height, 0);
+    assert.equal(canvas.container, null);
+  }
 }
 
 test('repeated failed activation releases every registration and listener', () => {
@@ -161,7 +243,7 @@ test('context loss followed by deactivate and terminal teardown disposes once', 
   const h = makeHarness();
   h.activate();
   const addon = h.attempts[0];
-  addon.loseContext();
+  addon.fireContextLoss();
   assert.equal(h.webglRef.current, null);
   assert.equal(h.term.addons.size, 0);
   assert.equal(addon.disposeCalls, 1);
@@ -210,4 +292,94 @@ test('failure cleanup is best-effort when dispose also throws', () => {
   assert.equal(h.webglRef.current, null);
   assert.equal(h.term.loadCalls, 0);
   h.term.write('still usable');
+});
+
+test('deactivate loses the WebGL context after dispose and zeroes the canvases', () => {
+  const h = makeHarness();
+  h.activate();
+  const addon = h.attempts[0];
+  assert.equal(addon.glCanvas?.loseContextCalls, 0);
+  assert.equal(h.term.canvases.length, 2);
+
+  disposeTerminalWebgl(h.webglRef);
+  assert.deepEqual(h.events, ['dispose', 'loseContext']);
+  assertReleased(addon);
+  assert.equal(h.webglRef.current, null);
+  assert.equal(h.term.canvases.length, 0);
+
+  disposeTerminalWebgl(h.webglRef);
+  h.term.dispose();
+  assert.deepEqual(h.events, ['dispose', 'loseContext']);
+});
+
+test('context loss loses the WebGL context after dispose and zeroes the canvases', () => {
+  const h = makeHarness();
+  h.activate();
+  const addon = h.attempts[0];
+  addon.fireContextLoss();
+  assert.deepEqual(h.events, ['dispose', 'loseContext']);
+  assertReleased(addon);
+  assert.equal(h.webglRef.current, null);
+
+  disposeTerminalWebgl(h.webglRef);
+  h.term.dispose();
+  assert.deepEqual(h.events, ['dispose', 'loseContext']);
+});
+
+test('failed activation loses the context of the canvases it left attached', () => {
+  const h = makeHarness();
+  h.activate((addon) => { addon.failActivation = true; });
+  const addon = h.attempts[0];
+  assert.deepEqual(h.events, ['dispose', 'loseContext']);
+  assertReleased(addon);
+  assert.equal(h.webglRef.current, null);
+  assert.equal(h.term.canvases.length, 0);
+
+  disposeTerminalWebgl(h.webglRef);
+  h.term.dispose();
+  assert.deepEqual(h.events, ['dispose', 'loseContext']);
+});
+
+test('a throwing getExtension still clears the ref and zeroes the canvases', () => {
+  const h = makeHarness();
+  h.activate();
+  const addon = h.attempts[0];
+  const gl = addon.glCanvas;
+  assert.ok(gl);
+  gl.failGetExtension = true;
+  assert.doesNotThrow(() => disposeTerminalWebgl(h.webglRef));
+  assert.equal(h.webglRef.current, null);
+  assert.equal(addon.disposeCalls, 1);
+  assert.equal(gl.loseContextCalls, 0);
+  assert.equal(gl.width, 0);
+  assert.equal(gl.height, 0);
+  assert.equal(h.term.canvases.length, 0);
+});
+
+test('canvases already under the terminal are never released', () => {
+  const h = makeHarness();
+  const other = new FakeCanvas('webgl2', h.events);
+  h.term.appendCanvas(other);
+  h.activate();
+  disposeTerminalWebgl(h.webglRef);
+  assertReleased(h.attempts[0]);
+  assert.equal(other.loseContextCalls, 0);
+  assert.equal(other.width, 300);
+  assert.equal(h.term.canvases.length, 1);
+  assert.equal(h.term.canvases[0], other);
+});
+
+test('a throwing canvas listing keeps WebGL and still disposes it', () => {
+  const term = new FakeTerminal();
+  const webglRef: { current: FakeWebglAddon | null } = { current: null };
+  const addon = new FakeWebglAddon();
+  attachTerminalWebgl(term, webglRef, () => addon, () => {
+    throw new Error('listing failed');
+  });
+  assert.equal(webglRef.current, addon);
+  assert.equal(term.renderer, 'webgl');
+  disposeTerminalWebgl(webglRef);
+  assert.equal(webglRef.current, null);
+  assert.equal(addon.disposeCalls, 1);
+  assert.equal(term.renderer, 'dom');
 });
