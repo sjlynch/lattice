@@ -23,6 +23,11 @@ The tee captures context and sends console output through
 and fatal flushing. [../processGuards.ts](../processGuards.ts) owns the backend's
 exception/rejection fatal boundary and calls the crash writer before exiting.
 
+The ring is bounded, but the tee is not cheap: every `console.*` argument goes
+through `formatArg`, an unbounded `JSON.stringify`, before the line is cut to
+2000 chars. Console-log a summary (ids, counts, sizes), never a whole large
+object, array or Buffer — on a hot path that is per-call memory churn.
+
 ## Exit and evidence invariants
 
 - Logging is best-effort: filesystem, report setup and console-capture failures

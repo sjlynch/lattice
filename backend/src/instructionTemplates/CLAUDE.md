@@ -48,7 +48,7 @@ tokens — and returns `applyTemplate(template, values)`. The renderers stay
 **synchronous**; the resolved template is passed in as the last (optional,
 default = the built-in) argument. The **spawn callers** (`setupFiles.ts`,
 `qaRuns/session.ts`, `pushRuns/session.ts`, `postMergeHooks/sessionSetup.ts`,
-`workflowRuns/stepSpawner.ts`, `workflowRuns/testStep/runTestsStep.ts`, and
+`workflowRuns/stepSpawner.ts`, `workflowRuns/testStep/startState.ts`, and
 `writeMergeInstructions` itself) do the
 `await resolveInstructionTemplate(project, id)` and pass the result in.
 

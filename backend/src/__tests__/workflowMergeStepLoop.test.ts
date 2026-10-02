@@ -189,6 +189,25 @@ test('waitForMergeRunFinished re-checks after subscribing so fast completion is 
   assert.equal(unsubscribed, true);
 });
 
+// Settled runs are trimmed from the in-memory map once they fall off the
+// persisted slice; a run that's gone can never emit `completed`, so waiting on
+// it as if it were still running would park the Merge step forever.
+test('waitForMergeRunFinished treats an unknown run id as finished', async () => {
+  let unsubscribed = false;
+  const deps = {
+    getMergeRun: () => null,
+    subscribeMergeRuns: () => () => {
+      unsubscribed = true;
+    },
+  };
+
+  await Promise.race([
+    waitForMergeRunFinished('mr_trimmed', deps),
+    new Promise((_, reject) => setTimeout(() => reject(new Error('timed out')), 500)),
+  ]);
+  assert.equal(unsubscribed, true);
+});
+
 test('workflow cancellation during inner merge startup cancels the returned worker and waits for its teardown', async () => {
   const workflow = makeWorkflow();
   const run = makeRun();

@@ -15,6 +15,7 @@ import { computeStatusSignature } from '../gitHistory/signature.js';
 import {
   subscribeGitStatus,
   rearmGitStatusWatcher,
+  createGitMetaIgnored,
   _resetGitStatusWatchersForTest,
 } from '../gitStatus.js';
 import { withTempDir } from './helpers/tempDir.js';
@@ -220,4 +221,57 @@ test('a throwing git-status subscriber does not block the others', async () => {
       await _resetGitStatusWatchersForTest();
     }
   });
+});
+
+// Every Lattice task worktree rewrites its own HEAD / index / reflogs under
+// `.git/worktrees/<name>/`, and every commit appends reflogs under `.git/logs/`
+// — neither moves the main checkout's signature, so the metadata watcher must
+// not wake a `git status` recompute for them. What does move it stays watched.
+test('the git-metadata watcher prunes worktrees/ and logs/ but keeps HEAD, index and refs', () => {
+  const gitDir = path.resolve('repo', '.git');
+  const ignored = createGitMetaIgnored(gitDir, { linkedWorktree: false });
+  const at = (...parts: string[]) => path.join(gitDir, ...parts);
+
+  for (const p of [
+    at('worktrees'),
+    at('worktrees', 'task-abc'),
+    at('worktrees', 'task-abc', 'index'),
+    at('worktrees', 'task-abc', 'HEAD'),
+    at('worktrees', 'task-abc', 'logs', 'HEAD'),
+    at('logs'),
+    at('logs', 'HEAD'),
+    at('logs', 'refs', 'heads', 'main'),
+    at('objects', 'ab', 'cdef'),
+    at('lfs', 'objects', 'x'),
+  ]) {
+    assert.equal(ignored(p), true, `${p} is ignored`);
+  }
+
+  for (const p of [
+    gitDir,
+    at('HEAD'),
+    at('index'),
+    at('refs', 'heads', 'main'),
+    at('refs', 'remotes', 'origin', 'main'),
+    at('packed-refs'),
+    at('MERGE_HEAD'),
+    at('config'),
+    // Prefix-only matches are not the pruned subtree.
+    at('logsx'),
+    at('worktrees-old'),
+  ]) {
+    assert.equal(ignored(p), false, `${p} is watched`);
+  }
+});
+
+// A project opened on a linked worktree watches `<common>/worktrees/<name>`,
+// whose branch ref lives in the (unwatched) common dir — its `logs/HEAD` is the
+// only signal for a ref-only move, so it must stay watched there.
+test('the git-metadata watcher keeps logs/ for a linked worktree git dir', () => {
+  const gitDir = path.resolve('repo', '.git', 'worktrees', 'wt');
+  const ignored = createGitMetaIgnored(gitDir, { linkedWorktree: true });
+  assert.equal(ignored(path.join(gitDir, 'logs', 'HEAD')), false);
+  assert.equal(ignored(path.join(gitDir, 'HEAD')), false);
+  assert.equal(ignored(path.join(gitDir, 'index')), false);
+  assert.equal(ignored(path.join(gitDir, 'objects', 'ab')), true);
 });

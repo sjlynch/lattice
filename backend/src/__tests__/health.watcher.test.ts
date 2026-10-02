@@ -8,8 +8,9 @@ import path from 'node:path';
 import type { HealthMetrics } from '../health/index.js';
 import type { CacheEntry } from '../health/cache.js';
 import { hydrateWatcherState } from '../health/watcher/cacheHydration.js';
-import { loadOrAnalyzeFile } from '../health/watcher/fileAnalysis.js';
+import { loadOrAnalyzeFile, readFileForAnalysis } from '../health/watcher/fileAnalysis.js';
 import type { ProjectWatcher } from '../health/watcher/types.js';
+import { LOC_MAX_BYTES } from '../health/constants.js';
 import { minimalMetrics } from './helpers/health.js';
 import { withTempDir, writeLayout } from './helpers/tempDir.js';
 
@@ -84,5 +85,50 @@ test('change event re-analyzes despite a matching (mtime,size) cache entry', asy
     );
     // The re-analysis refreshes the cache entry for subsequent scans.
     assert.deepEqual(stale.get(filePath)?.imports, ['./real'], 'cache entry refreshed');
+  });
+});
+
+// A large, non-ignored file that keeps being appended to (a log, JSON dump, CSV
+// export) fires a forced re-analysis on every `change`, and each one used to
+// read the whole file into memory — up to eight at once — only to discard it
+// at the LOC_MAX_BYTES cutoff. The already-stat'd size must skip the read.
+test('an oversize changed file is never read and yields no analysis', async (t) => {
+  await withTempDir('lattice-health-oversize-', async (dir) => {
+    const filePath = path.join(dir, 'events.json');
+    const fh = await fs.open(filePath, 'w');
+    try {
+      await fh.truncate(LOC_MAX_BYTES + 1);
+    } finally {
+      await fh.close();
+    }
+    const { size } = await fs.stat(filePath);
+
+    const sets: string[] = [];
+    const proj = {
+      cache: {
+        get: () => undefined,
+        set: (p: string) => { sets.push(p); },
+        save() { /* no-op in test */ },
+      },
+    } as unknown as ProjectWatcher;
+    let analyzed = 0;
+    const readFile = t.mock.method(fs, 'readFile');
+    const readsOfFile = () => readFile.mock.calls.filter((c) => c.arguments[0] === filePath).length;
+
+    const result = await loadOrAnalyzeFile(proj, filePath, '.json', { forceReanalyze: true }, async () => {
+      analyzed += 1;
+      return null;
+    });
+    assert.equal(result, null);
+    assert.equal(readsOfFile(), 0, 'the watcher must not read an oversize file');
+    assert.equal(analyzed, 0);
+    assert.deepEqual(sets, []);
+
+    assert.equal(await readFileForAnalysis(filePath, size), null);
+    assert.equal(readsOfFile(), 0);
+
+    // The post-read cutoff stays as a backstop for a file that grew after its stat.
+    assert.equal(await readFileForAnalysis(filePath, 10), null);
+    assert.equal(await readFileForAnalysis(filePath), null);
   });
 });
