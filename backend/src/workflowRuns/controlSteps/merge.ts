@@ -330,7 +330,10 @@ export function waitForMergeRunFinished(
       resolve,
     );
 
+    // An unknown id is finished, not running: settled runs are trimmed from
+    // the in-memory map once they fall off the persisted slice, and a run
+    // that's gone can never emit the event this would otherwise wait for.
     const current = deps.getMergeRun(mergeRunId);
-    if (current && current.status !== 'running') finish();
+    if (!current || current.status !== 'running') finish();
   });
 }

@@ -57,7 +57,7 @@ import { reconcileAgents, removeAgent } from './agentOverlayReconcile';
 import {
   createSatellite,
   disposeSatellite,
-  shouldReapSatellite,
+  reapIdleSatellites,
 } from './agentOverlaySatellites';
 import { tickOverlay } from './agentOverlayTick';
 import type { AgentDescriptor } from './agentOverlayTypes';
@@ -181,14 +181,16 @@ export class AgentOverlay {
     return tickOverlay(this.ctx, now, graph, engineHot);
   }
 
-  // Whether any satellite is past its idle TTL (reaped on the next tick).
-  hasReapableSatellites(now: number): boolean {
+  // Dispose every satellite past its idle TTL now rather than on the next tick,
+  // which never comes while the render loop is paused (hidden tab / collapsed
+  // graph). Returns whether any was removed, so the caller can wake the loop to
+  // paint it.
+  reapSatellites(now: number): boolean {
+    let reaped = false;
     for (const agent of this.ctx.agents.values()) {
-      for (const sat of agent.satellites.values()) {
-        if (shouldReapSatellite(sat, now)) return true;
-      }
+      if (reapIdleSatellites(this.ctx, agent, now)) reaped = true;
     }
-    return false;
+    return reaped;
   }
 
   // Whether `taskId`'s node is on screen (activity for it can land).

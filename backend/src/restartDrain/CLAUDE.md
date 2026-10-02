@@ -46,7 +46,10 @@ terminal-server and survives, and the create is a tracked transition).
 ## Tracked transitions (`gate.ts`)
 
 `beginRestartTransition(label)` / `trackRestartTransition(label, promise)` —
-always on, independent of the drain. Current sites:
+always on, independent of the drain. **Call the function `beginRestartTransition`
+returns on every path (`try/finally`)**: a leaked entry never clears, so every
+later `/prepare` waits out its full settle budget (the runner sends 45 s) and
+answers `ready:false`. Current sites:
 
 - `workflowRuns.ts` — `startWorkflowRun` (run in memory → first checkpoint +
   dispatch) and every `completeWorkflowStep` advance (the `completions` promise).
