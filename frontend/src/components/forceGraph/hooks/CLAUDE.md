@@ -186,9 +186,11 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   frames, and drives the per-frame `tick` off the scene frame driver — holding the
   idle controller's `agents` reason only while `tick` reports motion. See the APL
   notes in `../CLAUDE.md`.
-- `agentOverlayEvents` — descriptor projection/equality and activity/lifecycle
-  routing using the hook's existing buffer, timestamp, and kick/refresh callbacks;
-  subscriptions, pending replay, and render-loop ownership stay in the hook.
+- `agentOverlayEvents` — descriptor projection/equality, activity/lifecycle
+  routing, and the satellite-reap timer beat (`reapStaleSatellites`: reaps
+  without a frame, then wakes the loop), using the hook's existing buffer,
+  timestamp, and kick/refresh callbacks; subscriptions, pending replay, timers
+  and render-loop ownership stay in the hook.
 
 ## Render-vs-physics splits (settings effects, all guarded)
 

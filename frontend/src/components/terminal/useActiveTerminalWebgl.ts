@@ -29,7 +29,12 @@ export function useActiveTerminalWebgl({
 
     if (active) {
       if (!webglRef.current) {
-        attachTerminalWebgl<WebglAddon>(term, webglRef, () => new WebglAddon());
+        attachTerminalWebgl<WebglAddon>(
+          term,
+          webglRef,
+          () => new WebglAddon(),
+          () => (term.element ? Array.from(term.element.querySelectorAll('canvas')) : []),
+        );
       }
       try {
         fitRef.current?.fit();
