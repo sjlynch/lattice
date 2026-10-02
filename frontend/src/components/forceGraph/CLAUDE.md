@@ -88,6 +88,26 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `sprites` / `spriteShapes` / `spriteTextures` / `spritePicking` — per-(ext,
   shape,color) `SpriteMaterial` cache, shape geometry, canvas→`CanvasTexture`
   (sets `colorSpace = SRGBColorSpace`), sprite-quad pick bounds.
+- `spriteMaterialCache.ts` — `createSpriteMaterialCache` (`get`/`peek`/
+  `disposeAll`) behind every module-level sprite-material cache;
+  `disposeSharedGraphResources` disposes and empties them all, plus the halo
+  singletons' GPU side, once per graph teardown (see `hooks/CLAUDE.md` for the
+  order). Coverage:
+  [spriteMaterialCache.test.ts](../../__tests__/spriteMaterialCache.test.ts).
+  **Module-level caches survive remounts** (project switch, Retry,
+  error-boundary reset) and are bounded by key, not by graph:
+  - `sprites.materialFor`: one per `styleKey` (extensions, shapes and overlay
+    recolors).
+  - `claudeNodeSprite`'s `materialCache` / `satelliteMaterialCache` and
+    `worktreeRing`'s cache: one material + texture per color. Slots are reused,
+    but `taskColors.ts`'s id-hash fallback for slotless tasks can mean one
+    color per task id.
+  - `changeRingMaterials`: three ring kinds + one ghost. `haloResources`: two
+    singletons (below).
+  Removing a node, a ring or an agent (`AgentOverlay.destroy` included) never
+  drops an entry; graph teardown is their only release. Label-texture caches
+  (`labelsOverlay` / `metricOverlayFactory`) have their own owner, see
+  `labelTexture.ts`.
 - `locOverlay` / `healthOverlay` / `deadCodeOverlay` / `labelsOverlay` — overlay
   configs + per-overlay registries. `deadCodeOverlay` is a pure recolor;
   `labelsOverlay.applyNodeLabelState` is the per-node Alt name-label toggle.
@@ -115,8 +135,13 @@ label physics in `labelPhysics/CLAUDE.md`.
 **Sibling-child ring/halo toggles ("the halo pattern")**
 - `haloResources.ts` — owns the lazy ring/glow `CanvasTexture` and
   `SpriteMaterial` singletons. Every node borrows the same two materials and
-  their textures. Once created, they are retained for the module lifetime;
-  there is no halo resource teardown API. Removing a halo must not dispose them.
+  their textures. Once created, the JS objects are retained for the module
+  lifetime. Their GPU side is not: three-forcegraph's `_deallocate` disposes
+  the materials and maps attached to nodes on every `refresh()` and
+  `_destructor`, and three re-uploads them on next use. The only explicit
+  dispose is the teardown-only `disposeHaloResources`, called by
+  `disposeSharedGraphResources` (`spriteMaterialCache.ts`) once per graph
+  teardown; it keeps the singletons. Removing a halo must not dispose them.
 - `halo.ts` — owns selection-glow settings, shared pulse/reset, and per-node
   Group attachment. The Group contains a ring below the body and an additive
   glow above it; removal only detaches the Group. Pulse/reset use
@@ -152,7 +177,9 @@ label physics in `labelPhysics/CLAUDE.md`.
 
 **Agent Presence Layer**
 - `claudeNodeSprite.ts` — `makeClaudeNode` (presence disc+glow) /
-  `makeSatelliteNode` (subagent ring).
+  `makeSatelliteNode` (subagent ring). Their per-color materials are
+  module-level and outlive `AgentOverlay.destroy`; graph teardown releases
+  them (see `spriteMaterialCache.ts` above).
 - `agentOverlay.ts` — thin façade over the APL (`setAgents`/`addActivity`/
   `addSubagent*`/`tick`/`setSizes`/`isActive`/`destroy`) delegating to siblings
   `agentOverlay{Context,Constants,Types,PathIndex,Reconcile,Activity,Satellites,

@@ -23,16 +23,26 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   as resources are acquired. Both paths share an idempotent teardown, attempting
   every acquired cleanup once even if one throws, in this order: context-lost
   listener → context-restored listener → frame subscription → idle controller →
-  resize observer → label registries → graph `_destructor` →
-  `graphRef.current = null`. Failed setup also clears the retry container with
-  `replaceChildren()` before reporting the original renderer error through
+  resize observer → label registries → graph `_destructor` (`graph.renderer()`
+  captured just before) → shared resources (`disposeSharedResources` =
+  `../spriteMaterialCache`'s `disposeSharedGraphResources`) →
+  `renderer.forceContextLoss()` → `graphRef.current = null`. The destructor's
+  `renderer.dispose()` keeps the context and its drawing buffer until a GC;
+  only the context loss frees them now and stops remounts piling contexts up
+  toward Chrome's per-page limit. Shared resources go while the context is live
+  (dropping the old renderer's `dispose` listeners); the loss goes last, so
+  nothing after it touches GL, and the listeners removed first mean it raises no
+  "GPU context lost" notice. Both run once for every returned graph, including
+  after a throwing `_destructor`. Failed setup also clears the retry container
+  with `replaceChildren()` before reporting the original renderer error through
   `onRendererFailure`; cleanup faults cannot replace it. Normal unmount propagates
   the first cleanup error only after all remaining attempts. A constructor that
-  throws provides no returned instance to own or destroy. Shared label resources
-  are released through `clearAllLabelRegistries`, never ad hoc per-node disposal.
+  throws provides no returned instance to own, destroy or lose. Shared label
+  resources are released through `clearAllLabelRegistries`, never ad hoc
+  per-node disposal.
   See [lifecycle tests](../../../__tests__/forceGraphInitializationLifecycle.test.ts)
-  for configuration/registration fault injection, cleanup order/idempotence, and
-  retry-container behavior.
+  for configuration/registration fault injection, cleanup order/idempotence,
+  context loss, shared-resource disposal and retry-container behavior.
 - `useRadialTidyLayout` — the on-load untangler. Fires once per project on first
   data populate (and on demand via the returned `runLayout`, wired to the Spread
   tab's "Untangle now" button): seeds each node at its radial tidy-tree X/Z
