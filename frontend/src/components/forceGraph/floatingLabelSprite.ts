@@ -158,11 +158,15 @@ export function disposeLabelEntry(entry: FloatingLabelEntry): void {
 }
 
 // Dispose every entry's cloned connector geometry, then empty the registry.
-// The overlay-refresh paths used to call a bare `registry.clear()`, which
-// dropped the entries without disposing their geometry — and 3d-force-graph
-// doesn't traverse-dispose the node objects it replaces on `graph.refresh()`,
-// so each refresh while an LOC/health overlay was active stranded one cloned
-// BufferGeometry (a GPU buffer) per file node. Always dispose before clearing.
+// Geometry only: it releases no label-texture refcounts, so the overlay
+// registries go through `clearAllLabelRegistries` (hooks/refresh.ts) instead.
+// For node objects the library replaces, the dispose is a harmless repeat:
+// three-forcegraph's `onRemoveObj` → `_deallocate` recursively disposes every
+// removed object's geometry, material and `material.map` on `graph.refresh()`
+// and on a `graphData()` swap, and three-render-objects' `emptyObject` does the
+// same to the whole scene on `_destructor`. Disposing is idempotent; a line
+// removed outside a digest (the Alt delta walker's per-node label toggle) is
+// not deallocated by the library and still needs it.
 export function disposeAndClearRegistry(registry: Set<FloatingLabelEntry>): void {
   for (const entry of registry) disposeLabelEntry(entry);
   registry.clear();

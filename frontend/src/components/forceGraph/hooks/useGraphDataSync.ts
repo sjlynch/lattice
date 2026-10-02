@@ -26,6 +26,26 @@ type Args = {
   deadModeRef: MutableRefObject<boolean>;
 };
 
+// Trailing window that coalesces the fast-patch path's refreshes while an
+// H/Z/D view is held or pinned. The scan scheduler flushes backend `updated`
+// events in METRIC_BATCH_MS (50 ms) batches, and one save, a merge that
+// fast-forwards main, or a cross-file dependent cascade arrives as a burst of
+// them. Each `graph.refresh()` frees and rebuilds EVERY node and link THREE
+// object (≈25–30 MB of short-lived JS on a 3k-file project, promoted to
+// old-space because it lives until the next refresh), so a refresh per batch
+// meant up to ~20 full scene rebuilds a second for as long as a pin stayed on.
+// The metric fields are still patched onto the sim nodes immediately; only the
+// repaint waits. The overlay toggle (keydown / pin) still refreshes at once.
+export const METRIC_REFRESH_COALESCE_MS = 400;
+
+type TimerRef = MutableRefObject<ReturnType<typeof setTimeout> | null>;
+
+function cancelMetricRefresh(timerRef: TimerRef): void {
+  if (timerRef.current === null) return;
+  clearTimeout(timerRef.current);
+  timerRef.current = null;
+}
+
 function currentNodesById(graph: ForceGraph3DInstance): Map<string, SimNode> {
   const getGraphData = graph.graphData as unknown as () => { nodes?: object[] };
   return indexNodesById(getGraphData.call(graph)?.nodes ?? []);
@@ -56,7 +76,8 @@ function ensureNodeIndex(
 // `HealthUpdate` (file save → vite/tsc emit → AV scan → …). Most of
 // those keep the same set of files and links — only one node's
 // `health/healthDetails/loc` changes. In that case we mutate those
-// fields on the in-place sim nodes and call `graph.refresh()`. We do
+// fields on the in-place sim nodes and, only while an H/Z/D view shows them,
+// schedule ONE coalesced `graph.refresh()` (METRIC_REFRESH_COALESCE_MS). We do
 // NOT call `graph.graphData(...)` (which would reset the cooldown and
 // re-warmup the layout) and we do NOT acquire the idle controller's
 // engine reason. This is what keeps the render loop paused on an
@@ -97,12 +118,37 @@ export function useGraphDataSync({
   // building ghosts or the sorted shape fingerprint.
   const prevDataRef = useRef<ScanResult | null>(null);
   const prevHistoryRef = useRef<GitHistoryResult | null>(null);
+  // The single pending coalesced metric refresh (see METRIC_REFRESH_COALESCE_MS).
+  // Cancelled on unmount, on the `!data` reset and on a full swap; NOT on the
+  // main effect's per-update cleanup, which would turn every batch of a long
+  // burst into a reschedule and hold the repaint off until the burst ends.
+  const pendingMetricRefreshRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => () => cancelMetricRefresh(pendingMetricRefreshRef), []);
 
   useEffect(() => {
     const graph = graphRef.current;
     if (!graph) return;
+    const metricOverlayActive = () =>
+      healthModeRef.current || locModeRef.current || deadModeRef.current;
+    // Repaint the patched metric fields once per window. A batch arriving while
+    // a refresh is already pending joins it: that refresh reads the sim nodes
+    // when it fires, so it paints this batch's values too.
+    const scheduleMetricRefresh = () => {
+      if (pendingMetricRefreshRef.current !== null) return;
+      pendingMetricRefreshRef.current = setTimeout(() => {
+        pendingMetricRefreshRef.current = null;
+        // The view may have been released (its keyup already refreshed) or the
+        // graph remounted while the refresh waited.
+        if (graphRef.current !== graph || !metricOverlayActive()) return;
+        clearLabelsAndRefresh(graph);
+      }, METRIC_REFRESH_COALESCE_MS);
+    };
     if (!data) {
-      clearAllLabelRegistries();
+      cancelMetricRefresh(pendingMetricRefreshRef);
+      // Batched: release without evicting; the deferred trim runs after the
+      // library's digest has removed the nodes (hooks/refresh.ts).
+      clearAllLabelRegistries('batched');
       graph.graphData({ nodes: [], links: [] });
       if (lastShapeRef.current !== null) setDataGeneration((g) => g + 1);
       nodeIndexRef.current = null;
@@ -140,9 +186,7 @@ export function useGraphDataSync({
       // refresh would rebuild every sprite to a byte-identical result and wake
       // the render loop on every HealthUpdate. The fields are patched in place
       // either way, so toggling an overlay on later picks up the latest values.
-      const metricOverlayActive =
-        healthModeRef.current || locModeRef.current || deadModeRef.current;
-      if (changed && metricOverlayActive) clearLabelsAndRefresh(graph);
+      if (changed && metricOverlayActive()) scheduleMetricRefresh();
       prevDataRef.current = data;
       return;
     }
@@ -168,21 +212,23 @@ export function useGraphDataSync({
       // tab. So refresh only when an overlay is actually showing those values;
       // the fields are still patched in place, so toggling an overlay on later
       // (its keydown calls clearLabelsAndRefresh) picks up the latest values.
-      const metricOverlayActive =
-        healthModeRef.current || locModeRef.current || deadModeRef.current;
-      if (changed && metricOverlayActive) clearLabelsAndRefresh(graph);
+      // Coalesced like the cheap path above.
+      if (changed && metricOverlayActive()) scheduleMetricRefresh();
       prevDataRef.current = data;
       prevHistoryRef.current = history;
       return;
     }
 
-    // Full structural swap. Clear the overlay registries first — the
-    // library is about to detach every sprite, so old registry entries
-    // would otherwise point at orphaned THREE objects until the next
-    // `cleanupStaleRegistryEntries` pass. The release-aware clear drops each
-    // detached sprite's label-texture refcount AND disposes its cloned connector
-    // geometry so the caches reclaim them (a bare clear leaks those GPU buffers).
-    clearAllLabelRegistries();
+    // Full structural swap. `graph.graphData(...)` rebuilds every node object,
+    // so a pending coalesced refresh would only repeat that work.
+    cancelMetricRefresh(pendingMetricRefreshRef);
+    // Clear the overlay registries first — the library is about to detach
+    // every sprite, so old registry entries would otherwise point at orphaned
+    // THREE objects until the next `cleanupStaleRegistryEntries` pass. The
+    // release-aware clear balances each detached sprite's label-texture
+    // refcount. Batched: the swap's rebuild re-acquires the labels still shown
+    // instead of redrawing them, and one deferred trim follows (refresh.ts).
+    clearAllLabelRegistries('batched');
     graph.graphData(
       buildForceGraphData(currentNodesById(graph), mergedNodes, mergedLinks, data.root),
     );

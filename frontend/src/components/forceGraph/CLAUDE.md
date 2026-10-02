@@ -100,7 +100,14 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `measuredLabelTexture.ts` — lazy shared measuring context + fresh rasterized
   textures. `labelTexture.ts` owns cache keying, refcounts, free-entry eviction
   and texture/paired-material/canvas teardown. A cache miss finishes drawing
-  before eviction/insertion. Ownership coverage:
+  before eviction/insertion. **Cache bounds:** `labelsOverlay.ts` (Alt names)
+  and `metricOverlayFactory.ts` (LOC + health, one shared cache) each keep a
+  module-level cache that survives graph remounts and project switches, capped
+  at `maxEntries: 256` AND `maxFreeBytes: LABEL_TEXTURE_FREE_BYTES_BUDGET`
+  (8 MB of canvas pixels, width×height×4 recorded at draw time) for FREE
+  entries only. Both caps evict the oldest free entry first; in-use entries
+  are never counted or evicted. The agent-label cache sets no byte budget.
+  Ownership coverage:
   [labelTextureCache.test.ts](../../__tests__/labelTextureCache.test.ts).
 - `labelSpriteResources` / `floatingLabelSprite` / `metricOverlayFactory` —
   module-owned shared sprite/connector caches. `labelSpriteResources` holds
@@ -284,16 +291,33 @@ render-vs-physics splits, the Escape chord). See `hooks/CLAUDE.md`.
 - **Label-registry teardown (GPU-buffer-leak guard).** Label/connector resources
   are module-owned + refcount-guarded: balance every `buildMeasuredLabelTexture`
   with a `releaseLabelTexture`; eviction skips in-use (refcount>0) textures and
-  evicts free ones (O(1), via the cache's `free` set) back down to the cap as
-  labels are released after an over-cap burst, even if the overlay stays off
-  and no new texture is built. Eviction/owner teardown also zeroes each owned
-  label canvas's dimensions to release native pixel storage without waiting
-  for GC; free entries retained for reuse and live/shared labels keep their
-  pixels. The repulsion scratch list is reset when an
-  overlay stops so it doesn't pin the last frame's sprites; route
-  every teardown through `clearAllLabelRegistries` (never `.clear()` a registry).
-  Each connector gets its own `clone()`d geometry — the only thing
-  `disposeLabelEntry` frees; `AgentOverlay.destroy` frees the agent-label cache.
+  evicts free ones (O(1), via the cache's `free` set, oldest first) down to both
+  caps. Eviction/owner teardown also zeroes each owned label canvas's dimensions
+  to release native pixel storage without waiting for GC; free entries retained
+  for reuse and live/shared labels keep their pixels. Never zero or dispose an
+  in-use entry. **Release paths:**
+  - **Blanket:** `clearAllLabelRegistries` (`hooks/refresh.ts`; never
+    `.clear()` a registry). `'batched'` mode (`clearLabelsAndRefresh`, and
+    `useGraphDataSync`'s structural swap and `!data` reset) releases refcounts
+    *without evicting*: on-screen labels move to `free` in order and the rebuild
+    re-acquires them, with no new canvases. Misses and single releases don't
+    evict while the batch is open either. Then one deferred trim
+    (`LABEL_TRIM_DELAY_MS`) runs after the library's debounced digest has re-run
+    `nodeThreeObject`. A newer batched clear reschedules it, and a batch that
+    left nothing free schedules none. The default `'teardown'` mode is graph
+    teardown's `clearLabels`: it evicts EVERY free entry, so the module-level
+    caches hold no free canvases after the graph is destroyed.
+  - **Per entry:** single releases trim at once. These are the Alt delta
+    walker's label toggle and the repulsion loop's `onDetached`
+    (`releaseNameLabelEntry` / `releaseMetricLabelEntry` for labels whose node
+    root left the scene; see `labelPhysics/CLAUDE.md`).
+  The library's `_deallocate` disposes each replaced node object's geometry,
+  material and `material.map` on `refresh()` / `graphData()` / `_destructor`,
+  so a re-acquired texture is re-uploaded from its retained canvas. The
+  repulsion scratch list is reset when an overlay stops so it doesn't pin the
+  last frame's sprites. Each connector gets its own `clone()`d geometry — the
+  only thing `disposeLabelEntry` frees (a harmless repeat for library-replaced
+  objects); `AgentOverlay.destroy` frees the agent-label cache.
 - **`dataGeneration` re-capture.** Both batched controllers cache their node/link
   arrays at `rebuild()`. A full `graph.graphData(...)` swap replaces every object
   — including the git-history **ghost merge** that leaves `structuralData`

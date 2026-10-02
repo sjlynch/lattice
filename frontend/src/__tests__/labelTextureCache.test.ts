@@ -14,11 +14,17 @@ import { installCanvasDocument } from './domDoubles.ts';
 // modules under test can be imported statically below.
 // ---------------------------------------------------------------------------
 
-installCanvasDocument((t) => ({
-  actualBoundingBoxLeft: t.length * 4,
-  actualBoundingBoxRight: t.length * 4,
-  width: t.length * 8,
-}));
+// drawMeasuredLabelTexture measures exactly once per new canvas, so this
+// counts rasterized labels (cache misses).
+let canvasesDrawn = 0;
+installCanvasDocument((t) => {
+  canvasesDrawn++;
+  return {
+    actualBoundingBoxLeft: t.length * 4,
+    actualBoundingBoxRight: t.length * 4,
+    width: t.length * 8,
+  };
+});
 
 const disposedTextures = new Set<object>();
 const disposedMaterials = new Set<object>();
@@ -38,8 +44,10 @@ THREE.Material.prototype.dispose = function (this: object) {
 import {
   buildMeasuredLabelTexture,
   createLabelTextureCache,
+  deferLabelTextureTrim,
   disposeLabelTextureCache,
   releaseLabelTexture,
+  trimLabelTextureCache,
   type LabelTextureOptions,
 } from '../components/forceGraph/labelTexture.ts';
 import { makeFloatingLabelSprite } from '../components/forceGraph/floatingLabelSprite.ts';
@@ -232,6 +240,128 @@ test('owner teardown releases all canvas pixels and the cache can be rebuilt', (
   assert.ok(rebuilt.image.width * rebuilt.image.height > 0, 'rebuilt label has fresh pixels');
   releaseLabelTexture(cache, active);
   assert.equal(cache.refs.get(cache.keyOf.get(rebuilt)!), 1);
+});
+
+// The refresh / structural-swap path: a blanket clear releases every mounted
+// label, then the library's digest rebuilds the node objects. Trimming per
+// release used to dispose every still-on-screen label past the cap and redraw
+// each one as a brand-new canvas in the rebuild.
+test('a batched clear + rebuild of 300 labels draws zero new canvases; the deferred trim restores the cap', () => {
+  disposedTextures.clear();
+  const cache = createLabelTextureCache();
+  const opts = OPTS(256);
+  const label = (i: number) => `file${i}.ts`;
+  const mounted = Array.from({ length: 300 }, (_, i) =>
+    buildMeasuredLabelTexture(cache, label(i), '#ffffff', opts));
+
+  deferLabelTextureTrim(cache);
+  for (const tex of mounted) releaseLabelTexture(cache, tex);
+  assert.equal(cache.free.size, 300, 'every released entry is free');
+  assert.equal(cache.byKey.size, 300, 'nothing is evicted while the batch is open');
+  assert.equal(disposedTextures.size, 0);
+
+  const drawnBefore = canvasesDrawn;
+  for (let i = 0; i < 300; i++) {
+    assert.equal(buildMeasuredLabelTexture(cache, label(i), '#ffffff', opts), mounted[i]);
+  }
+  assert.equal(canvasesDrawn - drawnBefore, 0, 'the rebuild drew no new canvas');
+  assert.equal(cache.free.size, 0);
+  for (const tex of mounted) {
+    assert.ok(tex.image.width * tex.image.height > 0, 're-acquired labels keep their pixels');
+  }
+
+  trimLabelTextureCache(cache);
+  assert.equal(disposedTextures.size, 0, 'every entry is in use again, so the trim evicts none');
+  assert.equal(cache.byKey.size, 300);
+
+  // The next refresh shows 200 of them plus 5 new labels (misses in the batch).
+  deferLabelTextureTrim(cache);
+  for (const tex of mounted) releaseLabelTexture(cache, tex);
+  for (let i = 0; i < 200; i++) buildMeasuredLabelTexture(cache, label(i), '#ffffff', opts);
+  for (let i = 0; i < 5; i++) buildMeasuredLabelTexture(cache, `new${i}.ts`, '#ffffff', opts);
+  assert.equal(canvasesDrawn - drawnBefore, 5, 'only the new labels were drawn');
+  assert.equal(disposedTextures.size, 0, 'misses inside the batch evict nothing');
+  assert.equal(cache.byKey.size, 305);
+
+  trimLabelTextureCache(cache);
+  assert.equal(cache.byKey.size, 256, 'one deferred trim restores the cap');
+  assert.equal(cache.free.size, 51);
+  for (let i = 0; i < 300; i++) {
+    assert.equal(disposedTextures.has(mounted[i]), i >= 200 && i < 249,
+      `oldest free entries go first (label ${i})`);
+  }
+
+  // The trim ended the batch: a miss evicts immediately again.
+  buildMeasuredLabelTexture(cache, 'after.ts', '#ffffff', opts);
+  assert.ok(disposedTextures.has(mounted[249]), 'outside a batch a miss evicts at once');
+  assert.equal(cache.byKey.size, 256);
+});
+
+test('the free-bytes budget evicts the oldest free entries first and never an in-use one', () => {
+  disposedTextures.clear();
+  // Equal-length texts draw equal canvases; measure one in a throwaway cache.
+  const probe = buildMeasuredLabelTexture(createLabelTextureCache(), 'b0', '#ffffff', OPTS(256));
+  const bytesEach = probe.image.width * probe.image.height * 4;
+  assert.ok(bytesEach > 0);
+  const opts = { ...OPTS(256), maxFreeBytes: 3 * bytesEach };
+  const cache = createLabelTextureCache();
+  const labels = Array.from({ length: 6 }, (_, i) =>
+    buildMeasuredLabelTexture(cache, `b${i}`, '#ffffff', opts));
+  assert.equal(cache.freeBytes, 0, 'in-use entries never count against the budget');
+
+  for (const tex of labels.slice(0, 3)) releaseLabelTexture(cache, tex);
+  assert.equal(cache.freeBytes, 3 * bytesEach);
+  assert.equal(disposedTextures.size, 0, 'exactly at the budget: nothing evicted');
+
+  releaseLabelTexture(cache, labels[3]);
+  assert.ok(disposedTextures.has(labels[0]), 'the oldest free entry goes first');
+  assert.equal(disposedTextures.size, 1);
+  assert.equal(cache.freeBytes, 3 * bytesEach);
+  assert.equal(labels[0].image.width * labels[0].image.height, 0, 'its pixels are released');
+
+  // A re-hit takes the entry, and its bytes, out of the free set.
+  assert.equal(buildMeasuredLabelTexture(cache, 'b1', '#ffffff', opts), labels[1]);
+  assert.equal(cache.freeBytes, 2 * bytesEach);
+
+  releaseLabelTexture(cache, labels[4]);
+  assert.equal(disposedTextures.size, 1);
+  // b1 is now the NEWEST free entry, so b2 is the one that goes.
+  releaseLabelTexture(cache, labels[1]);
+  assert.ok(disposedTextures.has(labels[2]));
+  assert.ok(!disposedTextures.has(labels[1]), 'a re-freed entry counts as newest');
+  assert.equal(cache.freeBytes, 3 * bytesEach);
+  assert.ok(!disposedTextures.has(labels[5]), 'the in-use entry is never disposed');
+  assert.ok(labels[5].image.width * labels[5].image.height > 0);
+  assert.equal(cache.byKey.size, 4);
+});
+
+test('a teardown trim reclaims every free entry and never touches refcount > 0', () => {
+  disposedTextures.clear();
+  const cache = createLabelTextureCache();
+  const opts = OPTS(256);
+  const live = buildMeasuredLabelTexture(cache, 'live', '#ffffff', opts);
+  const shared = buildMeasuredLabelTexture(cache, 'shared', '#ffffff', opts);
+  assert.equal(buildMeasuredLabelTexture(cache, 'shared', '#ffffff', opts), shared);
+  const gone = Array.from({ length: 5 }, (_, i) =>
+    buildMeasuredLabelTexture(cache, `gone${i}`, '#ffffff', opts));
+
+  // Left over from a batched clear whose rebuild didn't re-acquire them.
+  deferLabelTextureTrim(cache);
+  for (const tex of gone) releaseLabelTexture(cache, tex);
+  releaseLabelTexture(cache, shared);
+  assert.equal(disposedTextures.size, 0);
+
+  trimLabelTextureCache(cache, 0);
+  assert.equal(cache.trimDeferred, false, 'the trim ends the batch');
+  assert.equal(cache.free.size, 0, 'no free entry survives teardown');
+  assert.equal(cache.freeBytes, 0);
+  assert.equal(cache.byKey.size, 2);
+  for (const tex of gone) assert.ok(disposedTextures.has(tex));
+  for (const tex of [live, shared]) {
+    assert.ok(!disposedTextures.has(tex), 'an entry with refcount > 0 is never disposed');
+    assert.ok(tex.image.width * tex.image.height > 0);
+  }
+  assert.equal(cache.refs.get(cache.keyOf.get(shared)!), 1);
 });
 
 test('AgentOverlay.destroy disposes agent label textures + materials', () => {

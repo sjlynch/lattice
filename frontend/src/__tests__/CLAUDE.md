@@ -152,12 +152,21 @@ the cause of the cross-PC Chrome OOM report.
 - `labelTextureCache.test.ts` — refcounts protect mounted/shared labels;
   release-time eviction reclaims excess textures, paired materials and canvas
   pixels without another cache miss. Owner teardown clears the cache and pixels.
+  A batched release + rebuild of 300 labels (cap 256) draws no new canvas and
+  one trim restores the cap. The free-bytes budget evicts the oldest free entry
+  first, and a teardown trim leaves no free entry; refcount > 0 is never disposed.
 - `labelGeometryLeak.test.ts` — production factories populate real LOC/health/name
   registries; `clearAllLabelRegistries` empties them and disposes each owned
   connector geometry exactly once, preserving shared line materials. Release-time
   eviction reclaims excess textures, paired materials and canvas pixels without
   another build; separate metric-owner clears balance references while a shared
-  sibling stays mounted.
+  sibling stays mounted. A `'batched'` clear keeps on-screen name labels for the
+  rebuild and trims once on its deferred timer; the default (teardown) clear
+  reclaims every free entry.
+- `graphDataSyncRefresh.test.ts` — real `useGraphDataSync` on a fake graph with
+  manual timers: ten metric-only batches under a held H view patch values at
+  once but refresh exactly once per `METRIC_REFRESH_COALESCE_MS` window; unmount,
+  a structural swap, a `!data` reset or a released view drop the pending refresh.
 - `labelRepulsion.test.ts` — stale cleanup preserves scene-connected labels and
   state, removes ancestor-detached and directly unparented entries, and invokes
   the owning-release callback once only for the ancestor-detached entry.

@@ -17,9 +17,15 @@ overlapping labels apart (`PUSH_K`, tapering to zero at the requested
 separation). Velocity is integrated with per-frame friction (`FRICTION`) and
 snaps to rest once force + speed stay under threshold for `REST_FRAMES`.
 
-## Per-frame tick (`repelLabels(registry, minDist)`)
+## Per-frame tick (`repelLabels(registry, minDist, onDetached?)`)
 
 1. `cleanupStaleRegistryEntries` — drop entries whose sprite was unparented.
+   For a label whose node root has left the scene (e.g. a hidden-ext digest),
+   it also calls the owning overlay's `onDetached`: `releaseNameLabelEntry` /
+   `releaseMetricLabelEntry`. That drops the label-texture refcount (trimming
+   the cache at once, unless a batched blanket clear's deferred trim is
+   pending) and disposes the entry's connector geometry. This is the per-entry
+   release path beside `clearAllLabelRegistries`.
 2. `ensureCapacity(count)`, then snapshot each label's world XZ + collect
    entries into the shared scratch buffers in one pass.
 3. Seed `fx`/`fz` with the home-spring force (overwrites, so no separate zero).

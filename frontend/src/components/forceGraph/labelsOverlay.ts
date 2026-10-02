@@ -14,7 +14,12 @@ import {
 import {
   buildMeasuredLabelTexture,
   createLabelTextureCache,
+  deferLabelTextureTrim,
+  LABEL_TEXTURE_FREE_BYTES_BUDGET,
   releaseLabelTexture,
+  settleLabelTextureBatch,
+  trimLabelTextureCache,
+  type LabelRegistryRelease,
   type LabelTextureOptions,
 } from './labelTexture';
 import { isGhost } from './timelineDiff';
@@ -40,6 +45,7 @@ const NAME_LABEL_TEXTURE_OPTIONS: LabelTextureOptions = {
   padX: 20,
   minWidth: 96,
   maxEntries: 256,
+  maxFreeBytes: LABEL_TEXTURE_FREE_BYTES_BUDGET,
 };
 const nameLabelTextureCache = createLabelTextureCache();
 
@@ -121,15 +127,28 @@ export function releaseNameLabelEntry(entry: FloatingLabelEntry): void {
 }
 
 // Release every active name label's texture refcount and dispose its cloned
-// connector geometry, then empty the registry. The blanket teardown paths
-// (structural swap / refresh) drop all label sprites at once via the registry
-// rather than per-entry, so they must release here to keep refcounts balanced
-// against the build-time increments (otherwise evicted-but-rebuilt textures
-// accumulate phantom references and never become reclaimable) AND dispose the
-// per-line connector geometry the library leaves orphaned on refresh.
-export function clearNameLabelRegistry(): void {
+// connector geometry, then empty the registry. The blanket paths (structural
+// swap / refresh / graph teardown) drop all label sprites at once via the
+// registry rather than per-entry, so they must release here to keep refcounts
+// balanced against the build-time increments (otherwise evicted-but-rebuilt
+// textures accumulate phantom references and never become reclaimable). The
+// geometry dispose duplicates the library's own on refresh/destroy (harmless,
+// idempotent). `release` picks how the freed textures are reclaimed — see
+// `LabelRegistryRelease`. Returns true when a 'batched' clear left the cache
+// waiting for its deferred trim: the caller must then run
+// `trimNameLabelTextures()` after the rebuild.
+export function clearNameLabelRegistry(release: LabelRegistryRelease = 'immediate'): boolean {
+  if (release === 'batched') deferLabelTextureTrim(nameLabelTextureCache);
   for (const entry of labelsRegistry) releaseNameLabelEntry(entry);
   labelsRegistry.clear();
+  if (release === 'teardown') trimLabelTextureCache(nameLabelTextureCache, 0);
+  return release === 'batched' && settleLabelTextureBatch(nameLabelTextureCache);
+}
+
+// The single trim that ends a 'batched' clearNameLabelRegistry, once the
+// rebuild has re-acquired the labels it still shows.
+export function trimNameLabelTextures(): void {
+  trimLabelTextureCache(nameLabelTextureCache);
 }
 
 // Add or remove a node's floating name label as a sibling child of its root
