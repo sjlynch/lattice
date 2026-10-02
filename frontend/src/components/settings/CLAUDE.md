@@ -102,7 +102,13 @@ default + read in `fetchedToggles.ts`, plus its value/setter pair on
 those sections (the project-settings block atop the Terminals tab); it's a plain
 `drafts`-driven component with no ref handle, since the controller persists
 those drafts — `SettingsDialog` just composes it ahead of the
-`StartupTerminalsTab` panel.
+`StartupTerminalsTab` panel. Its single-checkbox sections (Codex `--yolo`,
+Claude instrumentation, Claude memory, QA terminal auto-close, keep workflow
+step terminals) are data-driven too: `terminalToggleSections.tsx`'s
+`TERMINAL_TOGGLE_SECTIONS` table (title, info popover, checkbox label, and the
+paired `draftKey`/`setterKey` on `SettingsDrafts`), mapped in order onto
+`CheckboxSettingsSection`. A new single-checkbox section = an entry there; the
+default-harness and restore sections stay hand-written (selects + extras).
 
 `InstructionTemplatesTab` also owns the "Task agents may type-check what they
 edited" checkbox (`taskAgentTypecheck`, default OFF; backend
