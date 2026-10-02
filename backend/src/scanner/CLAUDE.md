@@ -11,7 +11,10 @@ A scan runs through these phases, in order — each produces the input for
 the next:
 
 1. **`ignore.ts`** — `loadGitignore(root)` builds an `ignore` matcher
-   seeded with `IGNORE_DIR_NAMES` and the project's `.gitignore`.
+   that combines `IGNORE_DIR_NAMES`, the root `.gitignore`, and
+   common-gitdir `info/exclude` (`readInfoExclude`; resolved through a linked
+   worktree's `commondir`). `info/exclude` is where Lattice records its own
+   managed files, so the scan honours it as git does.
 2. **`collectSourceTree.ts`** — `collectSourceTree(root, ig)` walks the
    tree gitignore-aware and returns `{files, directories}` (every
    directory crossed, plus every file whose extension is in
