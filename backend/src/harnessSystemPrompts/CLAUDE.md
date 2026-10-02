@@ -31,8 +31,11 @@ differently. All follow Lattice's "resolve in the backend, apply at spawn" split
   has no shell-safe CLI flag for a multi-line prompt and writing `.pi/SYSTEM.md`
   would clobber a user's own file, so the extension — mirroring
   `piExtension.ts`/`piMcp/` — is the collision-free route for both modes. Written
-  into the session cwd by the backend at spawn (never rides the wire); stripped
-  when there's no override so a reused cwd (the project root) stays clean.
+  into the session cwd by the backend at spawn (never rides the wire). The
+  Lattice preamble (below) always rides the append side, so every Pi spawn in a
+  managed project writes the pair even with no override; it is removed only when
+  the resolved `append` and `replace` are both empty (an unmanaged project with
+  no Pi override), so a reused cwd there doesn't keep a stale prompt.
 
 ## The always-on Lattice preamble
 
@@ -68,9 +71,9 @@ on spaces) and ends the command at an expanded linefeed — a multi-line or
 quote-bearing Append used to break every Codex spawn in the project. So
 `prepareCodexSystemPrompt(project, extra, shell)` normalizes the composed append
 (`normalizeCodexAppendForCmd`) when the shell is cmd.exe **or unknown**: line
-breaks → one space, `"` → typographic “ ”. The caller
-(`resolveHarnessSpawnBody`) passes `resolveDefaultShell()` — the same resolution
-the terminal-server's `launchContext` uses, inherited env and all. A known
+breaks → one space, `"` → typographic “ ”. The caller (`resolveCodexSpawn`,
+`terminalServerClient/spawnCodex.ts`) passes `resolveDefaultShell()` — the same
+resolution the terminal-server's `launchContext` uses, inherited env and all. A known
 POSIX / PowerShell shell gets the text verbatim (`"$VAR"` / `"$env:VAR"` carry
 both). On every shell a run of 3+ `'` is spaced out (`' ' '`) so it can't close
 the TOML multi-line literal early. The Settings Codex card says so in its Append
@@ -104,8 +107,9 @@ race-safe while every spawn of the project writes identical content.
   `GET /api/harness-system-prompts`.
 - `piShim.ts` — renders + reconciles the Pi `before_agent_start` extension and
   its JSON sidecar (`applyPiSystemPromptForSpawn`). Byte-significant like
-  `piExtension/template.ts`; skips a write when unchanged, removes the pair when
-  there's no override.
+  `piExtension/template.ts`; skips a write when unchanged, removes the pair only
+  when the resolved `append` and `replace` are both empty (no preamble — an
+  unmanaged project — and no override).
 - `latticePreamble.ts` — the always-on Lattice preamble described above:
   `buildLatticePreamble(docPath)` (pure text), `resolveLatticePreamble(project)`
   (generates/refreshes the reference via `ensureLatticeApiDoc`, returns `null`
@@ -114,15 +118,17 @@ race-safe while every spawn of the project writes identical content.
 - `inject.ts` — turns the resolved override **plus the Lattice preamble** into
   per-harness injection at the spawn chokepoint: `prepareClaudeSystemPrompt`
   (write files → paths), `prepareCodexSystemPrompt` (build `-c` arg strings),
-  `preparePiSystemPrompt` (reconcile the extension). Each now produces output
-  even when the project configured nothing, because the preamble alone is
-  enough. Scratch files live under
+  `preparePiSystemPrompt` (reconcile the extension). In a managed project each
+  produces output even when the project configured nothing, because the
+  preamble alone is enough. Scratch files live under
   `~/.lattice/per-project/<hash>/system-prompts/` (home-scoped, atomic writes).
 
 ## Where it's wired
 
-- Resolved + applied at the single spawn chokepoint
-  `terminalServerClient/createSession.ts` (`resolveHarnessSpawnBody`), so all
+- Resolved + applied at the single spawn chokepoint `resolveHarnessSpawnBody`
+  (`terminalServerClient/spawnBody.ts`; `createSession.ts` only re-exports it),
+  which dispatches per harness to `resolveClaudeSpawn` / `resolveCodexSpawn` /
+  `resolvePiSpawn` (`spawnClaude.ts` / `spawnCodex.ts` / `spawnPi.ts`), so all
   spawn sites (task run/resume, workflow step, prompt customization, post-merge
   hook, push, QA, sidebar terminal, conflict resolver) are covered. Claude/Codex
   ride new `SessionWireBody` fields applied by `terminal/launchContext.ts`; Pi's
@@ -139,7 +145,9 @@ race-safe while every spawn of the project writes identical content.
   swaps the harness's own prompt but leaves the append channel (and so the
   preamble) intact on all three harnesses.
 - **Best-effort at spawn** — a resolve/write failure degrades to a plain spawn
-  and never blocks it (`resolveHarnessSpawnBody` wraps each call in `.catch`).
+  and never blocks it (the per-harness resolvers in
+  `terminalServerClient/spawn{Claude,Codex,Pi}.ts` wrap each `prepare*` call in
+  `.catch`).
 - Injection is resolved in the main backend and applied by the terminal-server
   (Claude/Codex) or written as cwd files (Pi) — matching the MCP control plane,
   so a prompt edit is a backend-only change with no terminal-server respawn.

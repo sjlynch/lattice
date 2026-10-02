@@ -19,7 +19,11 @@ from.
   (`serverId` + `serverInstanceId`), `lastBusy`, and `ended`.
 - `store.ts` — `TerminalRegistryStore` (a `ProjectStateManager` subclass) over
   `~/.lattice/per-project/<hash>/terminals.json` (versioned envelope, atomic
-  write, every field re-validated on read, long-ended records pruned). The
+  write, every field re-validated on read). Ended records are dropped once
+  `ended.at` is older than `ENDED_RETENTION_MS` (7 days; never a
+  `closePending` one), but ONLY when the file is loaded
+  (`deserializeTerminalRecords`, once per project per process) — nothing
+  prunes while the process runs, so they stay until the next boot. The
   BACKEND is the sole creator of records (`proxyCreateSession` in
   `terminalServerClient/createSession.ts` → `recordSpawnedTerminal` in
   `terminalServerClient/recordSpawn.ts`); the
@@ -89,9 +93,12 @@ from.
   day its thread started; resume appends to that old file). What keeps the
   polling cheap instead: the readdir + stat listing is taken once per
   `(root, days)` per 1.5 s and shared by every in-flight discovery
-  (`listRolloutFilesShared`), and a parsed `session_meta` is cached for the
-  process lifetime (line 1 never changes), so later ticks stat but never
-  re-read. Ten restored Codex tabs used to cost ~600k stats over two minutes.
+  (`listRolloutFilesShared`), and a parsed `session_meta` (line 1 never
+  changes) is cached in a FIFO capped at `META_CACHE_MAX` = 4,096 files, so
+  later ticks stat but re-read only an evicted file. Listings are replaced,
+  never evicted, so the key alone bounds that map: `days` grows with record
+  age, clamped to `MIN_SCAN_DAYS`..`MAX_SCAN_DAYS` (2..120), i.e. ≤ 119
+  listings per root — add no other key dimension, or it is unbounded. Ten restored Codex tabs used to cost ~600k stats over two minutes.
   Orphan adoption overrides these defaults with persisted `codexDiscovery`
   bounds from the adopted PTY's `createdAt`: a fresh command gets that process's
   start window; `resume --last` scans the bounded history by recent writes,
