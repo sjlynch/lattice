@@ -199,7 +199,8 @@ empty). The backend reconciles all
 of this into `~/.pi/agent/models.json`, plus the curated "Pi — X" model-menu
 checklist. (A keyless endpoint is written with `apiKey: "local"` so Pi doesn't
 reject the whole file — see `backend/src/piModels.ts`.) `PiTab`'s draft state
-lives in three focused hooks in `usePiEndpoints.ts`: `useEndpointState` (the
+lives in three focused hooks, one file each under `piEndpoints/`
+(`usePiEndpoints.ts` is the compatibility barrel): `useEndpointState` (the
 endpoint list + `touched` flag + `patch`/`add`/`remove`; `add` uses
 `nextEndpointId` to avoid re-minting a saved id). Its shared `mutate` tracks row
 request identity synchronously, exposed by `getProvider`/`requestToken`/
