@@ -30,6 +30,13 @@ CLAUDE.md) — different directory, don't conflate.
   lifecycle controller. Owns `terminated` / `attachedOnce` / `attempt`, the
   stability and retry timers, reconnect/give-up transitions, and status/notice
   callbacks injected by the hook.
+- `terminalOutput.ts` — queues writes through xterm's asynchronous parse callback.
+  Consumes DA, color, cursor/status and other query controls only while parsing
+  historical replay, so they cannot generate late `onData` replies in a running
+  Codex prompt. Text, styling, terminal modes, live queries and user input remain
+  functional. Reads `data.replayed`; retained older executors use the first data
+  frame after `attached` as history. Disposal removes parser handlers and drops
+  queued writes. Regression: `__tests__/terminalReplayQueries.test.ts`.
 - `terminalSocket.ts` — React-free helpers for the connection: `buildTerminalWsUrl`
   (URL building), `handleTerminalMessage` (decode + dispatch), `reconnectDelay` /
   `canReattachTerminal` / `shouldGiveUpReconnect` (backoff/give-up decisions),

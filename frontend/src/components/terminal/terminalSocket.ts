@@ -1,6 +1,7 @@
 import type { Terminal } from '@xterm/xterm';
 import type { TerminalStatus } from '../../terminal/terminalTypes';
 import { buildTerminalWsQuery, type TerminalWsQueryArgs } from './connectionParams';
+import type { createTerminalOutput } from './terminalOutput';
 
 // Preserve the connection helpers' existing import path for input forwarding.
 export { forwardTerminalInput, RESIZE_DEBOUNCE_MS } from './terminalInput';
@@ -89,6 +90,7 @@ export const terminalNotices = {
 
 export type TerminalMessageHandlers = {
   term: Terminal;
+  output?: ReturnType<typeof createTerminalOutput>;
   // The serverId we connected with, so an `attached` frame only notifies the
   // parent when the backend hands back a *different* id.
   serverId?: string;
@@ -111,7 +113,8 @@ export function handleTerminalMessage(
   try {
     const msg = JSON.parse(raw) as TerminalMessage;
     if (msg.type === 'data' && typeof msg.data === 'string') {
-      h.term.write(msg.data);
+      if (h.output) h.output.write(msg.data, msg.replayed);
+      else h.term.write(msg.data);
     } else if (msg.type === 'attached') {
       h.onAttached();
       if (msg.id && msg.id !== h.serverId) {
@@ -129,6 +132,7 @@ export function handleTerminalMessage(
       // window of a long session, so nothing would switch them back on until
       // the TUI restarted (multi-line pastes would submit line by line).
       h.term.clear();
+      h.output?.beginReplay();
     } else if (msg.type === 'error') {
       terminalNotices.error(h.term, msg.message);
     } else if (msg.type === 'exit') {

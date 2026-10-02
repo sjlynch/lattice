@@ -130,6 +130,8 @@ test('replay on attach: history first, then live frames that arrived during the 
   await until(() => c.sent().length >= 4);
   const frames = c.sent();
   assert.deepEqual(frames.slice(1).map((f) => f.data), ['history-1\nhistory-2\n', 'live-1\n', 'live-2\n']);
+  assert.equal(frames[1].replayed, true, 'history must not generate fresh terminal-query input');
+  assert.equal(frames[2].replayed, undefined, 'live queries still get answered');
   // Frames after the flush flow straight through.
   ptyOutput(session, 'live-3\n');
   assert.equal(c.sent().at(-1)?.data, 'live-3\n');
@@ -143,7 +145,8 @@ test('a failed replay read still releases the held live frames (no unhandled rej
   attachTerminal(c.ws, { id: session.id });
   ptyOutput(session, 'live-1\n');
   await until(() => c.sent().length >= 2);
-  assert.deepEqual(c.sent().slice(1).map((f) => f.data), ['live-1\n']);
+  assert.deepEqual(c.sent().slice(1).map((f) => f.data), ['', 'live-1\n']);
+  assert.equal(c.sent()[1].replayed, true, 'even a failed/empty replay has an explicit boundary');
   ptyOutput(session, 'live-2\n');
   assert.equal(c.sent().at(-1)?.data, 'live-2\n', 'the subscriber is no longer held');
   await cleanup(session, dir);

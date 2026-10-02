@@ -179,7 +179,10 @@ export function attachTerminal(ws: WebSocket, opts: AttachOpts) {
     const queued = releaseSubscriber(ws);
     if (ws.readyState !== ws.OPEN) return;
     try {
-      if (full.length > 0) ws.send(JSON.stringify({ type: 'data', data: full }));
+      // Always delimit history, even an empty/failed replay, so the browser
+      // never answers historical queries or mistakes the first live query for
+      // history. Existing clients simply write the empty data frame.
+      ws.send(JSON.stringify({ type: 'data', data: full, replayed: true }));
       for (const frame of queued) ws.send(frame);
     } catch {
       /* ignore */

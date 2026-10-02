@@ -166,6 +166,10 @@ to upgrade them.
   reconnects and gets the replay). Also `holdSubscriber` / `releaseSubscriber`:
   a socket on hold has its frames queued (same bound) for `attachTerminal` to
   flush after the replay.
+  Attach always sends a `data` frame with `replayed: true` for history, including
+  empty/failed reads, before held live frames. The browser suppresses historical
+  terminal-query replies; omitting the empty boundary could misclassify a live
+  startup query as history.
 - `attach.ts` — `attachTerminal`: resolve an existing session by id (or create a
   fresh one when no id), add the WS as a subscriber **on hold**, send
   `attached`, wire the input/resize/kill handlers, then read the scrollback

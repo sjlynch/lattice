@@ -11,6 +11,7 @@ import {
   terminalNotices,
 } from './terminalSocket';
 import { createTerminalReconnectController } from './terminalReconnectController';
+import { createTerminalOutput } from './terminalOutput';
 
 // Re-exported for back-compat: the cap itself lives in ./terminalSocket, while
 // the reconnect lifecycle state machine now lives in ./terminalReconnectController.
@@ -54,6 +55,7 @@ export function useTerminalConnection({
     if (!term) return;
 
     let ws: WebSocket | null = null;
+    const output = createTerminalOutput(term);
 
     const controller = createTerminalReconnectController({
       getServerId: () => serverIdRef.current,
@@ -93,6 +95,7 @@ export function useTerminalConnection({
       ws.onmessage = (ev) => {
         handleTerminalMessage(ev.data, {
           term,
+          output,
           // Compare an incoming `attached` id against the LATEST captured id so
           // a re-attach to the same pty doesn't re-fire onServerId.
           serverId: serverIdRef.current,
@@ -135,6 +138,7 @@ export function useTerminalConnection({
       controller.cancel();
       clearTimeout(connectTimer);
       io.dispose();
+      output.dispose();
       // Just close the WS — the backend keeps the pty alive so a refresh
       // (or remount) reattaches via the persisted serverId.
       try {

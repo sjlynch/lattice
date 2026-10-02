@@ -50,7 +50,13 @@ function makeFakeTerminal(): Terminal {
   return {
     cols: 80,
     rows: 24,
-    write: () => {},
+    write: (_data: string, callback?: () => void) => callback?.(),
+    parser: {
+      registerCsiHandler: () => ({ dispose() {} }),
+      registerOscHandler: () => ({ dispose() {} }),
+      registerDcsHandler: () => ({ dispose() {} }),
+      registerEscHandler: () => ({ dispose() {} }),
+    },
     clear: () => {},
     reset: () => {},
     onData: () => ({ dispose() {} }),
