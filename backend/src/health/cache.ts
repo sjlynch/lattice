@@ -39,6 +39,31 @@ function emptyCache(): CacheFile {
   return { version: CACHE_VERSION, files: {} };
 }
 
+// Structural equality over the JSON-shaped values an entry holds, judged the
+// way the file would serialize them: a key holding `undefined` matches an
+// absent key (JSON.stringify drops both). Anything it calls unequal only costs
+// a write, never a lost change.
+function sameJsonValue(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== 'object' || typeof b !== 'object' || a === null || b === null) return false;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    if (!Array.isArray(a) || !Array.isArray(b) || a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+      if (!sameJsonValue(a[i], b[i])) return false;
+    }
+    return true;
+  }
+  const ao = a as Record<string, unknown>;
+  const bo = b as Record<string, unknown>;
+  for (const key of Object.keys(ao)) {
+    if (!sameJsonValue(ao[key], bo[key])) return false;
+  }
+  for (const key of Object.keys(bo)) {
+    if (!(key in ao) && bo[key] !== undefined) return false;
+  }
+  return true;
+}
+
 export class HealthCache {
   private projectRoot: string;
   private data: CacheFile = emptyCache();
@@ -104,8 +129,21 @@ export class HealthCache {
     metrics: HealthMetrics,
     imports: string[],
   ): void {
+    const prev = this.data.files[filePath];
+    // Always store the caller's objects: the watcher shares them with its
+    // in-memory metrics map, so later in-place cross-file updates must keep
+    // landing in the entry a subsequent write serializes. Only a real change
+    // marks the cache dirty, so a scan that re-seeds every unchanged entry
+    // leaves flush() a no-op instead of re-serializing and rewriting the
+    // whole file. Cheap stat fields first; the deep compare still catches a
+    // changed analyzer output at the same (mtime, size).
+    const changed = !prev
+      || prev.mtimeMs !== mtimeMs
+      || prev.size !== size
+      || !sameJsonValue(prev.metrics, metrics)
+      || !sameJsonValue(prev.imports, imports);
     this.data.files[filePath] = { mtimeMs, size, metrics, imports };
-    this.dirty = true;
+    if (changed) this.dirty = true;
   }
 
   delete(filePath: string): void {

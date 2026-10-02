@@ -4,9 +4,8 @@ import { usePushRun } from './usePushRun';
 import { useHarnessSelector } from './useHarnessSelector';
 import { useQaPlaywright } from './useQaPlaywright';
 import { useQaRuns } from './useQaRuns';
-import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminal } from '../../../terminal/terminalTypes';
 
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 type CloseTerminal = (id: string) => void;
 type CloseTerminalsForTask = (taskId: string, keep?: { id?: string; serverId?: string }) => void;
 type QaRunTerminals = Parameters<typeof useQaRuns>[4];
