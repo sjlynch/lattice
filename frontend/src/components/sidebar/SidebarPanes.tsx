@@ -24,9 +24,12 @@ type Props = {
 // every mounted pane in the project — including the force-mounted startup
 // panes, whose WS closed and xterm was disposed, costing a ~2 MB scrollback
 // replay on return, and a serverless pane that had not yet received its
-// `attached` frame reconnected as a SECOND pty. Hidden panes are already
+// `attached` frame reconnected as a SECOND pty. Hidden panes are
 // `position: absolute; visibility: hidden` (`.sidebar-pane.hidden`), so they
-// cost nothing to keep in the tree.
+// cost no layout, and that rule's off-screen transform lets xterm's
+// IntersectionObserver pause their rendering. They are not free: each still
+// holds an xterm buffer and a live `/ws/terminal` socket, and still parses
+// its output (see `hooks/CLAUDE.md` → "Mounted-pane cost").
 export function SidebarPanes({
   activePanel,
   activeFolder,

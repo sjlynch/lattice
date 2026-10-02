@@ -91,3 +91,47 @@ test('switching to an empty panel keeps the other panels\' mounted panes in the 
     restoreReact();
   }
 });
+
+// Regression: inactive panes must carry `hidden` so `.sidebar-pane.hidden`
+// applies. That rule's off-screen transform is what lets xterm's
+// IntersectionObserver pause a hidden pane's rendering (see
+// sidebarPaneHiddenCss.test.ts); without the class, a busy agent's pane keeps
+// rebuilding DOM rows nobody sees.
+test('every mounted pane but the active one carries the `hidden` class', () => {
+  const restoreReact = installGlobal('React', React);
+  const restoreActEnv = installGlobal('IS_REACT_ACT_ENVIRONMENT', true);
+  const tab = (id: string): TerminalSpec => ({
+    id, label: id, cwd: P, projectPath: P, serverId: `srv_${id}`, registered: true,
+  });
+  const tabs = [tab('a'), tab('b'), tab('c')];
+  const render = (activeId: string) => React.createElement(SidebarPanes, {
+    activePanel: 'terminals',
+    activeFolder: P,
+    projectTerminals: tabs,
+    panelTerminals: tabs,
+    activeId,
+    mountedIds: new Set(tabs.map((t) => t.id)),
+    renderPane: (t) => React.createElement('div', { key: t.id, 'data-id': t.id }),
+  });
+  // Wrapper classNames in `projectTerminals` order.
+  const classes = (renderer: ReturnType<typeof TestRenderer.create>) => renderer.root
+    .findAll((n) => n.type === 'div' && typeof n.props.className === 'string'
+      && n.props.className.startsWith('sidebar-pane'))
+    .map((n) => (n.props.className as string).split(/\s+/).includes('hidden'));
+  let renderer!: ReturnType<typeof TestRenderer.create>;
+  try {
+    act(() => {
+      renderer = TestRenderer.create(render('b'));
+    });
+    assert.deepEqual(classes(renderer), [true, false, true], 'only b is shown');
+
+    act(() => {
+      renderer.update(render('c'));
+    });
+    assert.deepEqual(classes(renderer), [true, true, false], 'switching tabs hides the old active pane');
+  } finally {
+    act(() => renderer.unmount());
+    restoreActEnv();
+    restoreReact();
+  }
+});

@@ -391,4 +391,11 @@
   position: absolute;
   inset: 0;
 }
-.sidebar-pane.hidden { visibility: hidden; }
+/* The transform is load-bearing: IntersectionObserver ignores `visibility`,
+   so a hidden pane stacked at `inset: 0` counts as on-screen and xterm keeps
+   rendering every row of its agent's output. Moving it outside the clipped
+   `.sidebar-content` box makes xterm's observer pause it (a full refresh runs
+   on reveal). `transform` keeps the layout size, so fit() still measures.
+   Never use `display: none` / `content-visibility: hidden`: both zero the
+   measured size and break xterm's character measurement and fit. */
+.sidebar-pane.hidden { visibility: hidden; transform: translateX(-200%); }

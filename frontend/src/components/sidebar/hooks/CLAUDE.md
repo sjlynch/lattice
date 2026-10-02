@@ -63,6 +63,20 @@ owns shared tab mutations, scoping and registry reconciliation.
   xterm and WebGL ownership stays in the
   [view/connection layer](../../terminal/CLAUDE.md). Pruning history does not
   identify the cross-PC browser OOM cause.
+- **Mounted-pane cost:** the mounted set has no cap (`SidebarPanes` renders every
+  remembered ID; `useMountedTerminalIds` only prunes globally removed tabs). Each
+  mounted pane keeps its xterm `Terminal` and a live `/ws/terminal` socket and
+  keeps parsing output while hidden. Only the active pane holds a WebGL context
+  (`useActiveTerminalWebgl`). Rendering pauses only because `.sidebar-pane.hidden`
+  in `styles/sidebar.css` adds `transform: translateX(-200%)`: it moves the pane
+  outside the clipped `.sidebar-content`, so xterm's IntersectionObserver pauses
+  it (`visibility: hidden` alone does not, and `display: none` /
+  `content-visibility: hidden` break fit). Do not simplify it back to
+  visibility-only. Scrollback is 20 000 lines (`terminal/terminalConfig.ts`), up to
+  tens of MB per pane at 120 columns. Remounting after A -> B -> A re-attaches every
+  remembered pane, each replaying up to `SCROLLBACK_REPLAY_BYTES` (2 MB,
+  `backend/src/terminalConfig.ts`). The pending-output bound per pane is
+  documented in the [terminal guide](../../terminal/CLAUDE.md).
 - **Bulk close:** close the menu before confirming the count; only confirmation
   calls `closeTerminals`, which kills PTYs. Resolve targets against the current
   visible order; a menu whose tab disappeared/was filtered out closes nothing.
@@ -70,8 +84,10 @@ owns shared tab mutations, scoping and registry reconciliation.
   classification belongs to [backend `terminalActivity.ts`](../../../../../backend/src/terminalActivity.ts).
   Unchanged frames keep the same `Set` identity. Hide the previous project's
   snapshot before the new-project commit and fence callbacks after cleanup.
-  `api/terminals.ts` + `api/ws.ts` clear the transient set and shared replay cache
-  on disconnect and reject stale socket callbacks; reconnect needs fresh data.
+  `api/terminals.ts` + `api/wsSharedChannels.ts` (shared channels and their replay
+  cache; `api/ws.ts` is only a compatibility re-export) clear the transient set and
+  shared replay cache on disconnect and reject stale socket callbacks; reconnect
+  needs fresh data.
 
 ## References
 

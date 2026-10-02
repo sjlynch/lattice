@@ -10,10 +10,11 @@ export function useMountedTerminalIds(
   // Remember activation for tabs that still exist globally. We only mount
   // <TerminalPane> once a terminal is first viewed — the backend pre-spawns
   // the pty (so initialCommand runs immediately) and keeps it alive via
-  // serverId, so the session is intact when we first attach. Each mounted
-  // pane allocates its own WebGL context (xterm WebglAddon); deferring mount
-  // until activation is what keeps Run-All from blowing past Chrome's
-  // per-page WebGL context cap.
+  // serverId, so the session is intact when we first attach. Only the active
+  // pane holds a WebGL context (`useActiveTerminalWebgl`); every mounted pane
+  // still keeps an xterm buffer and a live `/ws/terminal` socket, so deferring
+  // mount until activation keeps Run-All from opening a socket, buffer and
+  // scrollback replay per task the user never looks at.
   const [mountedIds, setMountedIds] = useState<ReadonlySet<string>>(() => {
     const initial = new Set<string>();
     if (activeId && terminals.some((t) => t.id === activeId)) initial.add(activeId);
