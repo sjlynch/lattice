@@ -14,8 +14,8 @@ const css = readFileSync(new URL('../styles/sidebar.css', import.meta.url), 'utf
   .replace(/\/\*[\s\S]*?\*\//g, '');
 
 function ruleBody(selector: string): string {
-  const escaped = selector.replace(/[.*+?^${}()|[\]\]/g, '\$&');
-  const match = new RegExp(`(?:^|[}\s])${escaped}\s*\{([^}]*)\}`).exec(css);
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const match = new RegExp(`(?:^|[}\\s])${escaped}\\s*\\{([^}]*)\\}`).exec(css);
   assert.ok(match, `${selector} rule exists`);
   return match[1];
 }
