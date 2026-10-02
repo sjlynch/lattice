@@ -27,6 +27,7 @@ import {
 } from './workflows.js';
 import { normalizePiModel } from './worktree/commands.js';
 import { generateWorkflowRunId } from './ids.js';
+import { listTasks } from './tasks.js';
 import {
   getActiveRunsForProject,
   notify,
@@ -176,6 +177,16 @@ export async function startWorkflowRun(
   }
   const firstIndex = firstGroup.indices[0];
 
+  // Every task already Open belongs to this run's round (the Start step adds
+  // the ones it launches), and so does work already In Progress: Merge waits
+  // for it rather than leaving it to land in Ready to Merge after the merge,
+  // where it would stall a later Push drain. Read before the guard: nothing
+  // may await between the guard and the run record, or two starts could both
+  // pass it.
+  const roundTaskIds = (await listTasks(wf.projectPath))
+    .filter((task) => task.status === 'open' || task.status === 'in_progress')
+    .map((task) => task.id);
+
   // Authoritative one-run-per-project guard: reject if a run is already active.
   // Runs before any run record / notify / spawn so a rejected start is atomic.
   assertNoActiveWorkflowRun(wf.projectPath);
@@ -193,6 +204,7 @@ export async function startWorkflowRun(
     startedAt: Date.now(),
     totalSteps: wf.steps.length,
     currentStepIndex: firstIndex,
+    roundTaskIds,
     definition: cloneWorkflowDefinition(wf),
     stepPhase: 'pending',
     ...(harnessOverride ? { harnessOverride } : {}),

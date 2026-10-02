@@ -48,7 +48,7 @@ export function WorkflowQuickAddBar({
         onClick={() => onAddControlStep('merge')}
         draggable
         onDragStart={(event) => startQuickAddDrag(event, { kind: 'control', stepKind: 'merge' })}
-        title="Waits for In Progress to drain, then merges every Ready-to-Merge task to QA."
+        title="Waits for this run's queued and In Progress tasks to finish, then merges every Ready-to-Merge task to QA together."
       >
         <GitMerge size={11} />
         Merge

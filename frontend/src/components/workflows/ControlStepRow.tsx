@@ -32,7 +32,7 @@ const CONTROL_STEP_META: Record<
     icon: GitMerge,
     defaultTitle: 'Merge all tasks',
     hint:
-      'Waits for In Progress to drain, then merges every Ready-to-Merge task into main (resolving conflicts via resolver agents as needed).',
+      "Waits until every task in this run's round (Open or In Progress when the run started, or launched by Start) has left Queued and In Progress, then merges every Ready-to-Merge task into main together (resolving conflicts via resolver agents as needed).",
   },
   push: {
     icon: UploadCloud,

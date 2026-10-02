@@ -1,8 +1,9 @@
-// 'merge' control step — drain admitted task runs and their Ready-to-Merge
-// work, then wait out the post-merge hook and re-check the combined drain.
+// 'merge' control step — wait for the run's task round to settle, merge its
+// Ready-to-Merge work, then wait out the post-merge hook and re-check.
 //
-// Merge ready work while queued/running tasks settle, including when freeing
-// those worktrees is what lets disk-held starts proceed.
+// Nothing merges while a round task is still queued or In Progress (see
+// waitForMergeWork), except when every remaining start is held for disk space
+// and only merging ready worktrees can free it.
 // Inner merge runs inherit this step's project run-lock (`lockMode: 'inherit'`)
 // so they don't deadlock against the lock the control-step worker already
 // holds.
@@ -133,12 +134,12 @@ async function waitForTaskWork(wf: Workflow, run: WorkflowRun, stepIndex: number
   const tasks = await deps.waitForMergeWork(wf.projectPath, run, (count, total) => {
     if (count > 0) hadPending = true;
     emitControlProgress(run, stepIndex, 'merge', Math.max(0, total - count), total,
-      `waiting for queued/In Progress tasks: ${count} remaining`);
+      `waiting for the run's queued/In Progress tasks before merging: ${count} remaining`);
   }, TASK_DRAIN_TIMEOUT_MS);
   return { tasks, hadPending };
 }
 
-// Drain queued/In Progress and Ready-to-Merge together. A single
+// Wait for the round, then drain Ready-to-Merge. A single
 // merge run resolves conflicts in-process (it blocks on each resolver Stop
 // hook), so by the time it finishes, every task it touched has either left
 // the lane (merged → qa) or been re-queued at ready_to_merge. We re-run to
@@ -258,8 +259,8 @@ export async function runMergeStep(
 
   try {
     while (run.status === 'running') {
-      // Re-evaluate queued/in-flight/running work after EVERY merge round. Ready
-      // work must be merged even while another task is waiting for disk space.
+      // Re-evaluate the round after EVERY merge round: a disk-held start that an
+      // early merge unblocked must finish and merge before the step moves on.
       await drainReadyToMerge(wf, run, stepIndex, backendOrigin, deps, activeMergeRun);
 
       // Phase C: wait out the post-merge hook. A hook fired BY a merge run is

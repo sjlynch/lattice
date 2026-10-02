@@ -10,8 +10,11 @@ import type { MergeRun } from '../mergeRuns/state.js';
 
 // Start can admit runs while their tasks stay Open (capacity, disk, checkout).
 // Merge used to see an empty In Progress lane and advance before they spawned,
-// or forget running tasks arriving during a merge round. Exercise the real
-// combined waiter and control-step lock lifecycle without stores, git or ptys.
+// or forget running tasks arriving during a merge round. Later it merged the
+// first ready task while its siblings still ran; a round now merges together.
+// Exercise the real combined waiter and control-step lock lifecycle without
+// stores, git or ptys. A fixture without `round` is a legacy run (no
+// roundTaskIds), where every task counts.
 const PROJECT = '/project';
 const flush = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -19,10 +22,11 @@ function task(id: string, status: Task['status'] = 'open', runQueued = false): T
   return { id, title: id, projectPath: PROJECT, createdAt: 1, status, runQueued } as Task;
 }
 
-function fixture(t: TestContext, tasks: Task[]) {
+function fixture(t: TestContext, tasks: Task[], round?: string[]) {
   const run: WorkflowRun = {
     id: 'wfrun_queued', workflowId: 'wf', workflowName: 'wf', projectPath: PROJECT,
     status: 'running', startedAt: 1, totalSteps: 1, currentStepIndex: 0,
+    ...(round ? { roundTaskIds: round } : {}),
   };
   const wf = { projectPath: PROJECT, steps: [{ kind: 'merge' }] } as Workflow;
   const taskListeners = new Set<Parameters<MergeWorkWaitDeps['subscribeTasks']>[0]>();
@@ -107,8 +111,8 @@ function fixture(t: TestContext, tasks: Task[]) {
   };
 }
 
-test('an all-queued Open batch drains through running, ready and QA before advancement', async (t) => {
-  const f = fixture(t, [task('a', 'open', true), task('b', 'open', true)]);
+test('a round merges together: a ready task waits for its queued and running siblings', async (t) => {
+  const f = fixture(t, [task('a', 'open', true), task('b', 'open', true)], ['a', 'b']);
   const done = f.start();
   await flush();
   assert.equal(f.advanced(), false);
@@ -118,15 +122,16 @@ test('an all-queued Open batch drains through running, ready and QA before advan
   assert.equal(f.advanced(), false);
   f.update('a', { status: 'ready_to_merge' });
   await flush();
-  assert.deepEqual(f.rounds, [['a']]);
+  assert.deepEqual(f.rounds, [], 'the first ready task must not merge while b is still queued');
   assert.equal(f.advanced(), false, 'an empty In Progress gap must still wait for b');
   assert.equal(f.hookCalls(), 0, 'the final hook gate follows the whole drain');
   f.update('b', { status: 'in_progress', runQueued: false });
   await flush();
+  assert.deepEqual(f.rounds, [], 'nor while b is In Progress');
   assert.equal(f.advanced(), false);
   f.update('b', { status: 'ready_to_merge' });
   await done;
-  assert.deepEqual(f.rounds, [['a'], ['b']]);
+  assert.deepEqual(f.rounds, [['a', 'b']], 'one merge run for the whole round');
   assert.ok(f.tasks.every((task) => task.status === 'qa'));
   assert.equal(f.advanced(), true);
   assert.equal(f.hookCalls(), 1);
@@ -134,16 +139,50 @@ test('an all-queued Open batch drains through running, ready and QA before advan
   assert.equal(f.messages.at(-1), 'merge complete');
 });
 
-test('Merge re-checks running tasks that spawn during a merge round', async (t) => {
-  const f = fixture(t, [task('a', 'ready_to_merge'), task('b', 'open', true)]);
+test('tasks outside the round never block it, and ready ones merge with it', async (t) => {
+  const f = fixture(t, [
+    task('member', 'in_progress'),
+    task('manual', 'in_progress'),
+    task('manual-queued', 'open', true),
+    task('outside-ready', 'ready_to_merge'),
+  ], ['member']);
+  const done = f.start();
+  await flush();
+  assert.deepEqual(f.rounds, [], 'outside ready work does not start the round early');
+  f.update('member', { status: 'ready_to_merge' });
+  await done;
+  assert.deepEqual(f.rounds, [['member', 'outside-ready']]);
+  assert.equal(f.tasks.find((task) => task.id === 'manual')?.status, 'in_progress');
+  assert.equal(f.advanced(), true, 'unrelated queued/running tasks do not hold the step');
+});
+
+test('a legacy run without a recorded round waits for every queued/In Progress task', async (t) => {
+  const f = fixture(t, [task('a', 'in_progress'), task('b', 'in_progress')]);
+  const done = f.start();
+  await flush();
+  f.update('a', { status: 'ready_to_merge' });
+  await flush();
+  assert.deepEqual(f.rounds, []);
+  f.update('b', { status: 'ready_to_merge' });
+  await done;
+  assert.deepEqual(f.rounds, [['a', 'b']]);
+});
+
+test('an early merge for a disk-held start re-checks the start it unblocked', async (t) => {
+  const f = fixture(t, [task('a', 'ready_to_merge'), task('b', 'open', true)], ['a', 'b']);
   const merge = f.deps.startMergeRun;
   f.deps.startMergeRun = async (...args) => {
-    f.update('b', { status: 'in_progress', runQueued: false });
-    return merge(...args);
+    // Simulate notifyDiskSpaceFreed: b starts as soon as a's worktree is gone.
+    const result = await merge(...args);
+    f.update('b', { status: 'in_progress', runQueued: false, runWaitingForDisk: undefined });
+    return result;
   };
   const done = f.start();
   await flush();
-  assert.deepEqual(f.rounds, [['a']]);
+  assert.deepEqual(f.rounds, [], 'a queued start not (yet) held for disk still blocks');
+  f.update('b', { runWaitingForDisk: 'waiting for a worktree to be removed' });
+  await flush();
+  assert.deepEqual(f.rounds, [['a']], 'only merging can free the disk b waits for');
   assert.equal(f.advanced(), false);
   f.deps.startMergeRun = merge;
   f.update('b', { status: 'ready_to_merge' });
@@ -152,27 +191,30 @@ test('Merge re-checks running tasks that spawn during a merge round', async (t) 
   assert.equal(f.advanced(), true);
 });
 
-test('ready work frees disk for queued starts even while other tasks are running', async (t) => {
-  const f = fixture(t, [task('ready', 'ready_to_merge'), task('disk', 'open', true), task('running', 'in_progress')]);
+test('disk-held starts merge early only once every other round task has settled', async (t) => {
+  const f = fixture(t, [task('ready', 'ready_to_merge'), task('disk', 'open', true), task('running', 'in_progress')],
+    ['ready', 'disk', 'running']);
   f.update('disk', { runWaitingForDisk: 'waiting for a worktree to be removed' });
   const merge = f.deps.startMergeRun;
   f.deps.startMergeRun = async (...args) => {
     const result = await merge(...args);
     // Simulate notifyDiskSpaceFreed: the deferred task can start only once the
-    // first ready worktree has actually merged and been reclaimed.
+    // ready worktrees have actually merged and been reclaimed.
     f.update('disk', { status: 'in_progress', runQueued: false, runWaitingForDisk: undefined });
     return result;
   };
   const done = f.start();
   await flush();
-  assert.deepEqual(f.rounds, [['ready']]);
+  assert.deepEqual(f.rounds, [], 'a running task can still finish; no merge yet');
+  f.update('running', { status: 'ready_to_merge' });
+  await flush();
+  assert.deepEqual(f.rounds, [['ready', 'running']]);
   assert.equal(f.tasks.find((task) => task.id === 'disk')?.status, 'in_progress');
   assert.equal(f.advanced(), false);
   f.deps.startMergeRun = merge;
   f.update('disk', { status: 'ready_to_merge' });
-  f.update('running', { status: 'ready_to_merge' });
   await done;
-  assert.deepEqual(f.rounds, [['ready'], ['disk', 'running']]);
+  assert.deepEqual(f.rounds, [['ready', 'running'], ['disk']]);
   assert.equal(f.advanced(), true);
 });
 

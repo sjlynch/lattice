@@ -117,6 +117,11 @@ export function deserializeWorkflowRun(raw: unknown, owningProject?: string): Wo
   }
   const sessionId = str(r.stepSessionId);
   if (sessionId) run.stepSessionId = sessionId;
+  // An unreadable round falls back to the legacy "every task counts" wait:
+  // the Merge step then waits for more work, never merges a round early.
+  if (Array.isArray(r.roundTaskIds)) {
+    run.roundTaskIds = [...new Set(r.roundTaskIds.filter((id): id is string => !!str(id)))];
+  }
   const summaries = readStepSummaries(r.stepSummaries);
   if (summaries) run.stepSummaries = summaries;
   const testStep = readTestStepCheckpoint(r.testStep);

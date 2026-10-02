@@ -2,7 +2,8 @@
 //
 // Moves every Open task to In Progress and runs each (same code path as the
 // Task Board "Run All" button), emitting one terminal tab per task so the
-// user can watch / intervene.
+// user can watch / intervene. Each of those tasks joins the run's round
+// (`WorkflowRun.roundTaskIds`), which the Merge step waits for.
 
 import { listTasks, type Task } from '../../tasks.js';
 import {
@@ -20,7 +21,7 @@ import {
 } from '../../spawnQueue.js';
 import type { AgentHarness } from '../../harnesses.js';
 import type { Workflow } from '../../workflows.js';
-import { notify, subscribe, type WorkflowRun } from '../state.js';
+import { addRoundTasks, checkpointWorkflowRun, notify, subscribe, type WorkflowRun } from '../state.js';
 import { emitControlProgress } from './shared.js';
 import { resolveStartStepHarnessPicker } from './startHarness.js';
 
@@ -50,6 +51,8 @@ export type StartStepDeps = {
   hasStartInFlight?: (taskId: string) => boolean;
   // Observe workflow end/advance while a direct launch is still in flight.
   subscribeRun?: typeof subscribe;
+  // Durably record the run's grown task round before any launch.
+  checkpoint?: typeof checkpointWorkflowRun;
 };
 
 const productionDeps: StartStepDeps = {
@@ -59,6 +62,7 @@ const productionDeps: StartStepDeps = {
   admissionHold: batchAdmissionHold,
   hasQueuedRun: (taskId) => hasSpawnRequest(taskRunDedupeKey(taskId)),
   hasStartInFlight: isTaskStartInFlight,
+  checkpoint: checkpointWorkflowRun,
 };
 
 // A task whose run is already queued or being started (Run All, a manual ▶, a
@@ -316,6 +320,13 @@ export async function runStartStep(
   // once here, applied per task below.
   const pickHarness = await resolveStartStepHarnessPicker(run, wf.projectPath);
   if (!isCurrentStartStep(run, stepIndex)) return;
+  // Everything this step launches or leaves queued joins the run's round, which
+  // the Merge step waits for in full. Durable before the first launch: after a
+  // restart, a running member must not be forgotten (or merged around).
+  if (addRoundTasks(run, open.map((task) => task.id))) {
+    await (deps.checkpoint ?? checkpointWorkflowRun)(run);
+    if (!isCurrentStartStep(run, stepIndex)) return;
+  }
   const tally: StartTally = { started: 0, failed: 0, deferred: 0, firstError: null };
   emitControlProgress(
     run,

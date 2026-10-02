@@ -41,6 +41,12 @@ export type WorkflowRun = {
   // is `pi`. Sibling to harnessOverride (two-field model, see piModels.ts).
   piModelOverride?: string;
   error?: string;
+  // The run's task round: every task Open or In Progress when the run started,
+  // plus every task its Start step launched or queued. The Merge step waits
+  // for these — not runs started by hand mid-workflow — to reach Ready to
+  // Merge before merging any.
+  // Absent on runs persisted before rounds existed: every task then counts.
+  roundTaskIds?: string[];
   definition?: Workflow;
   definitionError?: string;
   stepPhase?: 'pending' | 'spawning' | 'running' | 'completing';
@@ -136,6 +142,7 @@ export function snapshot(run: WorkflowRun): WorkflowRun {
   return {
     ...run,
     ...(run.activeStepIndices ? { activeStepIndices: [...run.activeStepIndices] } : {}),
+    ...(run.roundTaskIds ? { roundTaskIds: [...run.roundTaskIds] } : {}),
     ...(run.stepStates ? { stepStates: Object.fromEntries(Object.entries(run.stepStates).map(([index, step]) =>
       [index, { ...step, ...(step.stopReceived ? { stopReceived: { ...step.stopReceived } } : {}) }])) } : {}),
     ...(run.definition ? { definition: cloneWorkflowDefinition(run.definition) } : {}),
@@ -210,6 +217,22 @@ export function notify(ev: WorkflowRunEvent): void {
 export function subscribe(fn: (ev: WorkflowRunEvent) => void): () => void {
   listeners.add(fn);
   return () => { listeners.delete(fn); };
+}
+
+// Does this task belong to the run's round? A legacy run without a recorded
+// round counts every task, which is the conservative (wait-for-all) reading.
+export function isRoundTask(run: WorkflowRun, taskId: string): boolean {
+  return !run.roundTaskIds || run.roundTaskIds.includes(taskId);
+}
+
+// Add tasks to the run's round. Returns whether anything new was recorded, so
+// the caller knows a checkpoint is owed. A legacy run keeps counting every task.
+export function addRoundTasks(run: WorkflowRun, taskIds: string[]): boolean {
+  if (!run.roundTaskIds) return false;
+  const added = taskIds.filter((id) => !run.roundTaskIds!.includes(id));
+  if (added.length === 0) return false;
+  run.roundTaskIds = [...run.roundTaskIds, ...new Set(added)];
+  return true;
 }
 
 export function getRun(id: string): WorkflowRun | null {

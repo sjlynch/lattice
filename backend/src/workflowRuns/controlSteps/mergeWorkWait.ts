@@ -4,7 +4,7 @@
 import type { Task } from '../../tasks.js';
 import { hasSpawnRequest } from '../../spawnQueue.js';
 import { taskRunDedupeKey } from '../../routes/tasks/queuedSpawnAdmission.js';
-import type { WorkflowRun } from '../state.js';
+import { isRoundTask, type WorkflowRun } from '../state.js';
 import { productionLaneWaitDeps, type LaneWaitDeps } from './laneWait.js';
 import { createUnrefTimer, createWaitSettler, isRunEndedEvent } from './waitPrimitives.js';
 
@@ -25,10 +25,17 @@ const productionMergeWorkWaitDeps: MergeWorkWaitDeps = {
   hasQueuedRun: (id) => hasSpawnRequest(taskRunDedupeKey(id)),
 };
 
-// Wake when there is work to merge OR no admitted task runs remain. Waiting
-// for every queued start before merging would deadlock disk-held starts:
-// diskPressureMerge leaves active workflows to free their own worktrees.
-// Ordinary Open/Backlog tasks have neither admission marker and do not block.
+// Wake once the run's round has settled: none of its tasks is queued or In
+// Progress any more, so every one that ran is at Ready to Merge and the round
+// merges together. Merging the first ready task while its siblings still ran
+// is the bug this guards against. Tasks outside the round (a manual run
+// started mid-workflow) never block; Open/Backlog tasks without an admission
+// marker never block either.
+//
+// One exception prevents a deadlock: when ready work exists and EVERY pending
+// round task is a queued start held for disk space, wake anyway.
+// diskPressureMerge leaves projects with an active workflow alone, so only
+// this step's merge can free the worktrees those starts are waiting for.
 export function waitForMergeWork(
   projectPath: string,
   run: WorkflowRun,
@@ -69,9 +76,14 @@ export function waitForMergeWork(
       if (settled()) return;
       if (run.status !== 'running') { finish([]); return; }
       const pending = new Map<string, number>();
+      let diskHeld = 0;
       for (const task of tasks) {
+        if (!isRoundTask(run, task.id)) continue;
         if (task.status === 'in_progress') pending.set(task.id, PHASE_RUNNING);
-        else if (task.runQueued === true || deps.hasQueuedRun(task.id)) pending.set(task.id, PHASE_QUEUED);
+        else if (task.runQueued === true || deps.hasQueuedRun(task.id)) {
+          pending.set(task.id, PHASE_QUEUED);
+          if (task.runWaitingForDisk) diskHeld += 1;
+        }
       }
       let progressed = false;
       for (const [id, phase] of pending) {
@@ -89,7 +101,8 @@ export function waitForMergeWork(
       total = Math.max(total, phases.size, 1);
       if (progressed) timer.arm();
       onProgress(lastCount, total);
-      if (tasks.some((t) => t.status === 'ready_to_merge') || lastCount === 0) finish(tasks);
+      const onlyDiskHeld = lastCount > 0 && diskHeld === lastCount;
+      if (lastCount === 0 || (onlyDiskHeld && tasks.some((t) => t.status === 'ready_to_merge'))) finish(tasks);
     };
     const read = () => {
       if (settled() || reading) return;

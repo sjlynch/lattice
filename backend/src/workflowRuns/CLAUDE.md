@@ -15,6 +15,7 @@ call `completeWorkflowStep` themselves.
   source of every `/ws/workflow-runs` payload — keep event discriminants and
   field shapes (esp. `step-spawned`) stable. Finished runs are pruned to
   `MAX_FINISHED_RUNS_PER_PROJECT` (a memory bound); running runs never are.
+  Also `isRoundTask` / `addRoundTasks` over `WorkflowRun.roundTaskIds`.
 - `definition.ts` — `cloneWorkflowDefinition` / `readWorkflowDefinition`: the
   frozen per-run definition copy and its validated read-back.
 - `frozenSteps.ts` — legacy pure frozen-step policy (`isStepFrozen`,
@@ -111,6 +112,14 @@ call `completeWorkflowStep` themselves.
   alter an executing or recovered run. Version-1 records without one use the
   legacy lookup.
 - A workflow whose steps are *all* frozen is refused before any run record.
+- **Every run records its task round** (`roundTaskIds`): tasks Open or In
+  Progress at start (read *before* `assertNoActiveWorkflowRun`, so nothing
+  awaits between the guard and `runs.set`), plus every task the Start step
+  handles (checkpointed before its first launch). The Merge step waits for
+  the whole round before merging any of it; see
+  [`controlSteps/CLAUDE.md`](./controlSteps/CLAUDE.md) → `waitForMergeWork`.
+  Persisted in the mirror; a run without one (persisted before rounds, or an
+  unreadable value) counts every task.
 
 **Advancing**
 - Groups advance sequentially and member completion is **idempotent**:

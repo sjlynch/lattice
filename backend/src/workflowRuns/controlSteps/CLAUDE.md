@@ -18,7 +18,7 @@ Backend command references (cwd `backend/`): `npm run build`, `npm test`,
 | Step | Drains (waits until empty) | Fills / advances |
 |------|----------------------------|------------------|
 | `start` | — (reads the **Open** lane) | Open → In Progress (spawns each) |
-| `merge` | Queued/in-flight runs, In Progress and Ready-to-Merge together, then the post-merge hook (Phase C) and a final task re-check | Ready-to-Merge → QA (via inner merge runs) |
+| `merge` | The run's round (its queued/in-flight runs and In Progress tasks) before **any** merge, then Ready-to-Merge, then the post-merge hook (Phase C) and a final task re-check | Ready-to-Merge → QA (via inner merge runs) |
 | `push`  | Ready-to-Merge | pushes `main`'s existing commits to the remote (no lane change, no commit) |
 
 The Run tests step (`test`) uses the agent-step path to spawn a fixed-brief
@@ -53,10 +53,18 @@ The waits live in their own files; `shared.ts` re-exports every name below.
 - `waitPrimitives.ts` — import-cycle-free leaf: `isRunEndedEvent`, `createWaitSettler` (settle-once finish/fail + cleanup), `createUnrefTimer` (re-armable no-progress timer).
 
 `waitForMergeWork(project, run, onProgress, maxWaitMs, deps?)` resolves with a
-task snapshot when ready work exists **or** no admitted/running task remains.
-It considers `in_progress`, persisted `runQueued`, and live `task-run:<id>`
-requests (pending or in flight). Ordinary Open/Backlog tasks without either
-admission marker do not block. It subscribes before reading and polls as a
+task snapshot once **no task in the run's round** is admitted or running, so
+the round merges together (do not regress: it used to wake on the first
+ready task and merge it while its siblings still ran). The round is
+`WorkflowRun.roundTaskIds` — tasks Open or In Progress at run start plus
+everything the Start step launched or queued; a legacy run without one counts
+every task. Pending means `in_progress`, persisted `runQueued`, or a live
+`task-run:<id>` request (pending or in flight). Tasks outside the round, and
+ordinary Open/Backlog tasks without either admission marker, do not block.
+**One early wake (deadlock guard):** when ready work exists and *every*
+pending round task is a queued start held for disk (`runWaitingForDisk`), it
+resolves anyway — `diskPressureMerge` leaves projects with an active workflow
+alone, so only this step's merge can free those worktrees. It subscribes before reading and polls as a
 fallback because queue settlement itself has no task-store notification (a
 failed spawn clears its flag before its live request disappears). Newer store
 events supersede an outstanding read. Cancellation resolves promptly; errors
@@ -118,6 +126,11 @@ fires synchronously during subscription); used by `raceWorkflowRunEnd` and
 Moves every Open task to In Progress and runs it (the Task Board **Run All**
 path), emitting one `workflow-task-spawned` terminal tab per task.
 
+- **Round membership**: every Open task it handles (started, queued or left to
+  an existing queued run) is added to `WorkflowRun.roundTaskIds` and
+  checkpointed **before the first launch**, so a restart cannot forget a
+  running member and let Merge merge around it.
+
 - **Harness/Pi-model picker** mirrors Run All via
   `resolveStartStepHarnessPicker` (`startHarness.ts`, re-exported from
   `start.ts`): a run-level `harnessOverride` pins every task
@@ -175,9 +188,11 @@ path), emitting one `workflow-task-spawned` terminal tab per task.
 
 `drainReadyToMerge` waits on `waitForMergeWork` before **every** merge round,
 so a zero-count In Progress gap or a task spawning during a merge cannot end
-the step prematurely. It merges ready tasks even while other runs remain
-queued/running: `diskPressureMerge` refuses a separate merge during a workflow,
-so these inherited-lock merges must be able to free disk for deferred starts.
+the step prematurely. It merges nothing while a round task is still queued or
+running, except for the disk-held early wake above: `diskPressureMerge` refuses
+a separate merge during a workflow, so this inherited-lock merge must be able
+to free disk for deferred starts, and the next loop iteration then waits for
+the starts it unblocked. Ready tasks outside the round merge along with it.
 It loops merge runs (`lockMode: 'inherit'` so they don't deadlock on the lock
 this worker holds), with an **id-set progress guard**: it aborts the
 moment a full merge run leaves the ready_to_merge id-set unchanged (a
