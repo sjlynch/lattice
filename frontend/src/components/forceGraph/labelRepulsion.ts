@@ -24,8 +24,9 @@
 // This file is a thin facade. The implementation is split by concern
 // under `labelPhysics/`:
 //   - physics.ts        — tuning constants
-//   - scratchBuffers.ts — reused per-frame buffers + grid bucket pool
-//   - spatialGrid.ts    — grid build + pairwise repulsion phase
+//   - scratchBuffers.ts — reused per-frame buffers + the label grid
+//   - spatialGrid.ts    — grid build + pairwise repulsion phase (the grid is
+//                         the shared `linkedCellGrid.ts`)
 //   - integration.ts    — per-label state, home forces, velocity/rest
 //   - repel.ts          — the main per-frame `repelLabels` entry point
 

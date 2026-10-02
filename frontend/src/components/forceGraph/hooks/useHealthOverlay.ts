@@ -49,7 +49,7 @@ export function useHealthOverlay(
   // (We don't clear `hoverNode` here — the tooltip shows for every file hover
   // regardless of the `h` key, so a healthMode *activation* mustn't dismiss it.
   // Dismissing a *stale* tooltip when the view ends is handled centrally by
-  // `useOverlayTooltipDismiss` in ForceGraphView, which clears it only on the
+  // `useOverlayTooltipDismiss` in useGraphInteraction, which clears it only on the
   // active→inactive transition so a real hover re-acquires on the next frame.)
   useEffect(() => {
     clearLabelsAndRefresh(graphRef.current);

@@ -27,7 +27,7 @@ single source of truth for all three.
   - `startHomeScratchAgentSession(...)` — the full spawn: `setupHomeScratchSession`
     → `buildCommand` → `queuedCreateSession` → on ANY failure after the id is
     minted (setup throw, spawn rejection, `{ error }`) run `cleanup` + rethrow,
-    on success `onSpawned` (record run + register the orange presence node).
+    on success `onSpawned` (record run + register the presence node).
     Used by push + QA, whose flows are exact mirrors. Post-merge keeps its own
     trigger/gate/waiter (`postMergeHooks/trigger.ts`) but reuses the materialize
     half.
@@ -36,16 +36,23 @@ single source of truth for all three.
     reclaimed before rejection and scratch cleanup. The mirror factory forwards
     this per-call signal too.
 - `agentSession.ts` — `createHomeScratchAgentSession(spec)`: the push/QA mirror
-  factory layered on `startHomeScratchAgentSession`. From a static per-run-type
-  `spec` (paths, instructions filename, fixed command, queue kind / dedupe
-  prefix, `isQaRun?`, presence `agentId`/`label`, cleanup) it returns a `start(args)`
-  function that drives one spawn and folds in the boilerplate both run-types
-  shared verbatim — the command wrapper, the `interactive` queue band, and the
-  orange-presence `registerAgentSession` call. The genuinely per-run-type pieces
-  stay explicit as `args`: `installHooks`, `renderInstructions`, and `recordRun`
-  (the feature's registry write). Push/QA `session.ts` are thin adapters over
-  this; post-merge does **not** use it (no presence node / registry of this
-  shape). New shared spawn boilerplate goes here, not in the per-feature dirs.
+  factory layered on `startHomeScratchAgentSession`. From a `spec` (paths,
+  instructions filename, launch command, optional `harness`, queue kind / dedupe
+  prefix, `isQaRun?`, presence `agentId`/`label`, cleanup) it returns a
+  `start(args)` function that drives one spawn and folds in the boilerplate both
+  run-types shared verbatim — the command wrapper, the `interactive` queue band,
+  and the presence `registerAgentSession` call. The spec is **not** necessarily
+  static: QA builds one module-level spec (fixed Claude command), but push
+  builds its spec **per spawn** from the selected harness, normalized Pi model
+  and the project's Codex yolo toggle (`pushRuns/session.ts`). The spec's
+  `harness?` is passed through to the presence node so it is coloured by
+  harness; without it (QA) the node is the default orange. The genuinely
+  per-run-type pieces stay explicit as `args`: `installHooks`,
+  `renderInstructions`, and `recordRun` (the feature's registry write).
+  Push/QA `session.ts` are thin adapters over this; post-merge does **not** use
+  it — it has its own trigger and registry and registers its own presence node
+  (`postMergeHooks/trigger.ts`). New shared spawn boilerplate goes here, not in
+  the per-feature dirs.
 - `cleanup.ts` — `cleanupHomeScratchSession({paths, projectPath, id, logLabel})`:
   the bounded recursive scratch delete (kill the PTY holding the dir handle →
   `notifySessionsFreed` → strip reparse points → `fsRmWithRetries`), gated
@@ -58,6 +65,19 @@ single source of truth for all three.
   `list` for boot recovery, optional event fan-out). With a `store` every
   change re-mirrors the project's RUNNING runs to disk. QA-specific verdict
   fields and push-specific subscriptions remain in their feature registries.
+  - **Eviction rule (a small unbounded-growth trap).** A finished run leaves
+    the in-memory `runs` map **only** through `forget`. Just two places call
+    it: the frontend DELETE pollers (`usePushRun.ts` / `useQaRuns.ts` →
+    `DELETE /api/{push,qa}-runs/:id`), whose run ids live in React state and
+    are lost on a reload; and the workflow Push step's `forgetPushRun`. So these
+    stay for the life of the process: runs whose board was reloaded or closed
+    mid-run, boot-re-adopted runs (`restore`; no frontend holds their id), and
+    runs settled `lost`. Every `persist()` filters the whole map, so the cost
+    grows with them. If you add a cap or TTL, it must **exempt finished
+    workflow-owned push runs**: `findCompletedPushRunForWorkflowStep`
+    (`pushRuns/registry.ts`) relies on them being kept until the step forgets
+    them, so a re-dispatched Push step sees the push already happened instead
+    of pushing twice.
 - `persistence.ts` — `createOneOffRunStore({fileName, logLabel, deserialize})`:
   the on-disk mirror of a run-type's **running** records at
   `~/.lattice/per-project/<hash>/<fileName>` (`push-runs.json`, `qa-runs.json`,

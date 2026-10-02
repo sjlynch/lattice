@@ -154,7 +154,7 @@ const lockWait: LockWaitContext = { deps: () => deps, noteAndAdvance };
 // Public surface
 // ---------------------------------------------------------------------------
 
-// Fire-and-forget entry point for a 'test' step (the facade's `dispatchStep`).
+// Fire-and-forget entry point for a 'test' step (dispatch.ts's `dispatchStep`).
 // The skip check, lock wait and spawn run detached from the caller — which is
 // the PREVIOUS step's completion, so a skip must not advance recursively
 // inside it.
