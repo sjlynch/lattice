@@ -28,6 +28,25 @@ Codex Working state follows its status title rather than animated idle output;
 live PTYs: these defaults apply on launch/relaunch, never by killing sessions
 to upgrade them.
 
+## Scrollback and session caps
+
+The values live in `TERMINAL_CONFIG` in
+[`../terminalConfig.ts`](../terminalConfig.ts):
+
+- `SCROLLBACK_REPLAY_BYTES` (2_000_000) — the most a browser receives per
+  attach or reconnect.
+- `SCROLLBACK_KEEP_BYTES` (4_000_000) — the tail a compaction keeps.
+- `SCROLLBACK_MAX_DISK_BYTES` (8_000_000) — the on-disk log size that
+  triggers a compaction.
+- `SCROLLBACK_FLUSH_BYTES` (64_000) — pending in-memory output before a flush
+  to the log.
+- `MAX_TERMINAL_SESSIONS` (200) — `createSession`'s runaway backstop on live
+  ptys.
+
+Every mounted browser pane receives up to `SCROLLBACK_REPLAY_BYTES` on each
+(re)attach, and JSON-escaping control characters inflates the frame beyond
+that. Raising the constant therefore multiplies browser memory per pane.
+
 ## Files
 
 - `sessionTypes.ts` — `Session` (id, pty, scrollback, size, cwd, shell,
@@ -141,7 +160,7 @@ to upgrade them.
   mirroring codexTrust. No-op for non-Claude commands / no override. See
   `harnessSystemPrompts/`.
 - `createSession.ts` — `createSession`: the spawn orchestrator (session-cap
-  check → `buildSessionLaunchContext` → `pty.spawn` → build `Session` →
+  check against `MAX_TERMINAL_SESSIONS` → `buildSessionLaunchContext` → `pty.spawn` → build `Session` →
   `addSession` → `wireSessionPtyEvents` + banner + `lowerAgentPriority` +
   initialCommand). `lowerAgentPriority` sets an **agent** pty's shell
   (`agentHarnessForCommand(initialCommand)`) to below-normal priority *before*
@@ -166,17 +185,17 @@ to upgrade them.
   reconnects and gets the replay). Also `holdSubscriber` / `releaseSubscriber`:
   a socket on hold has its frames queued (same bound) for `attachTerminal` to
   flush after the replay.
-  Attach always sends a `data` frame with `replayed: true` for history, including
-  empty/failed reads, before held live frames. The browser suppresses historical
-  terminal-query replies; omitting the empty boundary could misclassify a live
-  startup query as history.
 - `attach.ts` — `attachTerminal`: resolve an existing session by id (or create a
   fresh one when no id), add the WS as a subscriber **on hold**, send
   `attached`, wire the input/resize/kill handlers, then read the scrollback
   replay asynchronously (`replayAsync`) and send it followed by the held live
-  frames in order — the replay was a synchronous up-to-2 MB read on the loop
-  every pty shares, and N re-attaches after a backend restart pushed the health
-  probe past its timeout. `kill` goes through `killSession` (the `killing`
+  frames in order — the replay was a synchronous up-to-2 MB
+  (`SCROLLBACK_REPLAY_BYTES`) read on the loop every pty shares, and N
+  re-attaches after a backend restart pushed the health probe past its timeout.
+  Attach always sends a `data` frame with `replayed: true` for history, including
+  empty/failed reads, before held live frames. The browser suppresses historical
+  terminal-query replies; omitting the empty boundary could misclassify a live
+  startup query as history. `kill` goes through `killSession` (the `killing`
   guard + process-tree kill), never a bare `pty.kill()`. Sizes are validated
   with `isPtyDimension` (positive integer, at most 32767 — ConPTY's 16-bit limit)
   here and in the upgrade handler. A malformed upgrade target (one `new URL()`
@@ -198,7 +217,8 @@ to upgrade them.
   the pending-buffer/degraded-mode state machine (append/flush/compact/replay);
   the low-level file mechanics and the boot-time wipe live in the two helpers
   below. **Compaction is asynchronous** (temp file + rename via `fs.promises`):
-  its read-4-MB + write-4-MB used to run synchronously on this event loop —
+  its read-4-MB + write-4-MB (`SCROLLBACK_KEEP_BYTES`, triggered past
+  `SCROLLBACK_MAX_DISK_BYTES`) used to run synchronously on this event loop —
   which hosts every pty — so thirty agents each crossing the disk cap froze
   all of them in turn. While a compaction is in flight, flushes hold output in
   `pending` (bounded to the replay window) and land after the rename; `replay`
@@ -228,7 +248,7 @@ to upgrade them.
 
 - **create:** `createSession` → `buildSessionLaunchContext`
   (`launchContext`/`envSetup`/`windowsPath` set up shell/cwd/env) → `pty.spawn`
-  → `wireSessionPtyEvents` (`sessionLifecycle`) → `addSession` (`sessionStore`).
+  → `addSession` (`sessionStore`) → `wireSessionPtyEvents` (`sessionLifecycle`).
 - **attach:** `attachTerminal` → `getSession`-or-`createSession` → add WS
   subscriber → send `attached` + scrollback replay.
 - **kill / pty exit:** `killSession` or the pty `onExit` handler →

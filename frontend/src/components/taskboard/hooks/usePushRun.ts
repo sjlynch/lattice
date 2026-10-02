@@ -8,15 +8,17 @@ import {
   startPushRun,
   type PushRunStatus,
 } from '../../../api';
-import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
+import type { AddTerminal } from '../../../terminal/terminalTypes';
 import { useGitSetupNonce } from '../../gitSetup/GitSetupProvider';
 import {
   pollWithErrorSentinel,
   useVisibilityPolling,
 } from './useVisibilityPolling';
 
-type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 type CloseTerminal = (id: string) => void;
+
+// Poll cadence for the active push run, waiting on its Stop hook to flip it to `done`.
+const PUSH_RUN_POLL_INTERVAL_MS = 2000;
 
 // The resolved value of one status poll: a real status object, `null` for a
 // genuine 404 (the run is truly gone), or `'error'` when the fetch itself threw
@@ -139,7 +141,7 @@ export function usePushRun(
 
   useVisibilityPolling({
     enabled: !!activePush,
-    intervalMs: 2000,
+    intervalMs: PUSH_RUN_POLL_INTERVAL_MS,
     poll: pollActivePush,
   });
 

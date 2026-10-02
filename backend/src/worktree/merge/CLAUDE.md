@@ -1,12 +1,14 @@
 # backend/src/worktree/merge
 
-Helper steps for a **single-task merge attempt**, factored out of the sibling
-`../merge.ts` FILE.
+Helper steps for a **single-task merge attempt**, plus main's fast-forward,
+factored out of the sibling `../merge.ts` FILE.
 
 > **Name-collision hazard:** this `merge/` DIRECTORY ≠ the `../merge.ts` FILE.
-> The FILE owns the public orchestrators `mergeWorktreeInRepo` (run `git merge`
-> *inside the worktree*, never main's tree) and `fastForwardMain` (FF main to
-> the resolved tip). The DIRECTORY holds the per-step helpers the FILE calls.
+> The FILE owns only the public orchestrator `mergeWorktreeInRepo` (run
+> `git merge` *inside the worktree*, never main's tree); it merely re-exports
+> `fastForwardMain` (FF main to the resolved tip) from this directory's
+> `fastForward.ts`. The DIRECTORY holds the per-step helpers the FILE calls,
+> plus `fastForward.ts` and the shared `types.ts`.
 > Mind which one you're editing — this is the safety-critical merge pipeline.
 
 ## Call chain (`mergeWorktreeInRepo` drives it)

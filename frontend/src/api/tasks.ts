@@ -182,8 +182,11 @@ export async function abortTaskMerge(projectPath: string, id: string): Promise<v
 // is touching. `onSpawned` lazy-mounts the terminal; `onSpawnFailed` toasts a
 // failed deferred spawn; `onActivity` / `onAgentActivity` drive the graph
 // focus beams.
+//
+// `partial` is never sent by the backend: it marks the in-progress-only
+// projection the shared channel replays to a late joiner (see subscribeTasks).
 type TasksWsMessage =
-  | { type: 'tasks'; tasks: Task[] }
+  | { type: 'tasks'; tasks: Task[]; partial?: boolean }
   | ({ type: 'task-spawned' } & TaskSpawnedEvent)
   | ({ type: 'task-spawn-failed' } & TaskSpawnFailedEvent)
   | ({ type: 'task-activity' } & TaskActivityEvent)
@@ -197,9 +200,26 @@ type TasksWsMessage =
 // snapshot is cached+replayed to a late joiner (e.g. the board opening after
 // the graph already opened the socket); the transient `task-spawned` /
 // `*-activity` frames are NOT replayed (no stale beam re-fires).
+//
+// The replay cache holds only the in-progress tasks, flagged `partial`: a full
+// board frame (every lane, full descriptions — megabytes on a large project)
+// must become garbage once dispatched, not linger as a second parsed copy of the
+// board. The graph's agent overlay needs nothing more; the board ignores a
+// partial update because it fetches the whole board over HTTP on subscribe.
+export type TasksUpdateMeta = { partial: boolean };
+
+function inProgressReplay(msg: TasksWsMessage): TasksWsMessage {
+  if (msg.type !== 'tasks') return msg;
+  return {
+    type: 'tasks',
+    tasks: msg.tasks.filter((t) => t.status === 'in_progress'),
+    partial: true,
+  };
+}
+
 export function subscribeTasks(
   projectPath: string,
-  onUpdate: (tasks: Task[]) => void,
+  onUpdate: (tasks: Task[], meta: TasksUpdateMeta) => void,
   onSpawned?: (event: TaskSpawnedEvent) => void,
   onActivity?: (event: TaskActivityEvent) => void,
   onAgentActivity?: (event: AgentActivityEvent) => void,
@@ -208,13 +228,14 @@ export function subscribeTasks(
   return subscribeWsShared<TasksWsMessage>(
     `/ws/tasks?project=${encodeURIComponent(projectPath)}`,
     (msg) => {
-      if (msg.type === 'tasks') onUpdate(msg.tasks);
+      if (msg.type === 'tasks') onUpdate(msg.tasks, { partial: msg.partial === true });
       else if (msg.type === 'task-spawned') onSpawned?.(msg);
       else if (msg.type === 'task-spawn-failed') onSpawnFailed?.(msg);
       else if (msg.type === 'task-activity') onActivity?.(msg);
       else if (msg.type === 'agent-activity') onAgentActivity?.(msg);
     },
     (msg) => msg.type === 'tasks',
+    { replayValue: inProgressReplay },
   );
 }
 
