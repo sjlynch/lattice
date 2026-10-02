@@ -40,7 +40,11 @@ label physics in `labelPhysics/CLAUDE.md`.
   `webglcontextlost`. A construction failure or context-loss event alone
   establishes neither OOM nor a GC defect. Retry **remounts the coordinator
   and its hooks**: re-running init alone would leave hooks wired to the old
-  graph instance. `webglcontextrestored` clears the notice and wakes rendering.
+  graph instance. Every project switch remounts too: `App.tsx` keys
+  `<ForceGraphView>` by `activeFolder`, tearing down and rebuilding renderer,
+  scene and overlays (GPU release: teardown order in
+  [hooks/CLAUDE.md](hooks/CLAUDE.md)). `webglcontextrestored` clears the notice
+  and wakes rendering.
   A browser restart may help, but is neither a guaranteed nor an exclusive
   cure; see the existing
   [browser memory troubleshooting and graph recovery advice](../../../README.md#browser-memory-troubleshooting).
@@ -233,8 +237,9 @@ label physics in `labelPhysics/CLAUDE.md`.
   `showLinks` (Rendering tab "Show links" checkbox, default on — off returns
   `false` from `useGraphFilter`'s `linkVisibility` and re-captures the batched
   buffer; render-only, the links still drive the layout);
-  "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (neutral/off by
-  default) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
+  "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (defaults 0.014
+  vs d3's 0.0228 and 15 — a wider, pre-settled layout; only `collideRadius` is
+  off at 0) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
   default**); "Rendering" tab selection-glow fields
   `selectionGlowStrength`/`selectionGlowScale` (the pulsing bloom over selected
   nodes — see `halo.ts` + `hooks/useSelectionGlowSettings`).
