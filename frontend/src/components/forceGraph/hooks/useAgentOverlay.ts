@@ -7,6 +7,7 @@ import { onFrame } from '../sceneFrameDriver';
 import { AgentOverlay, type AgentDescriptor } from '../agentOverlay';
 import { PendingActivityBuffer } from '../agentActivityBuffer';
 import {
+  reapStaleSatellites,
   routeAgentActivity,
   sameDescriptors,
   sessionDescriptors,
@@ -170,11 +171,12 @@ export function useAgentOverlay(
     });
 
     // A satellite whose SubagentStop was missed is reaped inside `tick`, which
-    // only runs while the loop renders — on a settled, paused scene the dead
-    // satellite (and its lit beam) stayed painted until something else woke
-    // the graph. Check on a slow timer and wake the loop only when one is due.
+    // only runs while the loop renders — on a settled, paused scene (or a
+    // hidden tab / 0×0 graph, where the loop can't render at all) the dead
+    // satellite and its beams stayed alive until something else woke the
+    // graph. Reap on a slow timer instead, waking the loop only when one went.
     const reapTimer = setInterval(() => {
-      if (overlay.hasReapableSatellites(performance.now())) kick();
+      reapStaleSatellites(overlay, performance.now(), kick, wakeRefresh);
     }, SATELLITE_REAP_CHECK_MS);
 
     applyMerged(); // apply anything that arrived before the overlay existed
@@ -185,13 +187,15 @@ export function useAgentOverlay(
       overlay.destroy(graph);
       overlayRef.current = null;
     };
-  }, [graphRef, settingsRef, applyMerged, kick]);
+  }, [graphRef, settingsRef, applyMerged, kick, wakeRefresh]);
 
   // Task agents + both activity beam sources (all on `/ws/tasks`).
   useEffect(() => {
     if (!activeFolder) return;
     const unsub = subscribeTasks(
       activeFolder,
+      // A late joiner's partial replay holds every in-progress task — all that
+      // taskDescriptors reads — so it is applied like a full snapshot.
       (tasks) => {
         const next = taskDescriptors(tasks);
         if (sameDescriptors(next, taskDescRef.current)) return;

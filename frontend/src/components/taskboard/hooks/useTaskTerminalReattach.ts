@@ -47,11 +47,20 @@ export function useTaskTerminalReattach(
   // effect (cancelling the in-flight retry chain and restarting it at attempt
   // 0) on every update — on a busy board the one-shot never completed and
   // `/api/terminals` was polled indefinitely.
-  const inProgressKey = tasks
-    .filter((t) => t.status === 'in_progress' && !!t.worktreePath)
-    .map((t) => t.id)
-    .sort()
-    .join('\n');
+  // Once this folder's one-shot has run the effect bails before reading the
+  // key, so skip the filter/sort/join on every later task update. The ref only
+  // flips at the end of a completed chain (nothing left in flight), and a
+  // folder switch makes it unequal again, so the one-shot fires exactly as
+  // before.
+  // eslint-disable-next-line react-hooks/refs -- read-only short-circuit; see above
+  const reattachDone = reattachedFor.current === activeFolder;
+  const inProgressKey = reattachDone
+    ? ''
+    : tasks
+        .filter((t) => t.status === 'in_progress' && !!t.worktreePath)
+        .map((t) => t.id)
+        .sort()
+        .join('\n');
 
   useEffect(() => {
     if (!activeFolder) return;

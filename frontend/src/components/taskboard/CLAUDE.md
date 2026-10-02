@@ -106,7 +106,8 @@ shim. This file covers the files DIRECTLY here; the taskboard's hooks live in
 
 Taskboard CSS is split under `frontend/src/styles/taskboard/`; `styles/taskboard.css`
 is the ordered aggregator with comments for `shell`, `lanes`, `cards`, `filters`,
-`lane-actions`, `detail`, `toast`, and `forms`.
+`lane-actions`, `detail`, `toast`, `forms`, and `post-merge-hook` (`.post-merge-hook-*`
+— the collapsible post-merge hook config strip below the lanes).
 
 ## Drag MIME
 
