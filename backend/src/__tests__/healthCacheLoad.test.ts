@@ -33,3 +33,49 @@ test('HealthCache.load drops malformed entries instead of failing every later sc
     assert.deepEqual([...cache.entries()].map(([f]) => f), [good]);
   });
 });
+
+const cacheFileExists = (root: string) => fs.access(cachePath(root)).then(() => true, () => false);
+
+test('HealthCache.set with an identical entry leaves the cache clean', async () => {
+  await withTempDir('lattice-health-cache-unchanged-', async (root) => {
+    const file = path.join(root, 'a.ts');
+    const cache = new HealthCache(root);
+    cache.set(file, 1, 1, minimalMetrics({ loc: 3, fanIn: 2 }), ['./x']);
+    await cache.flush();
+    assert.ok(await cacheFileExists(root), 'a new entry is written');
+    await fs.unlink(cachePath(root));
+    // Fresh but equal objects, the way a scan re-seeds the watcher's cache. A
+    // key holding undefined serializes like an absent one.
+    cache.set(file, 1, 1, minimalMetrics({ loc: 3, fanIn: 2, deadCode: undefined }), ['./x']);
+    await cache.flush();
+    assert.equal(await cacheFileExists(root), false, 'an unchanged entry performs no write');
+  });
+});
+
+test('HealthCache.set marks a changed stat, metric or import dirty', async () => {
+  await withTempDir('lattice-health-cache-changed-', async (root) => {
+    const file = path.join(root, 'a.ts');
+    const base = () => minimalMetrics({ loc: 3 });
+    const changes: Array<[string, (cache: HealthCache) => void]> = [
+      ['mtime', (cache) => cache.set(file, 2, 1, base(), ['./x'])],
+      ['size', (cache) => cache.set(file, 1, 2, base(), ['./x'])],
+      ['metrics', (cache) => cache.set(file, 1, 1, minimalMetrics({ loc: 3, score: 90 }), ['./x'])],
+      ['nested metrics', (cache) => cache.set(file, 1, 1, minimalMetrics({
+        loc: 3,
+        smells: [{ id: 'todo_fixme', count: 1, label: 'TODO / FIXME' }],
+      }), ['./x'])],
+      ['added metric field', (cache) => cache.set(file, 1, 1, minimalMetrics({ loc: 3, deadCode: 'dead' }), ['./x'])],
+      ['imports', (cache) => cache.set(file, 1, 1, base(), ['./x', './y'])],
+      ['replaced import', (cache) => cache.set(file, 1, 1, base(), ['./y'])],
+    ];
+    for (const [what, change] of changes) {
+      const cache = new HealthCache(root);
+      cache.set(file, 1, 1, base(), ['./x']);
+      await cache.flush();
+      await fs.unlink(cachePath(root));
+      change(cache);
+      await cache.flush();
+      assert.ok(await cacheFileExists(root), `a changed ${what} is written`);
+    }
+  });
+});
