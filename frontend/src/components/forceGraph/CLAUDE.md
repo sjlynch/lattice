@@ -154,7 +154,7 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `claudeNodeSprite.ts` — `makeClaudeNode` (presence disc+glow) /
   `makeSatelliteNode` (subagent ring).
 - `agentOverlay.ts` — thin façade over the APL (`setAgents`/`addActivity`/
-  `addSubagent*`/`tick`/`setSizes`/`isActive`/`destroy`) delegating to siblings
+  `addSubagent*`/`tick`/`reapSatellites`/`setSizes`/`isActive`/`destroy`) delegating to siblings
   `agentOverlay{Context,Constants,Types,PathIndex,Reconcile,Activity,Satellites,
   Beams,BeamMath,Tick,Labels,LabelLayout,Placement}.ts` (pure math tested in
   `src/__tests__`). `hooks/useAgentOverlay.ts` supplies `showSubagentLabels` to
@@ -165,6 +165,11 @@ label physics in `labelPhysics/CLAUDE.md`.
   destroy; inactive overlays may never receive another frame. A remaining sibling
   keeps the index, and the next addition rebuilds it through `ensure`. Coverage:
   [agentOverlayPathIndex.test.ts](../../__tests__/agentOverlayPathIndex.test.ts).
+  For the same reason, releases must not wait for `tick`: the loop is paused
+  for a hidden tab or 0×0 graph while agents keep working. `applyActivity`
+  disposes expired beams before creating one (`disposeExpiredBeams`), and the
+  hook's 30 s timer calls `reapSatellites` directly, then wakes the loop.
+  Coverage: [agentOverlayPausedLoop.test.ts](../../__tests__/agentOverlayPausedLoop.test.ts).
   `agentLabelRects.ts` owns the dependency-free rectangle types and pure
   `spreadLabelRects` packing (labels only slide along their node's side).
   `agentOverlayLabelLayout.ts` is the scene adapter and compatibility re-export;
