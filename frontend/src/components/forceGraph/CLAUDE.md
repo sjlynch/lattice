@@ -244,6 +244,7 @@ label physics in `labelPhysics/CLAUDE.md`.
   (settle contract) and skips Y (pinned by the DAG). Registered by
   `hooks/useGraphSettings`' `useLayoutShapeSettings` (with `alphaDecay`/`warmupTicks`)
   only while `collideRadius > 0`.
+- `linkedCellGrid.ts` — the X/Z grid both forces and `labelPhysics/spatialGrid` share (packed cell keys, pooled buckets, a closure-free `visitNeighbors`/`nextNeighbor` cursor yielding each pair once as j > i in a fixed order); callers own cell rounding + pair math ([linkedCellGrid.test.ts](../../__tests__/linkedCellGrid.test.ts)).
 - `radialTidyLayout.ts` (`computeRadialTidyLayout`/`tidyRingStep`, pure/tested) +
   `hooks/useRadialTidyLayout` — default-on untangler: seeds the containment tree
   in separate angular wedges with an adaptive radius so the engine expands
