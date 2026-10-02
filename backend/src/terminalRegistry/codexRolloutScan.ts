@@ -97,7 +97,8 @@ export async function scanRecentCodexRollouts(
 //   - the directory listing + stats are taken ONCE per `(root, days)` per
 //     short TTL and shared by every in-flight discovery (single-flighted);
 //   - a rollout's `session_meta` line never changes once written, so a parsed
-//     meta is kept for the process lifetime and the file is never re-read.
+//     meta is kept in a FIFO capped at META_CACHE_MAX entries and the file is
+//     re-read only after its entry is evicted.
 
 const LISTING_TTL_MS = 1_500;
 type RolloutListing = Array<{ file: string; mtimeMs: number }>;

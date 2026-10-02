@@ -17,6 +17,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { watchTree, type TreeWatcher } from '../watchTree.js';
+import { RecursiveTreeWatcher } from '../watchTree/recursiveWatcher.js';
 import { withTempDir } from './helpers/tempDir.js';
 
 type Recorded = { event: string; filePath: string };
@@ -175,6 +176,49 @@ test('watchTree reports a case-only rename as unlink(old) + add(new)', async () 
       await settle();
       assert.ok(has(seen, 'add', lower), `expected add for foo.ts, got ${JSON.stringify(seen)}`);
       assert.ok(has(seen, 'unlink', upper), `expected unlink for Foo.ts, got ${JSON.stringify(seen)}`);
+    } finally {
+      await watcher.close();
+    }
+  });
+});
+
+// A file younger than WRITE_STABILITY_MS gets a `retries` entry and is held for
+// another pass. If it is gone by then it was never recorded, and the removal
+// path used to return before dropping that entry — so every short-lived file
+// (the `.git` watcher sees a unique `index.lock` / `<branch>.lock` per task)
+// leaked one for the backend's lifetime.
+test('a young file unlinked before its next pass leaves no retry entry and no event', async () => {
+  if (process.platform !== 'win32') return; // the recursive backend's platform
+  await withTempDir('lattice-watchtree-retries-', async (dir) => {
+    const watcher = new RecursiveTreeWatcher(dir, { ignored: () => false });
+    const seen = record(watcher);
+    const waitFor = async (cond: () => boolean, what: string, onTick?: () => Promise<void>) => {
+      const deadline = Date.now() + 5_000;
+      while (!cond()) {
+        if (Date.now() > deadline) throw new Error(`timed out waiting for ${what}`);
+        await onTick?.();
+        await settle(10);
+      }
+    };
+    try {
+      await settle();
+      const file = path.join(dir, 'short-lived.lock');
+      await fs.writeFile(file, 'lock', 'utf8');
+      // Keep its mtime fresh so whichever pass sees it finds it still young.
+      await waitFor(() => watcher.stabilityRetryCount > 0, 'the young file to be held', async () => {
+        const now = new Date();
+        await fs.utimes(file, now, now);
+      });
+
+      await fs.rm(file);
+      await waitFor(() => watcher.stabilityRetryCount === 0, 'the retry entry to be dropped');
+      await settle();
+      assert.equal(watcher.stabilityRetryCount, 0);
+      assert.deepEqual(
+        seen.filter((s) => s.filePath === file),
+        [],
+        `expected no events for the never-seen file, got ${JSON.stringify(seen)}`,
+      );
     } finally {
       await watcher.close();
     }
