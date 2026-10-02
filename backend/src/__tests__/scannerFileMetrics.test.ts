@@ -6,6 +6,21 @@ import { computeFileMetrics, readForAnalysis } from '../scanner/fileMetrics.js';
 import { LOC_MAX_BYTES } from '../health/constants.js';
 import { withTempDir } from './helpers/tempDir.js';
 
+// An oversize file made by extending an empty one (no 5 MB write from JS).
+async function writeOversize(file: string): Promise<number> {
+  const fh = await fs.open(file, 'w');
+  try {
+    await fh.truncate(LOC_MAX_BYTES + 1);
+  } finally {
+    await fh.close();
+  }
+  return (await fs.stat(file)).size;
+}
+
+function readsOf(spy: { mock: { calls: readonly { arguments: readonly unknown[] }[] } }, file: string): number {
+  return spy.mock.calls.filter((c) => c.arguments[0] === file).length;
+}
+
 test('readForAnalysis returns zero LOC and empty content for empty files', async () => {
   await withTempDir('lattice-scan-metrics-empty-', async (dir) => {
     const file = path.join(dir, 'empty.ts');
@@ -39,6 +54,48 @@ test('readForAnalysis skips LOC and content for files over the hard byte cutoff'
     await fs.writeFile(file, Buffer.alloc(LOC_MAX_BYTES + 1, 0x61));
 
     assert.deepEqual(await readForAnalysis(file), {});
+  });
+});
+
+// A large, non-ignored file that keeps growing (a log, JSON dump, CSV export)
+// used to be read whole on every scan just to be thrown away by the cutoff. A
+// known stat size over the cutoff must skip the read entirely, same `{}` result.
+test('readForAnalysis never reads a file whose known size is over the hard byte cutoff', async (t) => {
+  await withTempDir('lattice-scan-metrics-known-size-', async (dir) => {
+    const file = path.join(dir, 'dump.json');
+    const size = await writeOversize(file);
+    const readFile = t.mock.method(fs, 'readFile');
+
+    assert.deepEqual(await readForAnalysis(file, size), {});
+    assert.equal(readsOf(readFile, file), 0, 'an oversize known size must not be read');
+  });
+});
+
+test('readForAnalysis keeps the post-read cutoff when the file grew past its known size', async () => {
+  await withTempDir('lattice-scan-metrics-grew-', async (dir) => {
+    const file = path.join(dir, 'growing.log.json');
+    await writeOversize(file);
+
+    // Stat'd small, read large: the buffer-length backstop still drops it.
+    assert.deepEqual(await readForAnalysis(file, 10), {});
+  });
+});
+
+test('computeFileMetrics leaves an oversize file unread and metric-less', async (t) => {
+  await withTempDir('lattice-scan-metrics-oversize-scan-', async (dir) => {
+    const file = path.join(dir, 'export.csv');
+    const size = await writeOversize(file);
+    const readFile = t.mock.method(fs, 'readFile');
+
+    const [metric] = await computeFileMetrics([file]);
+    assert.equal(metric.size, size);
+    assert.equal(metric.loc, undefined);
+    assert.equal(metric.healthDetails, undefined);
+    assert.deepEqual(metric.imports, []);
+    // Under tsx the isolated worker can't load and the in-thread fallback runs
+    // here, so this checks the stat size reaches it; a real worker reads on its
+    // own thread and never touches this spy.
+    assert.equal(readsOf(readFile, file), 0, 'the scan must not read an oversize file');
   });
 });
 

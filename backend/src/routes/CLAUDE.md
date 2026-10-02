@@ -2,10 +2,10 @@
 
 One Express `Router` per domain. Every module exports a `buildXRouter(...)`
 factory and `server/app.ts` mounts them in this order: restartDrain
-(admission gate, then the internal handshake), health, search,
-settings, globalSettings, mcp, opengrep, projectInit, terminals, terminalTabs,
-tasks, agentActivity, projectClaude, mergeRuns, postMergeHooks, pushRuns,
-qaRuns, workflows.
+(admission gate, then the internal handshake), the callback-outbox ack
+middleware, health, search, settings, globalSettings, mcp, opengrep,
+projectInit, terminals, terminalTabs, tasks, agentActivity, projectClaude,
+mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
 
 ## Route map
 
@@ -16,6 +16,14 @@ qaRuns, workflows.
   `Retry-After`) new top-level starts while a drain is on. Must stay mounted
   FIRST so the gate runs before the routes it guards. See
   `../restartDrain/CLAUDE.md`.
+- `buildCallbackOutboxAck` (`../callbackOutbox/ack.ts`, not a router) —
+  middleware mounted between restartDrain and health. For a POST whose path
+  matches `CALLBACK_PATH_RE` (`/(complete|done|verdict|merged|merge-aborted|stash-resolved)$`,
+  `../callbackOutbox/drain.ts`), it unlinks that callback's durable outbox
+  entry once the response is final (anything but 5xx, 408 or 429). The hook
+  that sent it may be killed by the cleanup the callback triggers. Outbox
+  replays (marked by `OUTBOX_REPLAY_HEADER`) are skipped; the drain removes
+  those entries itself. See `../callbackOutbox/CLAUDE.md`.
 - `health.ts` — composes `routes/health/`: `liveness.ts` (liveness/
   default-root/harnesses), `scan.ts` (scan + agent-facing dead-code summary),
   `gitInfo.ts` (`/api/git-history` + `/api/git-branch`), and `browse.ts`
@@ -75,7 +83,11 @@ qaRuns, workflows.
 - `agentActivity.ts` — `/api/agent-activity/:token` for Lattice-spawned
   non-worktree Claude sessions (push/workflow/post-merge) and graph beams.
 - `projectClaude.ts` — project-root instrumentation install/remove plus
-  `/api/project-activity/:token` for user-started Claude sessions.
+  `/api/project-activity/:token`. It is the activity callback for every
+  project-instrumented session: user-started Claude sessions (hooks in
+  `.claude/settings.local.json`), user-opened Codex tabs (per-launch hook
+  overrides) and the project-root Pi activity extension. Keyed by the body's
+  `session_id`.
 - `mergeRuns.ts` — merge-all start/active/get/cancel/stash-resolved.
 - `postMergeHooks.ts` — active/recent hook read, completion callback, abort.
 - `pushRuns.ts` — git-check plus push-run start/status/done/forget. `/api/git-check`
@@ -160,6 +172,14 @@ testable and avoids hidden globals.
    paths with parameter routes.
 3. Errors thrown synchronously or from async handlers are caught by the global
    JSON error middleware in `server/app.ts` (`express-async-errors`).
+4. A new **completion-callback** route (one a Stop hook POSTs through the
+   callback outbox) must end in one of `CALLBACK_PATH_RE`'s suffixes:
+   `/complete`, `/done`, `/verdict`, `/merged`, `/merge-aborted` or
+   `/stash-resolved`. Otherwise the ack middleware never clears its outbox
+   entry, and the drain drops the entry as "not a completion callback route"
+   instead of replaying it. A callback lost during a backend restart is then
+   never redelivered. To add a new suffix, extend the shared regex in
+   `../callbackOutbox/drain.ts`; don't write a second filter.
 
 ## Command reference
 

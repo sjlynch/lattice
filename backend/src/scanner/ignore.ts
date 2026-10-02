@@ -27,7 +27,7 @@ export async function loadGitignore(root: string): Promise<Ignore> {
 // (git reads `info/exclude` only from there): `.git` is a directory in a main
 // checkout, or a `gitdir: <path>` pointer file in a linked worktree whose
 // `commondir` names the shared one. Null when there is none / it's unreadable.
-async function readInfoExclude(root: string): Promise<string | null> {
+export async function readInfoExclude(root: string): Promise<string | null> {
   const dotGit = path.join(root, '.git');
   let gitDir = dotGit;
   try {

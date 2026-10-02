@@ -98,3 +98,44 @@ test('reloadForPath ignores a non-root .gitignore but fires for the root one', a
     'root .gitignore triggers a reload',
   );
 });
+
+test('isIgnored honours the repo info/exclude as well as .gitignore (matching /api/scan)', async () => {
+  const dir = await makeProject({
+    '.gitignore': 'generated/\n',
+    // Where Lattice records its managed files instead of the tracked .gitignore.
+    '.git/info/exclude': '/.pi/extensions/lattice-*.ts\n/.claude/settings.local.json\n',
+  });
+  const reloader = await ConfigReloader.create(dir);
+
+  assert.equal(
+    reloader.isIgnored(path.join(dir, '.pi', 'extensions', 'lattice-system-prompt.ts')),
+    true,
+    'a path listed only in info/exclude is ignored',
+  );
+  assert.equal(reloader.isIgnored(path.join(dir, '.claude', 'settings.local.json')), true);
+  assert.equal(
+    reloader.isIgnored(path.join(dir, '.pi', 'extensions', 'mine.ts')),
+    false,
+    'unlisted siblings stay visible',
+  );
+
+  // .gitignore handling is unchanged (`generated`/`out` are not always-ignored
+  // segments, so only the .gitignore can hide them).
+  assert.equal(reloader.isIgnored(path.join(dir, 'generated', 'bundle.js')), true);
+  assert.equal(reloader.isIgnored(path.join(dir, 'generated'), true), true);
+  assert.equal(reloader.isIgnored(path.join(dir, 'src', 'index.ts')), false);
+
+  // A root .gitignore reload keeps the info/exclude entries.
+  await fs.writeFile(path.join(dir, '.gitignore'), 'out/\n', 'utf8');
+  assert.equal(await reloader.reloadForPath(path.join(dir, '.gitignore')), true);
+  assert.equal(reloader.isIgnored(path.join(dir, 'out', 'main.js')), true);
+  assert.equal(reloader.isIgnored(path.join(dir, 'generated', 'bundle.js')), false);
+  assert.equal(reloader.isIgnored(path.join(dir, '.claude', 'settings.local.json')), true);
+});
+
+test('isIgnored works without any info/exclude (no .git dir)', async () => {
+  const dir = await makeProject({ '.gitignore': 'generated/\n' });
+  const reloader = await ConfigReloader.create(dir);
+  assert.equal(reloader.isIgnored(path.join(dir, 'generated', 'a.js')), true);
+  assert.equal(reloader.isIgnored(path.join(dir, '.claude', 'settings.local.json')), false);
+});
