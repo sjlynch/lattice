@@ -15,10 +15,16 @@ export type ReadResult = {
 //     universal smell regexes never see a multi-MB minified bundle. See the
 //     rationale on isMinifiedForAnalysis in health/constants.ts.
 //
+// `knownSize` is the size the scan already stat'd: an oversize file is skipped
+// without being read at all (a large non-ignored log / JSON dump / CSV export
+// used to be read whole on every scan just to be discarded). The post-read
+// length check stays as a backstop for a file that grew since the stat.
+//
 // Lives in its own module (not fileMetrics.ts) so the health-analysis WORKER
 // can import just this + analyze.js without dragging in the worker coordinator
 // that fileMetrics depends on. fileMetrics re-exports it for back-compat.
-export async function readForAnalysis(filePath: string): Promise<ReadResult> {
+export async function readForAnalysis(filePath: string, knownSize?: number): Promise<ReadResult> {
+  if (knownSize !== undefined && knownSize > LOC_MAX_BYTES) return {};
   try {
     const buf = await fs.readFile(filePath);
     if (buf.length === 0) return { loc: 0, content: '' };
