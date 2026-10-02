@@ -101,8 +101,12 @@ export function useTaskList(
       .catch((err) => console.error('fetchTasks', err));
     const unsub = subscribeTasks(
       activeFolder,
-      (ts) => {
-        if (!cancelled) {
+      (ts, { partial }) => {
+        // A partial update is the in-progress-only replay a late joiner gets
+        // from the shared channel — not a board. The fetch above loads the
+        // whole board, so it must neither replace the list nor suppress that
+        // fetch as if live state had arrived.
+        if (!cancelled && !partial) {
           // A newer board snapshot wins over the initial HTTP request even
           // when that request finishes last during backend recovery.
           receivedLiveState = true;

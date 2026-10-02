@@ -172,7 +172,7 @@ async function analyzeInThread(
     if (options.isCancelled?.()) throw new ScanCancelledError();
     if (k > 0 && k % YIELD_EVERY_N_FILES === 0) await yieldAndCheckCancelled(options);
     const job = unhandled[k];
-    const read = await readForAnalysis(job.filePath);
+    const read = await readForAnalysis(job.filePath, job.size);
     let analysis: JobAnalysis | null = null;
     if (read.content !== undefined && read.loc !== undefined) {
       try {
@@ -205,7 +205,13 @@ export async function computeFileMetrics(
   // genuinely-hung file and continues. Anything the worker couldn't handle
   // (worker unavailable — e.g. from `src` under tsx — or a respawn-limit tail)
   // comes back as `unhandled` for the in-thread fallback below. ──
-  const jobs: AnalysisJob[] = misses.map((m) => ({ index: m.index, filePath: m.filePath, ext: m.ext }));
+  // `size` rides along only for a stat'd file, so an oversize one is never read.
+  const jobs: AnalysisJob[] = misses.map((m) => ({
+    index: m.index,
+    filePath: m.filePath,
+    ext: m.ext,
+    size: m.hasStat ? m.size : undefined,
+  }));
   const { unhandled } = await runHealthAnalysis(jobs, {
     isCancelled: options.isCancelled,
     onResult: (r) => apply(r.index, r.loc, r.analysis),
