@@ -47,7 +47,9 @@ export type WorkflowStep = {
   kind?: WorkflowStepKind;
   // "Frozen" (the editor's snowflake toggle): the step stays in the workflow —
   // prompt and position intact — but the run engine walks straight past it, for
-  // every kind. Absent/false = runs normally. See workflowRuns/frozenSteps.ts.
+  // every kind. Absent/false = runs normally. See `nextStepGroup` in
+  // workflowRuns/execution.ts (a frozen parallel member stays in its group but
+  // is skipped; a frozen serial step still separates groups).
   frozen?: boolean;
   // Adjacent opted-in planning steps run together; every other kind is serial.
   parallel?: boolean;

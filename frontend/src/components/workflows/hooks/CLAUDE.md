@@ -120,7 +120,18 @@ there.
   `vanishedRunResolver.ts` waits a grace (3 s), then asks
   `GET /api/workflow-runs/:id`: back in `activeRuns` → nothing; a recorded final
   status → reported; 404 → `'errored'`, which STOPS the queue; unreachable →
-  re-asked, `'errored'` after 3 min.
+  re-asked every 5 s, `'errored'` after 3 min; still `running` on the backend
+  (this tab's map missed a re-add) → re-polled every
+  `VANISHED_RUN_STILL_RUNNING_POLL_MS` (10 s) with **no cap**. That branch makes
+  the resolver a **long-lived poll**: it ends only when the run reappears in
+  `activeRuns` (a `progress` event or the next `hello`), finishes (a
+  `recentRuns` entry, a non-`running` status, or a 404), or is cancelled by a
+  project switch or unmount. While the run stays `running`, `isCancelled`
+  (checked after every sleep and fetch, and again before the hook dispatches)
+  is its only way out, so a change must keep that cancellation wired.
+  `resolvingVanishedRef` holds one resolver per run id. The 3-min unreachable
+  cap counts from the resolver's start, not the first failed fetch, so after a
+  long still-running poll a single failed fetch reports `'errored'`.
   `fetchRun` / `vanishedRunTiming` are test seams. Covered by
   `src/__tests__/backendRestartResilience.test.ts`. Queue state is **per-project**:
   WorkflowsLauncher isn't remounted on a project switch, so the hook resets to
@@ -170,7 +181,9 @@ there.
   for a step with pre-run tools, which nothing else would end since the run
   index only moves on completion.
 - `vanishedRunResolver.ts` — `resolveVanishedRun(deps)`: the grace → lookup →
-  retry policy above, as a pure async function with injectable sleep/clock.
+  retry → uncapped still-running poll policy above, as a pure async function
+  with injectable sleep/clock; `deps.isCancelled` is the poll's only stop
+  while the backend keeps reporting `running`.
 - `workflowRunSync.ts` — pure, side-effect-free state transitions + linger
   constants for the active/recent/control-progress maps (`activeRunsFromHello`,
   `mergeRecoveringHello` (a `recovering: true` hello — backend still
@@ -201,7 +214,8 @@ there.
   twice" note (informational only; answers are stamped with their folder so a
   project switch never shows the previous project's).
 - `useWorkflowErrorHandler.ts` — shared auto-dismissing toast state (errors,
-  plus `useWorkflowManualRun`'s "Queued behind" notice).
+  plus `useWorkflowManualRun`'s "Queued behind" notice); a thin rename over
+  `shared/useAutoDismissMessage`.
 - `useWorkflowPromptCustomization.ts` — owns per-step customization state,
   custom-step instruction prompting, terminal creation, polling, editor patching,
   and prompt-customization errors.

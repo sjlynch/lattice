@@ -8,8 +8,12 @@ import {
 import {
   loadProjectStateFromDisk,
   writeProjectStateToDisk,
-  writeProjectStateToDiskSync,
 } from './projectState/diskPersistence.js';
+import {
+  flushAllProjectStatePersists,
+  registerProjectStateStore,
+} from './projectState/exitFlush.js';
+import { PersistScheduler } from './projectState/persistScheduler.js';
 import { runExclusive } from './serializeWrites.js';
 
 export type ProjectStateSubscriber<TState> = (
@@ -31,45 +35,8 @@ export type ProjectStateManagerOptions<TState> = {
   flushOnExit?: boolean;
 };
 
-// Stores holding state mutated since its last completed write — a debounced
-// persist that has not fired yet, OR one whose timer fired and whose async
-// write is still in flight (lock wait, stringify, a Windows rename retry). A
-// natural exit waits for those, but `process.exit()` does not: the health
-// watcher's SIGINT/SIGTERM handler, the fatal-error guard and a restart all
-// exit explicitly, and each used to drop up to `persistDelayMs` of task
-// mutations (a just-created task, a status flip) with the timer — or, once the
-// timer had fired, with the unfinished write.
-const storesWithPendingPersist = new Set<{ flushPendingPersistsSync(): void }>();
-let exitFlushInstalled = false;
-
-function ensureExitFlushHook(): void {
-  if (exitFlushInstalled) return;
-  exitFlushInstalled = true;
-  process.once('exit', () => {
-    for (const store of [...storesWithPendingPersist]) store.flushPendingPersistsSync();
-  });
-}
-
-// Every store instance (weakly held — tests construct many). Backs
-// `flushAllProjectStatePersists`, which the restart drain calls right before
-// the dev runner kills this process: on Windows that kill is TerminateProcess,
-// so neither the `exit` hook above nor a signal handler ever runs, and a
-// debounced write still inside its timer (a task status flip, a merge-run
-// record) would simply be lost.
-const allStores = new Set<WeakRef<{ flushAllPendingPersists(): Promise<void> }>>();
-
-export async function flushAllProjectStatePersists(): Promise<void> {
-  const flushes: Promise<void>[] = [];
-  for (const ref of [...allStores]) {
-    const store = ref.deref();
-    if (!store) {
-      allStores.delete(ref);
-      continue;
-    }
-    flushes.push(store.flushAllPendingPersists());
-  }
-  await Promise.all(flushes);
-}
+// Restart-drain flush of every store instance; see projectState/exitFlush.ts.
+export { flushAllProjectStatePersists };
 
 // Where a cross-project by-id lookup found an item: the project key whose
 // cached list holds it, the list, the index within it, and the item itself.
@@ -89,14 +56,9 @@ export class ProjectStateManager<
   protected readonly loaded = new Map<string, boolean>();
   protected readonly loadPromises = new Map<string, Promise<string>>();
   protected readonly persistTimers = new Map<string, NodeJS.Timeout>();
-  // Project keys whose cached state has changed since the last completed write
-  // that captured it, mapped to the generation of their latest change. Set by
-  // schedulePersist; cleared only by a write whose snapshot was taken at that
-  // generation (so a mutation landing mid-write keeps the key dirty). This —
-  // not persistTimers — is what the exit flush writes: a fired timer deletes
-  // its entry before its async write finishes.
-  private readonly dirtyGenerations = new Map<string, number>();
-  private nextDirtyGeneration = 0;
+  // Debounce + dirty-generation bookkeeping and the sync exit flush; shares
+  // persistTimers (see projectState/persistScheduler.ts).
+  private readonly persistScheduler: PersistScheduler<TState>;
   protected readonly listeners = new Set<TSubscriber>();
   // Project keys with a coalesced notifyProject fan-out scheduled (see there).
   private readonly pendingNotifies = new Set<string>();
@@ -113,8 +75,6 @@ export class ProjectStateManager<
   private readonly defaultState: (projectPath: string) => TState;
   private readonly deserialize: (raw: unknown, projectPath: string) => TState | null;
   private readonly snapshot: (state: TState) => TState;
-  private readonly persistDelayMs: number;
-  private readonly flushOnExit: boolean;
 
   constructor(options: ProjectStateManagerOptions<TState>) {
     this.name = options.name;
@@ -122,9 +82,18 @@ export class ProjectStateManager<
     this.defaultState = options.defaultState;
     this.deserialize = options.deserialize ?? ((raw) => raw as TState);
     this.snapshot = options.snapshot ?? ((state) => state);
-    this.persistDelayMs = options.persistDelayMs ?? 100;
-    this.flushOnExit = options.flushOnExit ?? false;
-    allStores.add(new WeakRef(this));
+    this.persistScheduler = new PersistScheduler<TState>({
+      name: this.name,
+      persistDelayMs: options.persistDelayMs ?? 100,
+      flushOnExit: options.flushOnExit ?? false,
+      timers: this.persistTimers,
+      fileForProject: (projectPath) => this.fileForProject(projectPath),
+      latestState: (key) => this.cache.get(key) ?? this.defaultState(key),
+      isWriteProtected: (projectKey) => this.unpreservedCorruptKeys.has(projectKey),
+      runProjectWrite: (project, writeFn) => this.runProjectWrite(project, writeFn),
+      writeStateNow: (projectPath, state) => this.writeStateNow(projectPath, state),
+    });
+    registerProjectStateStore(this);
   }
 
   protected canonicalize(projectPath: string): string {
@@ -276,92 +245,25 @@ export class ProjectStateManager<
   }
 
   protected cancelPendingPersist(projectPath: string): void {
-    const key = this.canonicalize(projectPath);
-    const timer = this.persistTimers.get(key);
-    if (!timer) return;
-    clearTimeout(timer);
-    this.persistTimers.delete(key);
-    this.untrackIfNoPendingPersist();
-  }
-
-  private untrackIfNoPendingPersist(): void {
-    if (this.persistTimers.size === 0 && this.dirtyGenerations.size === 0) {
-      storesWithPendingPersist.delete(this);
-    }
-  }
-
-  // Write the key's latest cached state under its write lock, then mark it
-  // clean — unless it was mutated again after the snapshot was taken.
-  private async persistLatest(key: string): Promise<void> {
-    await this.runProjectWrite(key, async () => {
-      const generation = this.dirtyGenerations.get(key);
-      const state = this.cache.get(key) ?? this.defaultState(key);
-      await this.writeStateNow(key, state);
-      if (generation !== undefined && this.dirtyGenerations.get(key) === generation) {
-        this.dirtyGenerations.delete(key);
-        this.untrackIfNoPendingPersist();
-      }
-    });
+    this.persistScheduler.cancel(this.canonicalize(projectPath));
   }
 
   // Synchronous last-chance write of every project mutated since its last
-  // completed write — debounce timer still pending OR write already in flight —
-  // for the process `exit` handler (which cannot await). Honors the
-  // corrupt-file write protection and stays temp→rename atomic; a failure is
-  // logged and never thrown (an exit handler must not throw).
+  // completed write, for the process `exit` handler; never throws. See
+  // PersistScheduler.flushPendingPersistsSync.
   public flushPendingPersistsSync(): void {
-    const keys = new Set([...this.persistTimers.keys(), ...this.dirtyGenerations.keys()]);
-    for (const key of keys) {
-      const timer = this.persistTimers.get(key);
-      if (timer) clearTimeout(timer);
-      this.persistTimers.delete(key);
-      try {
-        writeProjectStateToDiskSync({
-          name: this.name,
-          key,
-          file: this.fileForProject(key),
-          state: this.cache.get(key) ?? this.defaultState(key),
-          isWriteProtected: (projectKey) => this.unpreservedCorruptKeys.has(projectKey),
-        });
-        this.dirtyGenerations.delete(key);
-      } catch (e) {
-        console.error(`[${this.name}] exit flush failed for`, key, e);
-      }
-    }
-    storesWithPendingPersist.delete(this);
+    this.persistScheduler.flushPendingPersistsSync();
   }
 
   protected schedulePersist(projectPath: string): void {
-    const key = this.canonicalize(projectPath);
-    this.dirtyGenerations.set(key, ++this.nextDirtyGeneration);
-    if (this.flushOnExit) {
-      ensureExitFlushHook();
-      storesWithPendingPersist.add(this);
-    }
-    if (this.persistTimers.has(key)) return;
-    this.persistTimers.set(
-      key,
-      setTimeout(async () => {
-        this.persistTimers.delete(key);
-        this.untrackIfNoPendingPersist();
-        try {
-          // A fired timer is no longer cancellable by updateTaskCrashSafe.
-          // Serialize the actual write with mutations, and take the snapshot
-          // only after acquiring the lock so an older debounce cannot land
-          // over a completed disk-before-cache merge transition.
-          await this.persistLatest(key);
-        } catch (e) {
-          console.error(`[${this.name}] persist failed for`, key, e);
-        }
-      }, this.persistDelayMs),
-    );
+    this.persistScheduler.schedule(this.canonicalize(projectPath));
   }
 
   public async flushPersist(projectPath: string): Promise<void> {
     const key = this.canonicalize(projectPath);
     this.cancelPendingPersist(key);
     try {
-      await this.persistLatest(key);
+      await this.persistScheduler.persistLatest(key);
     } catch (e) {
       console.error(`[${this.name}] flushPersist failed for`, key, e);
     }
@@ -373,7 +275,7 @@ export class ProjectStateManager<
   // per-project write lock, so a no-op pass through it is that barrier).
   // Never rejects: flushPersist logs its own failures.
   public async flushAllPendingPersists(): Promise<void> {
-    const pending = new Set([...this.persistTimers.keys(), ...this.dirtyGenerations.keys()]);
+    const pending = this.persistScheduler.pendingKeys();
     const keys = new Set([...this.cache.keys(), ...pending]);
     await Promise.all([...keys].map((key) => (pending.has(key)
       ? this.flushPersist(key)

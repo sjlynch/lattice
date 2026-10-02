@@ -6,6 +6,28 @@ and don't churn per keystroke/frame. Pure decision logic is split into sibling
 non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
 `refresh`) and unit-tested where noted.
 
+## Coordinator phases
+
+The coordinator calls the hooks below through two phase hooks, in this order
+(after its own shared refs / hover / drag tracking, before
+`../useGraphViewChromeModel`). Each is a straight extraction: it adds no state,
+takes the coordinator's refs by identity (never copies), and keeps every
+member's call order and dependency array — effect ordering follows call order,
+so don't reorder calls inside or across them.
+
+- `useGraphSceneRuntime` — `useGraphOverlays` → `batchedNodesRef` mirror +
+  `worktreeRingsRef` → `useForceGraphInitialization` → `useCameraPersistence`
+  → `resetSelection` → `useGraphDataSync` → `useRadialTidyLayout` →
+  `useBatchedLinks` → `useInstancedNodes` → `useNodeDragBehavior` →
+  `useAgentOverlay` → `useWorktreeHighlight`. Returns the overlay modes/settings,
+  `dataGeneration`, `runLayout`, `resetSelection` and `worktreeActive`.
+- `useGraphInteraction` — `useGraphSearchController` → `useNodeContextMenu`
+  (+ `closeContextMenu`) → `useBoxSelect` → `useGraphTaskCreation` →
+  `useSelectionHaloSync` → `useSelectionHaloPulse` → `useSelectionGlowSettings`
+  → `useMetricsIgnoreRefresh` → `useGraphViewKeyboard` →
+  `useOverlayTooltipDismiss`. Returns `contextMenu`, `dragRect`, `openMenuItem`,
+  `toast`, and `search` / `taskModal` already shaped for the chrome model.
+
 ## Init & data
 
 - `useForceGraphInitialization` — once-mounted layout effect supplying
@@ -89,7 +111,11 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   On refresh/project open, status discovers an already running scan and resumes
   GET polling of its exact id; only clicks POST. The countdown uses the backend
   start time, shows "Estimating…" without history, and keeps spinning past the
-  estimate. Its clock stays inside the chip so it never rerenders the graph.
+  estimate — until `OPENGREP_GRAPH_SCAN_TIMEOUT_MS` (12 min, `api/opengrep.ts`,
+  timed from when this mount began waiting, not the backend start). Then the
+  client stops polling and the chip turns off with a "still running" error but
+  cancels nothing: the backend scan may still be running (a click gets 409
+  `busy`). This mount won't re-attach that id; a remount will. Its clock stays inside the chip so it never rerenders the graph.
   Security recolor/visibility activates only when results arrive. A second click
   while scanning cancels that exact id and shows "Cancelling…" until confirmed;
   early cancellation waits for acceptance, and failed cancellation permits retry.
@@ -192,9 +218,11 @@ non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
   frames, and drives the per-frame `tick` off the scene frame driver — holding the
   idle controller's `agents` reason only while `tick` reports motion. See the APL
   notes in `../CLAUDE.md`.
-- `agentOverlayEvents` — descriptor projection/equality and activity/lifecycle
-  routing using the hook's existing buffer, timestamp, and kick/refresh callbacks;
-  subscriptions, pending replay, and render-loop ownership stay in the hook.
+- `agentOverlayEvents` — descriptor projection/equality, activity/lifecycle
+  routing, and the satellite-reap timer beat (`reapStaleSatellites`: reaps
+  without a frame, then wakes the loop), using the hook's existing buffer,
+  timestamp, and kick/refresh callbacks; subscriptions, pending replay, timers
+  and render-loop ownership stay in the hook.
 
 ## Render-vs-physics splits (settings effects, all guarded)
 
@@ -227,8 +255,9 @@ current values — a pre-population refresh/reheat is a byte-identical wake):
 - **Layout shape** (`alphaDecay`/`warmupTicks`/`collideRadius`) →
   `useLayoutShapeSettings`: push `d3AlphaDecay`/`warmupTicks` every run;
   install/remove the `forceCollideXZ` sim slot when its knob crosses 0; reheat on
-  change to a populated graph (same guard/defer as physics). All neutral by
-  default, so a default layout is untouched.
+  change to a populated graph (same guard/defer as physics). Not neutral by
+  default: `alphaDecay` 0.014 (d3: 0.0228) and `warmupTicks` 15 shape every
+  default layout; only `collideRadius` (0) is off.
   `applyCollisionRadius` drops the cached collision closure after removal,
   releasing its nodes/scratch buffers; re-enable creates a fresh force.
 - **`linkWidth`** / **`pixelRatio`** → render-only prop + `wakeForRefresh`, no
