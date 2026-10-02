@@ -65,6 +65,7 @@ call `completeWorkflowStep` themselves.
 **Persistence / recovery**
 - `persistence.ts` — the `~/.lattice/per-project/<hash>/workflow-runs.json`
   mirror of running runs (atomic, debounced, never throws; absent when idle).
+- `runCodec.ts` — the mirror's pure codec (file shape, `serializeWorkflowRuns` / `deserializeWorkflowRun(s)`, legacy/corrupt-record normalization); no IO, re-exported by `persistence.ts`.
 - `resumeDecision.ts` — pure boot policy `classifyWorkflowRunResume` →
   `readopt` / `redispatch` / `error` / `advance` / `skip`, plus
   `findStepSessionId`. The IO side is `../recovery/workflowRunResume.ts`.
