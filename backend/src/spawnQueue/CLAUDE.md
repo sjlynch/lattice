@@ -17,8 +17,12 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
 
 - `types.ts` — `SpawnPriority`, `EnqueueSpawnArgs/Result`, `SpawnQueueSnapshot`,
   and `SpawnCapacityError` / `isSpawnCapacityError`. No I/O.
-- `config.ts` — `SPAWN_QUEUE_CONFIG`: `softCap` (env override
-  `LATTICE_MAX_CONCURRENT_AGENTS`, default 24), `priorityReserve`, poll cadence.
+- `config.ts` — `SPAWN_QUEUE_CONFIG`: `priorityReserve`, poll cadence, and a
+  boot-only `softCap` placeholder. The effective `softCap` is
+  `globalSettings.maxConcurrentAgents`: `startSpawnQueue` (`../spawnQueue.ts`)
+  applies it at boot and PATCH `/api/global-settings` updates it live via
+  `setSpawnQueueSoftCap`. `LATTICE_MAX_CONCURRENT_AGENTS` only seeds that
+  setting's default (24) in `../globalSettings.ts`.
 - `accounting.ts` — `SpawnAccounting`: **pure**, no I/O, fully unit-tested
   (`__tests__/spawnQueueAccounting.test.ts`). Owns the headroom bands and the
   poll-reconciliation rule.
@@ -87,6 +91,10 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
 - **Poll failure freezes admissions.** `proxyListSessionsOrNull()` returns `null`
   (not `0`) when the terminal-server is unreachable; the queue keeps the last
   count and admits nothing until a poll succeeds.
+- **A request leaves the queue only through `settle()`** (`state.ts`). A thunk
+  that never settles holds its slot forever, keeps the poll loop alive and makes
+  every restart drain report `ready:false`. Time-bound every new spawn site's
+  thunk; today `createSession`'s 30 s cap is the only bound.
 - `drainQueue()` is non-reentrant (`isDraining` / `drainAgain`).
 - **A restart drain pauses ALL admission** (`../restartDrain/`, checked at
   the top of `admitWhilePossible`): the dev runner is about to kill the
