@@ -91,14 +91,32 @@ export function buildProjectSnapshotWss<TSnapshot>(options: {
     listener: (project: string, snapshot: TSnapshot) => void,
   ) => Unsubscribe;
 }): WebSocketServer {
-  return buildProjectWss<{ projectPath: string; snapshot: TSnapshot }>({
+  type SnapshotEvent = { projectPath: string; snapshot: TSnapshot };
+  // `subscribe` runs once PER CONNECTION, but one store fan-out hands every
+  // connection's listener the SAME snapshot object (the store snapshots once,
+  // then loops its listeners). A fresh wrapper per connection made the
+  // serialize-once cache above (keyed by event identity) always miss, so each
+  // open tab re-stringified the whole snapshot. Share one wrapper per snapshot
+  // object; a non-object snapshot can't key a WeakMap and is wrapped per call.
+  const eventsBySnapshot = new WeakMap<object, SnapshotEvent>();
+  const eventFor = (projectPath: string, snapshot: TSnapshot): SnapshotEvent => {
+    if (snapshot === null || typeof snapshot !== 'object') return { projectPath, snapshot };
+    const key = snapshot as object;
+    const cached = eventsBySnapshot.get(key);
+    if (cached?.projectPath === projectPath) return cached;
+    const event = { projectPath, snapshot };
+    eventsBySnapshot.set(key, event);
+    return event;
+  };
+
+  return buildProjectWss<SnapshotEvent>({
     initial: async (project) => ({
       type: options.messageType,
       [options.snapshotKey]: await options.list(project),
     }),
     initialError: 'ignore',
     subscribe: (listener) => options.subscribe((projectPath, snapshot) => {
-      listener({ projectPath, snapshot });
+      listener(eventFor(projectPath, snapshot));
     }),
     projectFromEvent: (event) => event.projectPath,
     // Every event IS a full snapshot: one landing mid-load re-loads instead.
