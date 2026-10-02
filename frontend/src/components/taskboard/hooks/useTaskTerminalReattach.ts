@@ -1,17 +1,11 @@
 import { useEffect, useRef } from 'react';
 import type { Task } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminal } from '../../../terminal/terminalTypes';
+import { normalizeDirPath } from '../../../terminal/terminalScope';
 import { shortLabel } from '../lanes';
 
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
-
 export const TASK_TERMINAL_REATTACH_RETRY_DELAYS_MS = [250, 500, 1000, 2000];
-
-// Normalize a path for comparison: forward slashes, no trailing slash,
-// lower-case (Windows paths are case-insensitive).
-function normalizePath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-}
 
 // On board load, re-attach terminals for in_progress tasks whose worktree
 // agent pty is still alive in the terminal-server but is NOT mounted as a
@@ -53,11 +47,20 @@ export function useTaskTerminalReattach(
   // effect (cancelling the in-flight retry chain and restarting it at attempt
   // 0) on every update — on a busy board the one-shot never completed and
   // `/api/terminals` was polled indefinitely.
-  const inProgressKey = tasks
-    .filter((t) => t.status === 'in_progress' && !!t.worktreePath)
-    .map((t) => t.id)
-    .sort()
-    .join('\n');
+  // Once this folder's one-shot has run the effect bails before reading the
+  // key, so skip the filter/sort/join on every later task update. The ref only
+  // flips at the end of a completed chain (nothing left in flight), and a
+  // folder switch makes it unequal again, so the one-shot fires exactly as
+  // before.
+  // eslint-disable-next-line react-hooks/refs -- read-only short-circuit; see above
+  const reattachDone = reattachedFor.current === activeFolder;
+  const inProgressKey = reattachDone
+    ? ''
+    : tasks
+        .filter((t) => t.status === 'in_progress' && !!t.worktreePath)
+        .map((t) => t.id)
+        .sort()
+        .join('\n');
 
   useEffect(() => {
     if (!activeFolder) return;
@@ -112,9 +115,9 @@ export function useTaskTerminalReattach(
 
       for (const task of inProgress) {
         if (mountedTaskIds.has(task.id)) continue;
-        const wt = normalizePath(task.worktreePath as string);
+        const wt = normalizeDirPath(task.worktreePath as string);
         const session = sessions.find(
-          (s) => normalizePath(s.cwd) === wt && !mountedServerIds.has(s.id),
+          (s) => normalizeDirPath(s.cwd) === wt && !mountedServerIds.has(s.id),
         );
         if (!session) {
           missingSession = true;

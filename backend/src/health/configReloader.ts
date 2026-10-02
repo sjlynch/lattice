@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import ignore, { type Ignore } from 'ignore';
+import { readInfoExclude } from '../scanner/ignore.js';
 import { matchIgnoredSourcePath } from './constants.js';
 import { loadProjectAliases, TSCONFIG_RE, type ParsedAlias } from './tsconfig.js';
 
@@ -112,6 +113,15 @@ export class ConfigReloader {
     } catch {
       // No .gitignore — fine, we still have IGNORE_DIR_NAMES in constants.
     }
+    // The repo's `info/exclude` too, exactly as the scanner's `loadGitignore`
+    // does — it is where Lattice records its managed files (root
+    // `.pi/extensions/lattice-*.ts`, `.claude/settings.local.json`, …). Without
+    // it the watcher analyzed + broadcast `updated` for files `/api/scan`
+    // excludes, and the frontend answered each with a full rescan. Read at load
+    // time only: it lives under `.git`, which the watcher never sees, so an
+    // edit to it takes effect on the next root `.gitignore` reload / restart.
+    const exclude = await readInfoExclude(this.projectRoot);
+    if (exclude) ig.add(exclude);
     return ig;
   }
 }

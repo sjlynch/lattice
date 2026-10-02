@@ -39,6 +39,9 @@ const DISMISS_MS = 5000;
 
 const BULK_LANES: BulkStripLane[] = ['open', 'in_progress', 'qa'];
 
+// Shared, never-mutated stand-in for `byId` while no strip record exists.
+const NO_TASKS = new Map<string, Task>();
+
 // Per-lane progress strips for the Open / In Progress / QA bulk actions. The
 // active strip clears as soon as every targeted task has been spawned or
 // accepted into the queue; it then flips to a short auto-dismissing summary.
@@ -148,9 +151,14 @@ export function useBulkRunStrips(activeFolder: string, tasks: Task[]) {
     });
   }, []);
 
+  // Only strip records read `byId`, so skip indexing the whole board on every
+  // task update while no strip is showing. Flipping `hasRecords` rebuilds it
+  // from the current tasks before any record is classified.
+  const hasRecords = BULK_LANES.some((lane) => records[lane]);
   const byId = useMemo(
-    () => new Map(tasks.map((t) => [t.id, t] as const)),
-    [tasks],
+    () =>
+      hasRecords ? new Map(tasks.map((t) => [t.id, t] as const)) : NO_TASKS,
+    [hasRecords, tasks],
   );
 
   // Complete a strip once every targeted task has left its lane / been queued

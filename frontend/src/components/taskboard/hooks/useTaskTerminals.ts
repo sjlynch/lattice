@@ -1,10 +1,9 @@
 import { type Task } from '../../../api';
 import { type TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminal } from '../../../terminal/terminalTypes';
 import { useTaskTerminalCleanup } from './useTaskTerminalCleanup';
 import { useTaskTerminalFocus } from './useTaskTerminalFocus';
 import { useTaskTerminalReattach } from './useTaskTerminalReattach';
-
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
 
 type UseTaskTerminalsArgs = {
   activeFolder: string;

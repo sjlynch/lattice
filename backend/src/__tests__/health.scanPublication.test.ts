@@ -1,7 +1,9 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
 import path from 'node:path';
 import { HealthCache } from '../health/cache.js';
+import { cachePath } from '../health/cachePaths.js';
 import { ScanPublication, type WatcherSlot } from '../health/watcher/scanPublication.js';
 import { WatcherRevision } from '../health/watcher/revision.js';
 import type { ProjectWatcher } from '../health/watcher/types.js';
@@ -174,5 +176,23 @@ test('a committed scan hands its dead-code root inputs to the watcher', async ()
     scan.finish();
     assert.deepEqual(received, [{ packageRoots, entryGlobs: ['lib/**'] }]);
     await proj.cache.flush();
+  });
+});
+
+test('a scan publication that changes nothing does not rewrite the watcher cache', async () => {
+  await withTempDir('lattice-scan-cache-unchanged-', async (root) => {
+    const { file, proj, publisher } = fixture(root);
+    await proj.cache.flush();
+    await fs.unlink(cachePath(root));
+    const scan = publisher.begin(root);
+    const cache = new HealthCache(root);
+    await scan.loadCache(cache);
+    const entry = cache.get(file, 1, 1)!;
+    assert.equal(await scan.commit(cache, new Map([[file, entry.imports]]), new Map([[file, entry.metrics]])), true);
+    scan.finish();
+    await proj.cache.flush();
+    const written = await fs.access(cachePath(root)).then(() => true, () => false);
+    assert.equal(written, false, 'an unchanged re-seed leaves flush() a no-op');
+    assert.equal(proj.metrics.get(file), entry.metrics, 'the scan result is still published');
   });
 });

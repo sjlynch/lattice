@@ -15,17 +15,31 @@ call `completeWorkflowStep` themselves.
   source of every `/ws/workflow-runs` payload — keep event discriminants and
   field shapes (esp. `step-spawned`) stable. Finished runs are pruned to
   `MAX_FINISHED_RUNS_PER_PROJECT` (a memory bound); running runs never are.
+  **A finished run must stay readable by id until that bound evicts it:**
+  `GET /api/workflow-runs/:runId` (`routes/workflows/runs.ts`) serves it, and
+  the frontend (`fetchWorkflowRun`, used by `useWorkflowQueue`) asks for it when
+  a run leaves its active set without a terminal WS event, to tell "completed
+  while the tab was disconnected" from "lost". Pruning finished runs sooner
+  "for memory" breaks that detection.
   Also `isRoundTask` / `addRoundTasks` over `WorkflowRun.roundTaskIds`.
 - `definition.ts` — `cloneWorkflowDefinition` / `readWorkflowDefinition`: the
   frozen per-run definition copy and its validated read-back.
 - `frozenSteps.ts` — legacy pure frozen-step policy (`isStepFrozen`,
-  `nextRunnableStepIndex`).
+  `nextRunnableStepIndex`). No production importer any more — only
+  `__tests__/workflowFrozenSteps.test.ts`; the live skip is `nextStepGroup`.
 - `execution.ts` — current group policy and member state helpers. Adjacent
   `agent` steps with `parallel: true` form a group; all other steps are
-  singletons. Form authored boundaries before skipping frozen members.
+  singletons. `nextStepGroup` forms authored boundaries before skipping frozen
+  members (and is where frozen steps are skipped).
 - `teardown.ts` — shared cancellation/error cleanup for every active member.
+- `failRun.ts` — `failWorkflowRun` (re-exported by the facade), so `dispatch.ts`
+  / `advance.ts` can error a run without importing the facade.
 
 **Step dispatch / spawning** (agent steps)
+- `dispatch.ts` — `dispatchStep` (kind → spawner / Run tests / control-step
+  executor) and `dispatchGroup` (every active member; a setup failure errors
+  the run). Takes `completeWorkflowStep` as a parameter, never importing
+  `advance.ts`.
 - `stepSpawner.ts` — `spawnWorkflowStep`, split into `prepareStepScratch` →
   `writeStepAssets` → `installStepCallbacks` → `spawnStepSession`. Writes the
   step dir (`<project>/.lattice/workflow-steps/<runId>/step-<N>/`) and installs
@@ -59,16 +73,20 @@ call `completeWorkflowStep` themselves.
 - `stopHookGate.ts` — the Claude Stop-hook **quiescence gate**
   (`requestStopHookStepComplete`, `recordStopReceived`, `cancelStopHookGate`),
   fed by `../agentQuiescence.ts`. See the invariant below.
-- The advance itself is the facade's `completeWorkflowStep` /
-  `workflowStepCompletionAdvance`; the route is `routes/workflows/`.
+- `advance.ts` — the advance engine, re-exported by the facade:
+  `completeWorkflowStep` / `workflowStepCompletionAdvance`, the in-flight
+  `completions` join, member settlement + group join, `completeRun`; dispatches
+  the next group via `dispatch.ts`. The route is `routes/workflows/`.
 
 **Persistence / recovery**
 - `persistence.ts` — the `~/.lattice/per-project/<hash>/workflow-runs.json`
   mirror of running runs (atomic, debounced, never throws; absent when idle).
 - `runCodec.ts` — the mirror's pure codec (file shape, `serializeWorkflowRuns` / `deserializeWorkflowRun(s)`, legacy/corrupt-record normalization); no IO, re-exported by `persistence.ts`.
 - `resumeDecision.ts` — pure boot policy `classifyWorkflowRunResume` →
-  `readopt` / `redispatch` / `error` / `advance` / `skip`, plus
-  `findStepSessionId`. The IO side is `../recovery/workflowRunResume.ts`.
+  `readopt` / `redispatch` / `complete` (the step was checkpointed
+  `completing`: finish its advance without replaying the prompt) / `error` /
+  `advance` (a lost Run tests terminal) / `skip`, plus `findStepSessionId`.
+  The IO side is `../recovery/workflowRunResume.ts`.
 - `recoveryReadiness.ts` — gates HTTP lifecycle requests and the
   `/ws/workflow-runs` hello until recovery has re-registered the runs
   (`isWorkflowRecoveryDone` / `whenWorkflowRecoveryDone`).
