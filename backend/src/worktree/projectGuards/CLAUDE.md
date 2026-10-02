@@ -1,10 +1,16 @@
 # backend/src/worktree/projectGuards
 
-Project-repo hygiene helpers called during task worktree setup through the
-`projectGuards.ts` facade.
+Project-repo hygiene helpers behind the `projectGuards.ts` facade. Task worktree
+setup (`../setupProject.ts`) runs only `ensureLatticeRepoExclude` →
+`untrackOwnedFilesInRepo`; the tracked `.gitignore` is never edited there (only
+`git init` writes one) — see `../CLAUDE.md` → "Lattice-owned files".
 
-- `gitignore.ts` ensures Lattice-managed files/scratch are ignored in the
-  project working tree.
+- `gitignore.ts` — `ensureLatticeGitignore` appends the missing Lattice entries
+  to the project's tracked `.gitignore`. It only appends to an **existing**
+  file: on ENOENT it returns without creating one. Its sole caller is
+  `projectInit/init.ts` (before a new project's first commit);
+  `mergeRuns/preflight.ts` and `routes/tasks/manualMergeService.ts`
+  deliberately skip it, since editing a tracked file mid-run dirties main.
 - `repoExclude.ts` manages `.git/info/exclude` for repo-local excludes that
   should not be committed. **Always resolve the target with `git rev-parse
   --git-common-dir`.** `info/exclude` is one of git's *common* files: it is read
@@ -17,7 +23,9 @@ Project-repo hygiene helpers called during task worktree setup through the
   (`appendMissingExcludeEntries`), never blind.
 - `untrack.ts` removes Lattice-owned files from the index with `projectGit`
   (`rm --cached` only), never recursive filesystem deletion.
-- `verify.ts` probes that essential exclusions are present before snapshot or
-  stash-sensitive operations continue.
+- `verify.ts` — `verifyEssentialExclusions` probes (`git check-ignore`) that
+  `.lattice/` and `node_modules/` are excluded. It is the stash/snapshot
+  pre-check, called from `../stash.ts` `assertSafeForStash` after an
+  `ensureLatticeRepoExclude` self-heal — not from worktree setup.
 - These modules protect the user's repo; keep safety comments near code and do
   not add raw `fs.rm({recursive})` or unrestricted git calls here.
