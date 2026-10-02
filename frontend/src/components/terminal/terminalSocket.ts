@@ -84,6 +84,9 @@ export const terminalNotices = {
   sessionLost(term: Terminal, message: string | undefined) {
     term.write(`\r\n\x1b[2m[${message ?? 'session lost'}]\x1b[0m\r\n`);
   },
+  outputDropped(term: Terminal) {
+    term.write('\r\n\x1b[2m[output fell too far behind — skipped the backlog]\x1b[0m\r\n');
+  },
 };
 
 // --- WebSocket message handling --------------------------------------------
@@ -131,8 +134,10 @@ export function handleTerminalMessage(
       // the alternate screen — and those sequences sit far outside the replay
       // window of a long session, so nothing would switch them back on until
       // the TUI restarted (multi-line pastes would submit line by line).
-      h.term.clear();
-      h.output?.beginReplay();
+      // With an output queue the clear is queued instead: it drops the stale
+      // backlog and runs after the chunk xterm is still parsing.
+      if (h.output) h.output.beginReplay();
+      else h.term.clear();
     } else if (msg.type === 'error') {
       terminalNotices.error(h.term, msg.message);
     } else if (msg.type === 'exit') {

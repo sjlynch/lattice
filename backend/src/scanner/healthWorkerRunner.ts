@@ -41,6 +41,9 @@ export type AnalysisJob = {
   index: number;
   filePath: string;
   ext: string;
+  // Byte size from the scan's stat, when known. Lets readForAnalysis skip an
+  // oversize file without reading it.
+  size?: number;
 };
 
 export type JobAnalysis = { metrics: HealthMetrics; imports: string[] };
