@@ -55,7 +55,23 @@ export function useTerminalConnection({
     if (!term) return;
 
     let ws: WebSocket | null = null;
-    const output = createTerminalOutput(term);
+    // The pane fell more than MAX_PENDING_OUTPUT_CHARS behind (typically a
+    // hidden browser tab, whose throttled timers starve xterm's parser) and its
+    // backlog was dropped. With a known session id, drop the socket: the
+    // reconnect controller reattaches by id and the `attached` frame clears and
+    // replays the pane. A serverless terminal is never closed — its reconnect
+    // could spawn a second pty — so it just notes the gap and carries on.
+    const output = createTerminalOutput(term, () => {
+      if (serverIdRef.current && ws) {
+        try {
+          ws.close();
+        } catch {
+          /* ignore */
+        }
+      } else {
+        terminalNotices.outputDropped(term);
+      }
+    });
 
     const controller = createTerminalReconnectController({
       getServerId: () => serverIdRef.current,

@@ -58,11 +58,15 @@ export type Persisted = {
 // registry id for this tab (every Lattice spawn site returns a `terminalId`).
 export type AddTerminalSpec = Omit<TerminalSpec, 'id'> & { id?: string };
 
+// `Ctx['addTerminal']`: mounts a tab and returns its local id. The one
+// signature every hook that is handed `addTerminal` declares its parameter as.
+export type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
+
 export type Ctx = {
   terminals: TerminalSpec[];
   activeId: string | null;
   setActiveId: (id: string | null) => void;
-  addTerminal: (spec: AddTerminalSpec, focus?: boolean) => string;
+  addTerminal: AddTerminal;
   closeTerminal: (id: string) => void;
   closeTerminals: (ids: string[]) => void;
   // `keep` spares one tab — the pty a `task-spawned` event is delivering.

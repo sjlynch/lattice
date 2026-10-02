@@ -6,8 +6,8 @@ and PTY side effects separate so each can be reasoned about on its own.
 The terminal-list ref is mirrored in a layout effect so child lifecycle-cleanup
 effects read the committed list, including tabs that just arrived.
 
-- `terminalTypes.ts` — `TerminalSpec`, `Persisted`, `Ctx`. Re-exported as
-  `TerminalSpec` from `../TerminalsContext` for backward compat.
+- `terminalTypes.ts` — `TerminalSpec`, `AddTerminalSpec`, `AddTerminal` (`Ctx['addTerminal']`), `Persisted`, `Ctx`. `TerminalSpec` is re-exported
+  from `../TerminalsContext` for backward compat.
 - `terminalScope.ts` — pure per-project scoping predicate for the sidebar
   terminal list (`terminalBelongsToProject` + `isPathWithin`/`normalizeDirPath`),
   plus `sameProjectPath` — THE comparison for a backend-stamped `projectPath`

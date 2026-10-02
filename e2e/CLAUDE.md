@@ -49,10 +49,12 @@ start, stop or restart the user's dev server to resolve them.
 
 See the [root README](../README.md#tests) for environment-override guidance and
 the config for the complete port/env wiring. `LATTICE_E2E_BASE_URL` skips the
-managed servers **and their isolation setup**. The graph spec can target an
-isolated Vite instance; the queue spec still writes real backend records.
-Queue cleanup uses `LATTICE_E2E_HOME`, falling back to `os.homedir()` when unset,
-so an external target's state home must match. Live ports `5183`/`5184` require
+managed servers **and their isolation setup**. The graph and editor-drag specs
+intercept all API traffic and can target an isolated Vite instance; the queue
+spec (tasks and workflows) and the parallel spec (a workflow definition, POSTed
+then DELETEd) still write real backend records. Queue cleanup uses
+`LATTICE_E2E_HOME`, falling back to `os.homedir()` when unset, so an external
+target's state home must match. Live ports `5183`/`5184` require
 `LATTICE_E2E_ALLOW_LIVE=1`; that opt-in does not provide isolation.
 
 Reference commands from the repo root (task agents leave execution to the
@@ -64,8 +66,9 @@ npm run test:e2e
 npm run test:e2e -- e2e/<spec>.spec.ts
 ```
 
-Replace `<spec>` with `workflow-queue` or `graph-stability`. For unit tests and
-package validation, use the [backend](../backend/CLAUDE.md#validation) and
+Replace `<spec>` with `graph-stability`, `workflow-editor-drag`,
+`workflow-parallel` or `workflow-queue`. For unit tests and package validation,
+use the [backend](../backend/CLAUDE.md#validation) and
 [frontend](../frontend/CLAUDE.md#validation) command guides. Their type-check
 forms, each starting from the repo root, are `cd backend && npx tsc --noEmit`
 and `cd frontend && npx tsc -b`.
