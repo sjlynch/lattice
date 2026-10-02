@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 import type { Task, TaskStatus } from '../../../api';
+import { useSyncedRef } from '../../../hooks/useSyncedRef';
 import { sortTasksForLane, type LaneSortMode } from '../laneSort';
 
 // The contiguous block of ids between `anchorId` and `targetId` inclusive, in
@@ -26,6 +27,9 @@ export function rangeSelectedIds(
 // shift-ranges aren't allowed). `grouped` must be the grouping the lanes
 // actually render (search-filtered), and `getLaneSortMode` supplies each lane's
 // display sort, so shift-ranges are computed over exactly the on-screen cards.
+// `handleRangeSelect` reads those three through refs: every board update is a
+// new tasks array, and a callback that closed over them would change identity
+// on each one and re-render every (memoized) card it is passed to.
 export function useTaskSelection(
   tasks: Task[],
   grouped: Record<TaskStatus, Task[]>,
@@ -34,6 +38,9 @@ export function useTaskSelection(
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [anchorId, setAnchorId] = useState<string | null>(null);
   const [selectionLane, setSelectionLane] = useState<TaskStatus | null>(null);
+  const tasksRef = useSyncedRef(tasks);
+  const groupedRef = useSyncedRef(grouped);
+  const getLaneSortModeRef = useSyncedRef(getLaneSortMode);
 
   const clearSelection = useCallback(() => {
     setSelectedIds(new Set());
@@ -61,7 +68,9 @@ export function useTaskSelection(
 
   const handleRangeSelect = useCallback(
     (id: string, laneId: TaskStatus) => {
-      const anchor = anchorId ? tasks.find((t) => t.id === anchorId) : null;
+      const anchor = anchorId
+        ? tasksRef.current.find((t) => t.id === anchorId)
+        : null;
       if (!anchor || anchor.status !== laneId) {
         setSelectedIds(new Set([id]));
         setSelectionLane(laneId);
@@ -75,9 +84,9 @@ export function useTaskSelection(
       // different contiguous block than the one shown between anchor and target.
       // `grouped` is search-filtered, so cards the search hides are skipped.
       const laneTasks = sortTasksForLane(
-        grouped[laneId],
+        groupedRef.current[laneId],
         laneId,
-        getLaneSortMode(laneId),
+        getLaneSortModeRef.current(laneId),
       );
       const rangeIds = rangeSelectedIds(laneTasks, anchor.id, id);
       if (!rangeIds) {
@@ -88,7 +97,7 @@ export function useTaskSelection(
       setSelectedIds(new Set(rangeIds));
       setSelectionLane(laneId);
     },
-    [tasks, grouped, anchorId, getLaneSortMode],
+    [anchorId, tasksRef, groupedRef, getLaneSortModeRef],
   );
 
   return {

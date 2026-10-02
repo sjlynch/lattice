@@ -6,11 +6,13 @@ import {
   type MergeRunErrorEntry,
   type Task,
 } from '../../../api';
-import type { AddTerminalSpec } from '../../../terminal/terminalTypes';
+import type { AddTerminal } from '../../../terminal/terminalTypes';
 
-type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 type CloseTerminalsForTask = (taskId: string, keep?: { id?: string; serverId?: string }) => void;
 type ShowError = (msg: string) => void;
+
+// How long a finished run's summary strip stays above Ready-to-Merge before auto-clearing.
+const RECENT_RUN_SUMMARY_MS = 8000;
 
 // Build a user-facing label for a per-task merge-run error. Resolves just the
 // one task's title via `GET /api/tasks/:id` (project-pinned) — never the
@@ -128,7 +130,7 @@ export function useMergeRunSync(
           summaryTimerRef.current = null;
           if (cancelled) return;
           setRecentRunSummary((cur) => (cur?.id === ev.run.id ? null : cur));
-        }, 8000);
+        }, RECENT_RUN_SUMMARY_MS);
       } else if (ev.type === 'conflict') {
         // Spawn the resolver Claude in the worktree. Same flow the per-card
         // merge button uses; the run worker doesn't have UI access so the

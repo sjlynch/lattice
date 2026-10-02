@@ -46,7 +46,11 @@ label physics in `labelPhysics/CLAUDE.md`.
   `webglcontextlost`. A construction failure or context-loss event alone
   establishes neither OOM nor a GC defect. Retry **remounts the coordinator
   and its hooks**: re-running init alone would leave hooks wired to the old
-  graph instance. `webglcontextrestored` clears the notice and wakes rendering.
+  graph instance. Every project switch remounts too: `App.tsx` keys
+  `<ForceGraphView>` by `activeFolder`, tearing down and rebuilding renderer,
+  scene and overlays (GPU release: teardown order in
+  [hooks/CLAUDE.md](hooks/CLAUDE.md)). `webglcontextrestored` clears the notice
+  and wakes rendering.
   A browser restart may help, but is neither a guaranteed nor an exclusive
   cure; see the existing
   [browser memory troubleshooting and graph recovery advice](../../../README.md#browser-memory-troubleshooting).
@@ -160,7 +164,7 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `claudeNodeSprite.ts` — `makeClaudeNode` (presence disc+glow) /
   `makeSatelliteNode` (subagent ring).
 - `agentOverlay.ts` — thin façade over the APL (`setAgents`/`addActivity`/
-  `addSubagent*`/`tick`/`setSizes`/`isActive`/`destroy`) delegating to siblings
+  `addSubagent*`/`tick`/`reapSatellites`/`setSizes`/`isActive`/`destroy`) delegating to siblings
   `agentOverlay{Context,Constants,Types,PathIndex,Reconcile,Activity,Satellites,
   Beams,BeamMath,Tick,Labels,LabelLayout,Placement}.ts` (pure math tested in
   `src/__tests__`). `hooks/useAgentOverlay.ts` supplies `showSubagentLabels` to
@@ -171,6 +175,11 @@ label physics in `labelPhysics/CLAUDE.md`.
   destroy; inactive overlays may never receive another frame. A remaining sibling
   keeps the index, and the next addition rebuilds it through `ensure`. Coverage:
   [agentOverlayPathIndex.test.ts](../../__tests__/agentOverlayPathIndex.test.ts).
+  For the same reason, releases must not wait for `tick`: the loop is paused
+  for a hidden tab or 0×0 graph while agents keep working. `applyActivity`
+  disposes expired beams before creating one (`disposeExpiredBeams`), and the
+  hook's 30 s timer calls `reapSatellites` directly, then wakes the loop.
+  Coverage: [agentOverlayPausedLoop.test.ts](../../__tests__/agentOverlayPausedLoop.test.ts).
   `agentLabelRects.ts` owns the dependency-free rectangle types and pure
   `spreadLabelRects` packing (labels only slide along their node's side).
   `agentOverlayLabelLayout.ts` is the scene adapter and compatibility re-export;
@@ -239,8 +248,9 @@ label physics in `labelPhysics/CLAUDE.md`.
   `showLinks` (Rendering tab "Show links" checkbox, default on — off returns
   `false` from `useGraphFilter`'s `linkVisibility` and re-captures the batched
   buffer; render-only, the links still drive the layout);
-  "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (neutral/off by
-  default) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
+  "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (defaults 0.014
+  vs d3's 0.0228 and 15 — a wider, pre-settled layout; only `collideRadius` is
+  off at 0) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
   default**); "Rendering" tab selection-glow fields
   `selectionGlowStrength`/`selectionGlowScale` (the pulsing bloom over selected
   nodes — see `halo.ts` + `hooks/useSelectionGlowSettings`).

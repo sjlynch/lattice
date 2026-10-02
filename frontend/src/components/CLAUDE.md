@@ -65,13 +65,13 @@ modules after.
 | `settings.css` | Settings aggregator. Ordered partials under `styles/settings/`: `shell` (chrome/sections/controls/startup/`.settings-info-*`), `pi`, `env-notes`, `prompts`, `mcp`, `tools` (`.tools-*` — the Opengrep engine/pack cards + scan-filter textareas) |
 | `folder-picker.css` | `.path-row`, `.drive-*`, `.create-folder-row/input`, `.dir-list/row` |
 | `git-setup.css` | `.git-setup-*` (Git Setup dialog) + the folder picker's `.create-folder-block/git` and `.git-setup-inline-note`. Imported after `modal.css` so `.modal-header.git-setup-header` wins on order; the navbar chip's own rules stay in `appbar.css` |
-| `graph.css` | Graph aggregator. Ordered partials under `styles/graph/`: `hud-search` (`.graph-overlay`/`.graph-bottom-left`/`.graph-search*`/`.graph-counts`/`.loc-view-chip`), `overlay-key`, `context-menu` (`.graph-select-rect`/`.graph-selection-chip`/`.graph-context-menu`), `settings-panel` (`.graph-settings-fab/panel`), `toast` |
+| `graph.css` | Graph aggregator. Ordered partials under `styles/graph/`: `hud-search` (`.graph-overlay`/`.graph-bottom-left`/`.graph-search*`/`.graph-counts`/`.loc-view-chip`), `overlay-key`, `context-menu` (`.graph-select-rect`/`.graph-selection-chip`/`.graph-context-menu`), `settings-panel` (`.graph-settings-fab/panel`), `toast`, `renderer-notice` (`.graph-view-root` + `.graph-renderer-notice*` — the WebGL-renderer failure/recovery notice over the viewport) |
 | `terminal.css` | `.term-pane` |
 | `floating-panel.css` | `.floating-panel*` (titlebar, body, resize grip) |
-| `taskboard.css` | Taskboard aggregator. Ordered partials live under `styles/taskboard/`: `shell`, `lanes`, `cards`, `filters`, `lane-actions`, `detail`, `toast`, `forms` |
+| `taskboard.css` | Taskboard aggregator. Ordered partials live under `styles/taskboard/`: `shell`, `lanes`, `cards`, `filters`, `lane-actions`, `detail`, `toast`, `forms`, `post-merge-hook` (`.post-merge-hook-*` — the collapsible post-merge hook config strip below the lanes) |
 | `legend.css` | `.legend*`, `.swatch*` |
 | `merge-run.css` | `.merge-run-strip*`, `.merge-run-stat*` |
-| `workflows.css` | Workflows aggregator. Ordered partials live under `styles/workflows/`: `shell`, `list`, `templates`, `editor-shell`, `runs-shell`, `queue`, `runs`, `editor-empty`, `editor`, `steps`, `actions`, `chips` |
+| `workflows.css` | Workflows aggregator. Ordered partials live under `styles/workflows/`: `shell`, `list`, `templates`, `editor-shell`, `runs-shell`, `queue`, `runs`, `editor-empty`, `editor`, `variables` (`.workflows-vars*` / `.workflows-var-*` — the collapsible Variables panel atop the editor), `steps`, `actions`, `chips` |
 | `timeline.css` | Timeline scrubber: `.timeline-bar`, `.has-timeline` overrides, `.timeline-scrubber*`, `.ts-*` (+ `--timeline-h` token) |
 | `health-overlay.css` | `.health-legend*` (incl. info popover), `.health-tooltip*` (+ health `@keyframes`) |
 | `error-boundary.css` | `.error-boundary*` (ErrorBoundary fallback card) |

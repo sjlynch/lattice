@@ -1,5 +1,6 @@
-import { useState, type DragEvent } from 'react';
+import { useMemo, useState, type DragEvent } from 'react';
 import type { TaskStatus } from '../../../api';
+import { useSyncedRef } from '../../../hooks/useSyncedRef';
 import { DRAG_MIME, parseDragPayload } from '../lanes';
 
 type LaneDropCallbacks = {
@@ -15,8 +16,21 @@ export type LaneSlotProps = {
   onDrop: (e: DragEvent) => void;
 };
 
+// Every drop slot (and the empty-lane target, slot 0) renders its index in
+// this attribute; the shared slot handlers read it off `currentTarget`.
+const SLOT_INDEX_ATTR = 'data-slot-index';
+
+function slotIndexOf(e: DragEvent): number {
+  return Number(e.currentTarget.getAttribute(SLOT_INDEX_ATTR));
+}
+
+function readIds(e: DragEvent): string[] {
+  const raw = e.dataTransfer.getData(DRAG_MIME) || e.dataTransfer.getData('text/plain');
+  return parseDragPayload(raw);
+}
+
 // Owns lane-level drop targeting: lane-background hover state, per-slot
-// hover index, and slotProps factories. Lane-background drops do a
+// hover index, and the slot handler set. Lane-background drops do a
 // status-only move (preserving the prior "drop anywhere" behavior);
 // slot drops set both status and position.
 export function useLaneDropTargets(
@@ -26,11 +40,11 @@ export function useLaneDropTargets(
 ) {
   const [isOver, setIsOver] = useState(false);
   const [hoverIndex, setHoverIndex] = useState<number | null>(null);
-
-  function readIds(e: DragEvent): string[] {
-    const raw = e.dataTransfer.getData(DRAG_MIME) || e.dataTransfer.getData('text/plain');
-    return parseDragPayload(raw);
-  }
+  // Read through refs by the slot handlers: `callbacks` is a fresh object on
+  // every Lane render and `hoverIndex` moves throughout a drag, and neither
+  // should rebuild the handlers every slot shares.
+  const callbacksRef = useSyncedRef(callbacks);
+  const hoverIndexRef = useSyncedRef(hoverIndex);
 
   function onDragOver(e: DragEvent) {
     if (!draggingId) return;
@@ -57,35 +71,42 @@ export function useLaneDropTargets(
     setHoverIndex(null);
   }
 
-  function slotProps(idx: number): LaneSlotProps {
-    return {
+  // One handler set shared by every slot in the lane, each handler finding its
+  // slot through `data-slot-index`. It changes only with the lane or the drag
+  // (`draggingId`), so a board update or a hover move re-renders just the
+  // memoized DropSlots whose `active` flag flipped — not ~750 fresh closures.
+  const slotHandlers = useMemo<LaneSlotProps>(
+    () => ({
       onDragEnter: (e) => {
         if (!draggingId) return;
         e.preventDefault();
         e.stopPropagation();
-        setHoverIndex(idx);
+        setHoverIndex(slotIndexOf(e));
       },
       onDragOver: (e) => {
         if (!draggingId) return;
         e.preventDefault();
         e.stopPropagation();
         e.dataTransfer.dropEffect = 'move';
-        if (hoverIndex !== idx) setHoverIndex(idx);
+        const idx = slotIndexOf(e);
+        if (hoverIndexRef.current !== idx) setHoverIndex(idx);
       },
       onDrop: (e) => {
         e.preventDefault();
         e.stopPropagation();
+        const idx = slotIndexOf(e);
         const ids = readIds(e);
         if (ids.length > 1) {
-          callbacks.onMultiDropAt(ids, laneId, idx);
+          callbacksRef.current.onMultiDropAt(ids, laneId, idx);
         } else if (ids.length === 1) {
-          callbacks.onDropAt(ids[0], laneId, idx);
+          callbacksRef.current.onDropAt(ids[0], laneId, idx);
         }
         setIsOver(false);
         setHoverIndex(null);
       },
-    };
-  }
+    }),
+    [laneId, draggingId, callbacksRef, hoverIndexRef],
+  );
 
-  return { isOver, hoverIndex, onDragOver, onDragLeave, onDrop, slotProps };
+  return { isOver, hoverIndex, onDragOver, onDragLeave, onDrop, slotHandlers };
 }
