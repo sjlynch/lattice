@@ -37,6 +37,20 @@ CLAUDE.md) — different directory, don't conflate.
   functional. Reads `data.replayed`; retained older executors use the first data
   frame after `attached` as history. Disposal removes parser handlers and drops
   queued writes. Regression: `__tests__/terminalReplayQueries.test.ts`.
+  **The queue is bounded** at `MAX_PENDING_OUTPUT_CHARS` (8 M chars, in line with
+  the backend's 8 MB slow-client cut-off). It hands xterm one chunk at a time,
+  so xterm's own 50 MB WriteBuffer discard never fires, and a hidden browser
+  tab throttles xterm's parse timers while `ws.onmessage` runs at full rate:
+  unbounded, busy agent panes piled hundreds of MB of strings here and crashed
+  the tab "Out of Memory". Past the cap the backlog is dropped and `onOverflow`
+  fires; `useTerminalConnection` then closes the socket **only when a
+  `serverId` is known**, so the reconnect controller reattaches by id and the
+  `attached` frame clears and replays the pane. A serverless terminal is never
+  closed for this (its reconnect could spawn a second pty); it gets a dim
+  `terminalNotices.outputDropped` line instead. `beginReplay()` (an `attached`
+  frame) drops the stale queue and enqueues the clear as a step, so it runs
+  after the chunk xterm is still parsing and no stale output lands above the
+  replay.
 - `terminalSocket.ts` — React-free helpers for the connection: `buildTerminalWsUrl`
   (URL building), `handleTerminalMessage` (decode + dispatch), `reconnectDelay` /
   `canReattachTerminal` / `shouldGiveUpReconnect` (backoff/give-up decisions),
@@ -45,7 +59,9 @@ CLAUDE.md) — different directory, don't conflate.
   Re-exports `forwardTerminalInput` and `RESIZE_DEBOUNCE_MS` from `terminalInput.ts`
   for existing consumers. **An `attached` frame clears the xterm buffer** before
   the scrollback replay that follows it — a reconnect used to append the ~2 MB
-  replay under the content the pane already showed. It is `term.clear()`, never
+  replay under the content the pane already showed. With an output queue the
+  clear goes through `output.beginReplay()` (queued, see `terminalOutput.ts`);
+  only the queue-less path clears immediately. It is `term.clear()`, never
   `term.reset()`: a full RIS
   also drops the DEC private modes the running TUI switched on at startup
   (bracketed paste, mouse tracking, alternate screen), and those sequences sit
