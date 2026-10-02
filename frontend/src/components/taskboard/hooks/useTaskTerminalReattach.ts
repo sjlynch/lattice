@@ -1,17 +1,11 @@
 import { useEffect, useRef } from 'react';
 import type { Task } from '../../../api';
 import type { TerminalSpec } from '../../../TerminalsContext';
+import type { AddTerminal } from '../../../terminal/terminalTypes';
+import { normalizeDirPath } from '../../../terminal/terminalScope';
 import { shortLabel } from '../lanes';
 
-type AddTerminal = (spec: Omit<TerminalSpec, 'id'>, focus?: boolean) => string;
-
 export const TASK_TERMINAL_REATTACH_RETRY_DELAYS_MS = [250, 500, 1000, 2000];
-
-// Normalize a path for comparison: forward slashes, no trailing slash,
-// lower-case (Windows paths are case-insensitive).
-function normalizePath(p: string): string {
-  return p.replace(/\\/g, '/').replace(/\/+$/, '').toLowerCase();
-}
 
 // On board load, re-attach terminals for in_progress tasks whose worktree
 // agent pty is still alive in the terminal-server but is NOT mounted as a
@@ -112,9 +106,9 @@ export function useTaskTerminalReattach(
 
       for (const task of inProgress) {
         if (mountedTaskIds.has(task.id)) continue;
-        const wt = normalizePath(task.worktreePath as string);
+        const wt = normalizeDirPath(task.worktreePath as string);
         const session = sessions.find(
-          (s) => normalizePath(s.cwd) === wt && !mountedServerIds.has(s.id),
+          (s) => normalizeDirPath(s.cwd) === wt && !mountedServerIds.has(s.id),
         );
         if (!session) {
           missingSession = true;

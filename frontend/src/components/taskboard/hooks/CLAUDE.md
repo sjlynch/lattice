@@ -7,6 +7,8 @@ hooks into the single shape the launcher renders. Most lower-level hooks are
 consumed via composers (`useTaskBoardController`, `useTaskBoardState`,
 `useTaskActions`) rather than directly by components.
 
+Hooks handed `addTerminal` type it as the shared `AddTerminal` from `terminal/terminalTypes.ts` (`Ctx['addTerminal']`) — import it, don't redeclare it locally.
+
 ## State / data-sync
 
 - `useTaskList.ts` — per-folder task list: initial fetch + live `/ws/tasks` subscription, structural sharing so unchanged cards skip re-render, and the shared error-toast slot (`showError`). Its returned list is project-guarded: on folder switch it reports `[]` until the new folder's fetch/WS snapshot arrives, so stale task IDs are never rendered/actionable under the next project.

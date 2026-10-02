@@ -11,10 +11,9 @@ import {
   type Task,
   type TaskStatus,
 } from '../../../api';
-import type { AddTerminalSpec, TerminalSpec } from '../../../terminal/terminalTypes';
+import type { AddTerminal, TerminalSpec } from '../../../terminal/terminalTypes';
 import { shortLabel } from '../lanes';
 
-type AddTerminal = (spec: AddTerminalSpec, focus?: boolean) => string;
 type CloseTerminalsForTask = (taskId: string, keep?: { id?: string; serverId?: string }) => void;
 
 // A merge-kind tab for the task whose pty may still be running. A tab that was
