@@ -12,6 +12,8 @@
 export type OpengrepSeverity = 'ERROR' | 'WARNING' | 'INFO';
 
 export type OpengrepFinding = {
+  nativeIgnored?: boolean;
+  triage?: import('./triage.js').FindingDisposition;
   fingerprint: string;
   shortFingerprint: string;
   ruleId: string;
@@ -56,6 +58,7 @@ type RawResult = {
     severity?: string;
     fingerprint?: string;
     lines?: string;
+    is_ignored?: boolean;
     metadata?: Record<string, unknown>;
   };
 };
@@ -136,6 +139,7 @@ export function parseOpengrepJson(raw: unknown, projectPath: string): ParsedOpen
     const line = Number(res.start?.line ?? 0);
     const meta = (extra.metadata ?? {}) as Record<string, unknown>;
     findings.push({
+      nativeIgnored: extra.is_ignored === true,
       // A finding without a fingerprint (should not happen on Opengrep ≥1.x)
       // gets a positional synthetic one so dedup/markers still work.
       fingerprint: fp || `synthetic:${ruleId}:${rel}:${line}`,

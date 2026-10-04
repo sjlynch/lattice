@@ -9,7 +9,8 @@ export type PiExtensionSite =
   | 'push-run-done'
   | 'workflow-step-complete'
   | 'post-merge-hook-complete'
-  | 'workflow-customization-complete';
+  | 'workflow-customization-complete'
+  | 'security-review-done';
 
 export type PiCompletionExtensionOptions = {
   callbackUrl: string;

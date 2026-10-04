@@ -35,6 +35,9 @@ import {
 import { readOpengrepState } from './state.js';
 import { OPENGREP_VERSION } from './versions.js';
 import { buildOpengrepGraph } from './graph.js';
+import { captureScanInputs, changedPaths, cachePathKey } from './scanCache.js';
+import { defaultExcludeGlobs, resolveRuleConfigs } from './scanArgs.js';
+import { withFindingTriage } from './triage.js';
 
 export type OpengrepStatus = {
   available: boolean;
@@ -158,6 +161,7 @@ export type ScanWithDigestOptions = {
   timeoutMs?: number;
   render?: DigestRenderContext;
   signal?: AbortSignal;
+  mode?: 'full' | 'incremental';
 };
 
 // Scan with the project's effective configuration and render its digest.
@@ -175,6 +179,7 @@ export async function scanProjectWithDigest(
     targets: opts.targets,
     timeoutMs: opts.timeoutMs,
     signal: opts.signal,
+    mode: opts.mode,
   });
   return renderScanRecord(canonical, record, config, opts.render);
 }
@@ -187,7 +192,8 @@ async function renderScanRecord(
 ): Promise<ScanWithDigestResult> {
   const stored = await readOpengrepScan(canonical, record.id);
   if (!stored) throw new Error(`scan ${record.id} was not stored`);
-  const { digest, markdown } = digestFor(stored.parsed, record, config, render);
+  const parsed = await withFindingTriage(canonical, stored.parsed, config.filter);
+  const { digest, markdown } = digestFor(parsed, record, config, render);
   return { record, digest, markdown, config };
 }
 
@@ -211,6 +217,7 @@ export async function startProjectScanWithDigest(
     targets: opts.targets,
     timeoutMs: opts.timeoutMs,
     signal: opts.signal,
+    mode: opts.mode,
   });
   const done = started.promise.then((record) => renderScanRecord(canonical, record, config, opts.render));
   return { id: started.id, done };
@@ -228,7 +235,8 @@ export async function digestOfStoredScan(
   const stored = await readOpengrepScan(canonical, targetId);
   if (!stored) return null;
   const config = await loadEffectiveConfig(canonical);
-  const { digest, markdown } = digestFor(stored.parsed, stored.record, config, ctx);
+  const parsed = await withFindingTriage(canonical, stored.parsed, config.filter);
+  const { digest, markdown } = digestFor(parsed, stored.record, config, ctx);
   return { record: stored.record, digest, markdown, config };
 }
 
@@ -241,7 +249,28 @@ export async function graphOfStoredScan(project: string, id: string) {
   const stored = await readOpengrepScan(canonical, scanId);
   if (!stored) return null;
   const config = await loadEffectiveConfig(canonical);
-  return buildOpengrepGraph(stored.parsed, stored.record, config.filter);
+  const parsed = await withFindingTriage(canonical, stored.parsed, config.filter);
+  const graph = buildOpengrepGraph(parsed, stored.record, config.filter);
+  let freshness: { state: 'current' | 'changed' | 'unknown'; changedFiles: number; configurationChanged: boolean; checkedAt: number } = {
+    state: 'unknown', changedFiles: 0, configurationChanged: false, checkedAt: Date.now(),
+  };
+  if (stored.cache) {
+    try {
+      const engine = await resolveOpengrep();
+      if (engine) {
+        const { rulePaths } = await resolveRuleConfigs(canonical, config.packIds, config.extraRulePaths);
+        const current = await captureScanInputs({ project: canonical, engine, rulePaths,
+          excludeGlobs: [...new Set([...defaultExcludeGlobs(), ...config.excludeGlobs])], targets: stored.record.targets });
+        const changed = new Set(changedPaths(stored.cache, current).map(cachePathKey));
+        const configurationChanged = stored.cache.configuration !== current.configuration;
+        freshness = { state: changed.size || configurationChanged ? 'changed' : 'current',
+          changedFiles: changed.size, configurationChanged, checkedAt: Date.now() };
+        for (const file of graph.files) file.stale = configurationChanged || changed.has(cachePathKey(file.path));
+      }
+    } catch { /* Unknown freshness remains explicit; saved results still load. */ }
+  }
+  if (freshness.state === 'unknown') for (const file of graph.files) file.stale = true;
+  return { ...graph, freshness };
 }
 
 export type OpengrepIgnoreResult = {

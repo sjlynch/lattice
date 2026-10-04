@@ -36,6 +36,7 @@ import {
   type ScanWithDigestResult,
 } from '../opengrep/index.js';
 import { readProjectParam, requireExistingProjectDir } from './projectParam.js';
+import { buildOpengrepReviewRouter } from './opengrepReview.js';
 
 // How long `POST /api/opengrep/scan {async: true}` waits for the scan before
 // answering 202 with its id: short enough to stay far under any HTTP client's
@@ -94,13 +95,14 @@ const STORED_SCAN_DRILL_DOWN_HINT =
 
 // The `POST /api/opengrep/scan` body: `targets` keeps only non-blank strings
 // (absent when not an array); `includeMarkdown` and `async` are strict `true`.
-function parseScanBody(raw: unknown): { targets: string[] | undefined; includeMarkdown: boolean; async: boolean; acceptImmediately: boolean } {
-  const body = (raw ?? {}) as { targets?: unknown; includeMarkdown?: unknown; async?: unknown; acceptImmediately?: unknown };
+function parseScanBody(raw: unknown): { targets: string[] | undefined; includeMarkdown: boolean; async: boolean; acceptImmediately: boolean; mode?: 'full' | 'incremental' } {
+  const body = (raw ?? {}) as { targets?: unknown; includeMarkdown?: unknown; async?: unknown; acceptImmediately?: unknown; mode?: unknown };
   const targets = Array.isArray(body.targets)
     ? body.targets.filter((t): t is string => typeof t === 'string' && !!t.trim())
     : undefined;
   return { targets, includeMarkdown: body.includeMarkdown === true, async: body.async === true,
-    acceptImmediately: body.acceptImmediately === true };
+    acceptImmediately: body.acceptImmediately === true,
+    mode: body.mode === 'incremental' ? 'incremental' : body.mode === 'full' ? 'full' : undefined };
 }
 
 // Settle-or-timeout for an async scan: its outcome if it settles within
@@ -145,8 +147,9 @@ function sendMappedError(res: Response, err: unknown): void {
   res.status(m.status).json({ error: (err as Error).message, code: m.code });
 }
 
-export function buildOpengrepRouter(): Router {
+export function buildOpengrepRouter(backendOrigin = 'http://127.0.0.1:5184'): Router {
   const r = Router();
+  r.use(buildOpengrepReviewRouter(backendOrigin));
 
   r.get('/api/opengrep/status', async (req, res) => {
     const project = readProjectParam(req, res, { source: 'query', optional: true });
@@ -222,8 +225,8 @@ export function buildOpengrepRouter(): Router {
   r.post('/api/opengrep/scan', async (req, res) => {
     const project = readProjectParam(req, res);
     if (project === null) return;
-    const { targets, includeMarkdown, async: acceptWithin, acceptImmediately } = parseScanBody(req.body);
-    const opts = { targets, render: { drillDownHint: SCAN_DRILL_DOWN_HINT } };
+    const { targets, includeMarkdown, async: acceptWithin, acceptImmediately, mode } = parseScanBody(req.body);
+    const opts = { targets, mode, render: { drillDownHint: SCAN_DRILL_DOWN_HINT } };
     if (!acceptWithin) {
       try {
         res.json(scanEnvelope(await scanProjectWithDigest(project, opts), includeMarkdown));

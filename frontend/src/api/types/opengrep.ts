@@ -59,6 +59,7 @@ export type OpengrepScanRecord = {
   errors: number;
   partiallyParsed: number;
   jsonFile: string;
+  update?: { mode: 'full' | 'incremental'; reusedFiles: number; analyzedFiles: number; reason?: string };
 };
 
 export type OpengrepStatus = {
@@ -99,6 +100,15 @@ export type OpengrepGraphFile = {
   severity: OpengrepSeverity | null;
   findings: number;
   incomplete: boolean;
+  stale?: boolean;
+};
+
+export type OpengrepFinding = {
+  nativeIgnored?: boolean;
+  triage?: FindingDisposition;
+  fingerprint: string; shortFingerprint: string; ruleId: string; severity: OpengrepSeverity;
+  message: string; path: string; line: number; endLine: number; col: number; snippet: string;
+  category?: string; cwe: string[]; references: string[];
 };
 
 export type OpengrepGraphResult = {
@@ -109,4 +119,36 @@ export type OpengrepGraphResult = {
   errors: number;
   partiallyParsed: number;
   skippedRules: number;
+  findings?: OpengrepFinding[];
+  allFindings?: OpengrepFinding[];
+  bySeverity?: Record<OpengrepSeverity, number>;
+  total?: number;
+  dropped?: { belowFloor: number; ignoredRules: number; ignoredFingerprints: number; duplicates: number };
+  filter?: { severityFloor: OpengrepSeverity; ignoreRuleIds: string[]; ignoreFingerprints: string[] };
+  freshness?: { state: 'current' | 'changed' | 'unknown'; changedFiles: number; configurationChanged: boolean; checkedAt: number };
+  caveats?: { errors: { kind: string; level: string; message: string; path?: string }[]; partiallyParsed: string[] };
+};
+
+export type FindingDisposition = {
+  status: 'open' | 'ignored' | 'deferred'; scope: 'local' | 'settings' | 'source';
+  reason: string; updatedAt: number; owner?: string; reviewAt?: string; expired?: boolean;
+};
+export type SecurityRecommendation = {
+  findingId: string; action: 'fix' | 'suppress' | 'defer' | 'needs-review';
+  confidence: 'high' | 'medium' | 'low'; rationale: string; evidence: string;
+  proposedChange: string; checks: string[]; assumptions: string[]; contextFiles: string[];
+  group: string; owner?: string; reviewAt?: string; stale?: boolean;
+  applied?: { at: number; taskId?: string; action: string };
+};
+export type SecurityReview = {
+  id: string; project: string; scanId: string; harness: 'claude' | 'codex' | 'pi'; piModel?: string;
+  status: 'running' | 'done' | 'failed' | 'cancelled'; createdAt: number; finishedAt?: number;
+  error?: string; serverId?: string; terminalId?: string; findings: OpengrepFinding[];
+  recommendations: SecurityRecommendation[];
+};
+export type RecommendationSelection = { findingId: string; scope?: 'local' | 'shared'; owner?: string; reviewAt?: string };
+export type SecurityApplyPreview = {
+  counts: { fixes: number; sharedIgnores: number; localIgnores: number; deferred: number };
+  tasks: { title: string; description: string; kind: 'fix' | 'shared-ignore' }[];
+  taskIds: string[];
 };

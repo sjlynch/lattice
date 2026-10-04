@@ -44,7 +44,9 @@ mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
   and `POST /api/opengrep/scans/:id/cancel` (exact-id cancellation, waits for
   the engine to stop)
   (`latest` allowed; `format=md`, `rule=`/`file=`/`severity=`/`budgetKb=`
-  narrow the digest) and `POST /api/opengrep/ignore` (append to the project's
+  narrow the digest; `format=graph` returns complete findings, coverage and
+  freshness). Scan bodies accept `mode: full | incremental` (default full).
+  Also `POST /api/opengrep/ignore` (append to the project's
   ignore lists). 409 codes `busy` / `not-installed` / `no-rules`; 400
   `bad-target` for a scan target outside the project. The pack install/remove
   routes also answer 409 `busy` while ANY project's scan is running, since a
@@ -52,6 +54,14 @@ mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
   Windows EBUSY). Thin over `../opengrep/` (see its CLAUDE.md);
   project-scoped paths use `readProjectParam`. Static paths, mount order
   unconstrained.
+- `opengrepReview.ts` — mounted by `opengrep.ts`. `GET/POST
+  /api/opengrep/triage` reads local history or saves a disposition; `POST
+  /api/opengrep/shared-ignore` creates a reviewed source-suppression task.
+  `GET/POST /api/opengrep/reviews` restores reports or starts a review;
+  `POST /api/opengrep/reviews/:id/{done,cancel,apply}` collects a scratch report,
+  cancels a run, or previews/applies selected recommendations. Writes validate
+  an existing project directory; completion takes the project in its query.
+  Apply defaults to preview and requires `preview: false` for mutations.
 - `projectInit.ts` — `POST /api/project-init/preview` (what a first commit
   would capture, re-POSTed as the user edits the `.gitignore`) and
   `POST /api/project-init` (`git init` + first commit). Thin: validation plus

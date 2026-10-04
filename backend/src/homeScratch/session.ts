@@ -105,7 +105,7 @@ export async function startHomeScratchAgentSession(args: {
   isQaRun?: boolean;
   // Durable terminal-registry decorations for the pty's tab record. A QA run
   // is always recorded as `qa`; other sites default to `push`.
-  registryOwner?: 'push' | 'post-merge' | 'prompt-customization';
+  registryOwner?: 'push' | 'post-merge' | 'prompt-customization' | 'security-review';
   registryLabel?: string;
   // Record the run + register the orange presence node. Called synchronously
   // after a successful spawn (matching the pre-refactor ordering).

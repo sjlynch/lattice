@@ -38,6 +38,7 @@ test('graph uses per-file highest severity, deduplicates, and respects the proje
   const graph = buildOpengrepGraph(parsed, record, { ...filter, ignoreRuleIds: ['ignore'] });
   const files = new Map(graph.files.map((f) => [f.path, f]));
   assert.equal(graph.shown, 4);
+  assert.equal(graph.findings.length, 4, 'structured results deduplicate the same way as graph counts');
   assert.equal(files.get('src/a.ts')?.severity, 'ERROR');
   assert.equal(files.get('src/a.ts')?.findings, 2);
   assert.equal(files.get('src/b.ts')?.severity, 'WARNING', 'another file in the same rule group stays WARNING');

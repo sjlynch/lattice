@@ -25,7 +25,7 @@ path spelling ([PROJECT_IDENTITY.md](backend/src/PROJECT_IDENTITY.md)):
 - `~/.lattice/per-project/<hash>/push/<id>/` — push-run scratch; recursive cleanup is path-guarded to this home root and refused if it would land under the repo.
 - `~/.lattice/per-project/<hash>/terminals.json` — durable terminal-tab registry (`backend/src/terminalRegistry/`).
 - `~/.lattice/per-project/<hash>/{workflow-runs,push-runs,qa-runs,post-merge-hooks}.json` — mirrors of RUNNING one-off/workflow runs, re-adopted at boot (`recovery/workflowRunResume.ts`, `recovery/oneOffRunResume.ts`).
-- `~/.lattice/per-project/<hash>/opengrep/` — stored Opengrep scans (last 10).
+- `~/.lattice/per-project/<hash>/opengrep/` — stored Opengrep scans (last 10), complete result snapshots and content-hash cache sidecars.
 - `~/.lattice/worktrees/<hash>/<slug>-<id>/` — per-task worktree checkout. **Outside the project tree on purpose** (2026-05-10): nesting them in `<repo>/.lattice/` caused three `.git`-deletion incidents. Only the `worktrees/<name>/gitdir` pointer lives in `<repo>/.git`.
 - `~/.lattice/snapshots/<hash>/<ts>-<label>/` — copy-based working-tree snapshots (replace `git stash --include-untracked`, which silently lost data); orphans restored at boot. Also holds `*-discarded-worktree-*` **archives** of a force-removed worktree's uncommitted edits — keep-for-the-user, never auto-restored, newest 20 plus any under 7 days kept; if archiving fails the worktree is not removed. See `backend/src/worktree/snapshot/CLAUDE.md`.
 - `~/.lattice/git-backups/<hash>/<ts>.bundle` — `git bundle --all` before a merge run (one under 10 min old is reused; skipped when disk is short; ≤5, ≤8 GB per project — `backend/src/worktree/CLAUDE.md`). Last-resort recovery: `git fetch <bundle>`.
@@ -185,10 +185,10 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | POST | `/api/opengrep/install` | Start the managed engine install (`202`, user-clicked only) |
 | POST | `/api/opengrep/rules/install` | `{packId}` fetch/update a rule pack (**409** while a scan runs) |
 | DELETE | `/api/opengrep/rules/:packId` | Remove a rule pack (**409** while a scan runs) |
-| POST | `/api/opengrep/scan` | `{project, targets?, includeMarkdown?}` run a scan (**409** `busy`/`not-installed`/`no-rules`/`scan-cancelled`/`install-failed`, **400** `bad-target`) |
+| POST | `/api/opengrep/scan` | `{project, targets?, mode?: full/incremental, includeMarkdown?}` run a scan (default full; **409** `busy`/`not-installed`/`no-rules`/`scan-cancelled`/`install-failed`, **400** `bad-target`) |
 | POST | `/api/opengrep/scans/:id/cancel` | `{project}` cancel that exact running scan; waits for the engine to settle |
 | GET | `/api/opengrep/scans?project=` | Recent scan records |
-| GET | `/api/opengrep/scans/:id?project=&format=md&…` | One scan (`latest` ok) as the filtered agent digest; `format=graph` gives per-file severity and coverage |
+| GET | `/api/opengrep/scans/:id?project=&format=md&…` | One scan (`latest` ok) as the filtered agent digest; `format=graph` gives complete findings, per-file severity/coverage and freshness |
 | POST | `/api/opengrep/ignore` | `{project, ruleIds?, fingerprints?}` append to the project's Opengrep ignore lists |
 | GET | `/api/project-env?project=` | Detected package-manager envs + "don't reinstall" notes |
 | GET | `/api/projects` | Known project roots + hashes |
@@ -425,6 +425,22 @@ Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
   the workflow** (skip / failure / timeout = note + advance). It holds the
   project `run.lock` non-lendably, so manual Merge gets a 409 meanwhile. See
   `backend/src/workflowRuns/testStep/CLAUDE.md`.
+
+## Security finding review and triage
+
+Security findings review/triage (all project-scoped; source writes are proposed
+through ordinary Open tasks):
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | `/api/opengrep/triage?project=&findingId=` | Local disposition history (last 100) |
+| POST | `/api/opengrep/triage` | `{project, scanId, findingId, status, reason, owner?, reviewAt?}` local ignore/defer/reopen |
+| POST | `/api/opengrep/shared-ignore` | `{project, scanId, findingId, reason}` create a shared source/CI suppression review task |
+| GET | `/api/opengrep/reviews?project=` | Persistent reports and running reviews, with stale recommendation flags |
+| POST | `/api/opengrep/reviews` | `{project, scanId, findingIds, harness, piModel?}` start a review-only harness session |
+| POST | `/api/opengrep/reviews/:id/done?project=` | Collect and validate the scratch report; durable Stop-hook callback |
+| POST | `/api/opengrep/reviews/:id/cancel` | `{project}` cancel this review and reclaim its guarded scratch |
+| POST | `/api/opengrep/reviews/:id/apply` | `{project, selections, preview?}` preview (default) or explicitly apply selected recommendations |
 
 ## Ports
 

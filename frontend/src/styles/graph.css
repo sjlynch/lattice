@@ -4,6 +4,7 @@
    frontend/src/styles/CLAUDE.md. */
 @import './graph/hud-search.css';
 @import './graph/overlay-key.css';
+@import './graph/security.css';
 @import './graph/context-menu.css';
 @import './graph/settings-panel.css';
 @import './graph/toast.css';

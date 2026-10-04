@@ -39,6 +39,8 @@ Named backend bootstrap helpers used by `index.ts` after process guards are inst
      `startSpawnQueue()` to prime terminal-session accounting, then
      `recoverOrphanedTasks()` (including one-off run adoption) while the API
      is still closed;
+     security review ownership/presence is also recovered before listen through
+     `opengrep/reviewRecovery.ts`, so delayed callbacks find their durable record;
   3. establish `beginWorkflowRecovery()` before `listen()` on `127.0.0.1` only
      (not `localhost`, not LAN-visible);
   4. after listen, `runBootRecoveryChain()` starts
@@ -62,6 +64,8 @@ Named backend bootstrap helpers used by `index.ts` after process guards are inst
   cleanup stays after listen, and queued tasks wait for cleanup to finish.
   Periodic sweeps, the low-disk monitor and terminal-registry watch also start
   here; `ensureCallbackScript()` runs immediately, independently of replay.
+  The security review orphan sweep runs here too, preserving running reports
+  for the review watchdog before reclaiming their guarded scratch directories.
   Recovery policy belongs to [recovery/CLAUDE.md](../recovery/CLAUDE.md),
   workflow lifecycle policy to [workflowRuns/CLAUDE.md](../workflowRuns/CLAUDE.md),
   and callback delivery to [callbackOutbox/CLAUDE.md](../callbackOutbox/CLAUDE.md).

@@ -6,6 +6,7 @@ import { GraphSelectionChip } from './GraphSelectionChip';
 import { GraphSettingsChrome } from './GraphSettingsChrome';
 import { GraphTaskModal } from './GraphTaskModal';
 import { TimelineScrubber } from './TimelineScrubber';
+import { SecurityFindingsPanel } from './SecurityFindingsPanel';
 
 type HudChromeProps = ComponentProps<typeof GraphHud>;
 type OverlayKeyChromeProps = ComponentProps<typeof GraphOverlayKey> & {
@@ -58,6 +59,7 @@ export function GraphViewOverlays({
           so it never overlaps the top-left scan spinner (loading is true only
           while data is null). */}
       {showOverlayKey && <GraphOverlayKey {...overlayKeyProps} />}
+      {overlayKeyProps.security.panelOpen && <SecurityFindingsPanel security={overlayKeyProps.security} onFocusFile={(path) => overlayKeyProps.security.onFocusFile?.(path)} />}
 
       {showTimeline && (
         <div className="timeline-bar">

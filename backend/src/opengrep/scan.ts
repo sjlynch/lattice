@@ -29,7 +29,8 @@ import {
   resolveRuleConfigs,
   resolveScanTargets,
 } from './scanArgs.js';
-import { MAX_SCANS_PER_PROJECT, pruneOldScans, type OpengrepScanRecord } from './scanRecords.js';
+import { MAX_SCANS_PER_PROJECT, pruneOldScans, latestOpengrepScan, readOpengrepScan, type OpengrepScanRecord } from './scanRecords.js';
+import { captureScanInputs, mergeScanOutput, reusablePaths, cachePathKey, type ScanInputs } from './scanCache.js';
 
 // Target + argument building and stored-record access live in their own
 // modules; re-exported so every existing `./scan.js` import keeps working.
@@ -96,6 +97,7 @@ export type OpengrepScanRequest = {
   timeoutMs?: number;
   // Project-relative sub-paths to scan instead of the whole project.
   targets?: string[];
+  mode?: 'full' | 'incremental';
   // Cancels the scan: the engine is killed, nothing is stored, and the call
   // rejects with OpengrepScanAbortedError.
   signal?: AbortSignal;
@@ -174,8 +176,12 @@ export async function cancelOpengrepScan(project: string, id: string): Promise<b
   const entry = running.get(canonicalProjectPath(project));
   if (!entry || entry.id !== id) return false;
   entry.abort.abort();
-  await entry.promise.catch(() => {});
-  return true;
+  try {
+    await entry.promise;
+    return false; // Atomic promotion won the cancellation race.
+  } catch (err) {
+    return err instanceof OpengrepScanAbortedError;
+  }
 }
 
 // The engine is a plain child process; when this backend exits (a dev-runner
@@ -249,8 +255,36 @@ async function scanWithRules(
   const timeoutMs = req.timeoutMs && req.timeoutMs > 0 ? req.timeoutMs : DEFAULT_SCAN_TIMEOUT_MS;
 
   const startedAt = Date.now();
+  const mode = req.mode ?? 'full';
+  const capture = () => captureScanInputs({ project, engine: resolved, rulePaths, excludeGlobs,
+    targets: targets.rel, signal });
+  const before: ScanInputs | null = await capture().catch(() => null);
+  if (signal.aborted) throw new OpengrepScanAbortedError();
+  const previousId = mode === 'incremental' ? (await latestOpengrepScan(project))?.id : undefined;
+  const previous = previousId ? await readOpengrepScan(project, previousId) : null;
+  let reused = new Set<string>();
+  let reason: string | undefined;
+  // Only this validated engine/mode can reuse individual-file results. A new
+  // engine (including interfile releases) starts with a full scan.
+  if (mode === 'incremental') {
+    if (!before || !previous?.cache) reason = 'No compatible file cache; ran a full scan.';
+    else if (resolved.version !== '1.30.0') reason = 'This engine requires a full scan.';
+    else if (previous.cache.configuration !== before.configuration)
+      reason = 'Engine, rules or scan configuration changed; ran a full scan.';
+    else {
+      reused = new Set(previous.cache.reusable.filter((file) => before!.files[file] === previous.cache!.files[file]).map(cachePathKey));
+      const changed = Object.keys(before.files).filter((file) => !reused.has(cachePathKey(file)));
+      // Glob metacharacters cannot be passed as literal include patterns.
+      const includes = changed.map((file) => `--include=**/${file}`);
+      if (changed.some((file) => /[\\*?\[\]{}!]/.test(file)) || includes.join(' ').length > 20_000) {
+        reason = 'Changed targets require a full scan.'; reused.clear();
+      } else if (changed.length) args.splice(3, 0, ...includes);
+    }
+  }
+  const noChanges = before && previous?.cache && reused.size > 0 &&
+    Object.keys(before.files).every((file) => reused.has(cachePathKey(file)));
   console.log(`[opengrep] scan ${id} start: ${project} (${rulePaths.length} rule sources, jobs=${jobs})`);
-  const r = await (deps.spawn ?? spawnWithTimeout)(resolved.command, args, {
+  const r = noChanges ? { code: 0, stdout: '', stderr: '', error: null, timedOut: false, aborted: false } : await (deps.spawn ?? spawnWithTimeout)(resolved.command, args, {
     cwd: rulesRootDir(),
     timeoutMs,
     signal,
@@ -277,7 +311,10 @@ async function scanWithRules(
   }
   let raw: unknown;
   try {
-    raw = JSON.parse(await fs.readFile(jsonFile, 'utf8'));
+    if (noChanges) {
+      raw = { version: resolved.version, results: [], paths: { scanned: [] }, errors: [] };
+      await fs.writeFile(jsonFile, JSON.stringify(raw));
+    } else raw = JSON.parse(await fs.readFile(jsonFile, 'utf8'));
   } catch (err) {
     await discardRawOutput(jsonFile);
     throw new OpengrepScanFailedError(
@@ -285,7 +322,12 @@ async function scanWithRules(
         (`${err}`.includes('ENOENT') ? '' : ` (${(err as Error).message})`),
     );
   }
-  const parsed = parseOpengrepJson(raw, project);
+  let parsed = parseOpengrepJson(raw, project);
+  const analyzedFiles = parsed.scannedFiles;
+  if (previous && reused.size) parsed = mergeScanOutput(previous.parsed, parsed, reused);
+  const reusedFiles = previous ? previous.parsed.scannedPaths.filter((file) => reused.has(cachePathKey(file))).length : 0;
+  const after = before ? await capture().catch(() => null) : null;
+  if (signal.aborted) { await discardRawOutput(jsonFile); throw new OpengrepScanAbortedError(); }
   const bySeverity: Record<OpengrepSeverity, number> = { ERROR: 0, WARNING: 0, INFO: 0 };
   for (const f of parsed.findings) bySeverity[f.severity] += 1;
   const record: OpengrepScanRecord = {
@@ -305,8 +347,19 @@ async function scanWithRules(
     errors: parsed.errors.length,
     partiallyParsed: parsed.partiallyParsed.length,
     jsonFile,
+    update: { mode: reused.size ? 'incremental' as const : 'full' as const, reusedFiles, analyzedFiles, reason },
   };
-  await fs.writeFile(path.join(dir, `${id}.meta.json`), JSON.stringify(record, null, 2), 'utf8');
+  await fs.writeFile(path.join(dir, `${id}.snapshot.json`), JSON.stringify(parsed));
+  if (before && after) {
+    // Save the hashes actually analyzed, never a post-scan edit's identity.
+    const cache = { ...before, reusable: reusablePaths(parsed, r.code, before, after) };
+    await fs.writeFile(path.join(dir, `${id}.cache.json`), JSON.stringify(cache));
+  }
+  if (signal.aborted) { await discardRawOutput(jsonFile); throw new OpengrepScanAbortedError(); }
+  const meta = path.join(dir, `${id}.meta.json`);
+  await fs.writeFile(`${meta}.tmp`, JSON.stringify(record, null, 2), 'utf8');
+  if (signal.aborted) throw new OpengrepScanAbortedError();
+  await fs.rename(`${meta}.tmp`, meta); // Only complete snapshots enter history.
   await pruneOldScans(dir, MAX_SCANS_PER_PROJECT).catch(() => {});
   console.log(
     `[opengrep] scan ${id} done in ${record.durationMs}ms: ${record.findings} findings ` +
@@ -338,7 +391,15 @@ export function startOpengrepScan(
     abort,
   };
   entry.promise = performScan(req, project, id, deps, abort.signal)
-    .catch((err: unknown) => {
+    .catch(async (err: unknown) => {
+      // Remove only this unpromoted scan's files, never the last good snapshot.
+      const dir = projectScansDir(project);
+      const promoted = await fs.access(path.join(dir, `${id}.meta.json`)).then(() => true,
+        (e: NodeJS.ErrnoException) => e.code !== 'ENOENT');
+      if (!promoted) {
+        for (const suffix of ['.json', '.snapshot.json', '.cache.json', '.meta.json.tmp'])
+          await fs.rm(path.join(dir, `${id}${suffix}`), { force: true }).catch(() => {});
+      }
       rememberFailure(id, project, err);
       throw err;
     })

@@ -109,6 +109,10 @@ export function buildDigest(parsed: ParsedOpengrepOutput, filter: DigestFilter =
       dropped.ignoredFingerprints += 1;
       continue;
     }
+    if (f.nativeIgnored || f.triage && f.triage.status !== 'open') {
+      dropped.ignoredFingerprints += 1;
+      continue;
+    }
     if (seen.has(f.fingerprint)) {
       dropped.duplicates += 1;
       continue;

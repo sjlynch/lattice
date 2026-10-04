@@ -26,6 +26,7 @@ export function securityFilesByPath(result: OpengrepGraphResult): Map<string, Op
 }
 
 export function securityColor(file: OpengrepGraphFile | undefined): string {
+  if (file?.stale) return SECURITY_COLORS.unknown;
   if (file?.severity) return SECURITY_COLORS[file.severity];
   return file && !file.incomplete ? SECURITY_COLORS.clear : SECURITY_COLORS.unknown;
 }

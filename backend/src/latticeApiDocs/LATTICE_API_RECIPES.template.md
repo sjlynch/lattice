@@ -54,11 +54,25 @@ Before acting on any response, confirm its `canonicalProject` matches
 | PATCH  | /api/settings?project=             | Per-project user settings (update) |
 | GET    | /api/project-env?project=          | Auto-detected package-manager envs + injected worktree notes |
 | GET    | /api/health/dead-code?project=     | Files the analyzer flags as unreachable: `{files:[{path,ext}], total, scannedAt}` (empty if the confidence guard tripped) |
-| POST   | /api/opengrep/scan                 | `{project, targets?, includeMarkdown?, async?, acceptImmediately?}` — run an Opengrep (SAST) scan with the project's rule packs; returns `{scan, digest:{shown,total,bySeverity,rules,bytes}, markdown?}`. With `async:true` a scan still running after 15 s answers **202** `{scanId, status:"running"}` instead — poll `GET /api/opengrep/scans/<scanId>` (202 while running; a cancelled scan answers **409** `scan-cancelled`, so stop polling). `acceptImmediately:true` skips the 15 s wait and also returns the running scan's `startedAt`. **409** `busy` / `not-installed` / `no-rules` / `scan-cancelled` / `install-failed` |
+| POST   | /api/opengrep/scan                 | `{project, targets?, mode?, includeMarkdown?, async?, acceptImmediately?}` — run an Opengrep (SAST) scan with the project's rule packs; `mode: full` (default) or `incremental`. Returns `{scan, digest:{shown,total,bySeverity,rules,bytes}, markdown?}`. With `async:true` a scan still running after 15 s answers **202** `{scanId, status:"running"}` instead — poll `GET /api/opengrep/scans/<scanId>` (202 while running; a cancelled scan answers **409** `scan-cancelled`, so stop polling). `acceptImmediately:true` skips the 15 s wait and also returns the running scan's `startedAt`. **409** `busy` / `not-installed` / `no-rules` / `scan-cancelled` / `install-failed` |
 | GET    | /api/opengrep/scans?project=       | Recent scan records (last 10) |
 | POST   | /api/opengrep/scans/:id/cancel     | `{project}` cancel this exact running scan and wait for the engine to stop; returns `{cancelled}`. A completed, unknown, or superseded id returns `false` |
 | GET    | /api/opengrep/scans/:id?project=&format=md&rule=&file=&severity=&budgetKb= | A stored scan (`latest` allowed) as the agent-facing digest: markdown grouped rule → file with a short fingerprint per finding; `rule=`/`file=`/`severity=` narrow it, `budgetKb=` raises the size ceiling. Prefer the `opengrep_scan` / `opengrep_findings` MCP tools when the session has them |
+| GET    | /api/opengrep/scans/:id?project=&format=graph | Complete filtered finding objects, per-file severity/coverage and current/changed/unknown freshness for a stored scan (`latest` allowed). Read-only; never starts a scan |
 | POST   | /api/opengrep/ignore               | `{project, ruleIds?, fingerprints?}` — add rule ids (full id or dot-suffix) / finding fingerprints (`opengrep:<fp>` spelling accepted) to this project's Opengrep ignore list so future digests skip them. Additive + deduplicated. Use it for rule noise instead of filing a "please ignore X" task (MCP: `opengrep_ignore`) |
+
+Security finding review and triage:
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| GET | /api/opengrep/triage?project=&findingId= | Local finding disposition history; last 100 events |
+| POST | /api/opengrep/triage | `{project, scanId, findingId, status:"open"/"ignored"/"deferred", reason, owner?, reviewAt?}`; local policy only, never CI exclusions. Defer requires owner/future date; expired exceptions reopen |
+| POST | /api/opengrep/shared-ignore | `{project, scanId, findingId, reason}` propose a rule-specific source suppression via an Open task, for independent verification/merge and compatible CI |
+| GET | /api/opengrep/reviews?project= | Persistent review reports and active sessions; recommendations include evidence, confidence and stale/applied state |
+| POST | /api/opengrep/reviews | `{project, scanId, findingIds:[exact fingerprints], harness:"claude"/"codex"/"pi", piModel?}` review current open findings; review-only brief, writes report in guarded home scratch |
+| POST | /api/opengrep/reviews/:id/done?project= | Stop-hook callback: validate `recommendations.json`, persist report, reclaim scratch. Idempotent |
+| POST | /api/opengrep/reviews/:id/cancel | `{project}` cancel this review; no recommendations applied |
+| POST | /api/opengrep/reviews/:id/apply | `{project, selections:[{findingId, scope?:"local"/"shared", owner?, reviewAt?}], preview?}` defaults to preview; explicit `preview:false` creates grouped Open fix/shared-ignore tasks and saves selected local dispositions. Refuses stale/uncertain recommendations; duplicate applications are idempotent |
 
 Statuses: `backlog | open | in_progress | ready_to_merge | qa | done | deleted`.
 Typical pipeline: `backlog → open → in_progress → ready_to_merge → qa → done`.
@@ -364,6 +378,15 @@ task per rule group, put `opengrep:<fp>` on its own line in the description,
 and search the board for that marker before filing so a re-run never
 duplicates a task. One scan runs per project at a time (a second call is a
 **409** `busy`).
+
+The graph restores saved findings on refresh. Its idle Security chip toggles
+the saved view; Update changed files requests `mode: incremental`, and Full scan
+always runs the engine. Incremental updates reuse content-identical files only
+with compatible rules/engine/configuration, preserve clean-file coverage, and
+remove deleted/renamed paths. Older records without a file cache or changed
+configuration trigger a full baseline scan; `scan.update` reports analyzed and
+reused files plus any fallback reason. Cancelled updates preserve the last
+completed snapshot. Severity and ignore settings re-filter saved results.
 
 ```bash
 curl -s -X POST "{{API_URL}}/api/opengrep/scan" \

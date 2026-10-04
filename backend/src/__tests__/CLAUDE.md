@@ -43,6 +43,16 @@ importing them by relative path.
 - `helpers/hangAnalyzeFixture.mjs` — plain-JS analyzer the real health worker
   loads to hang on its own thread (worker-timeout tests).
 - `fixtures/opengrep-scan.json` — recorded engine output for the Opengrep digest/scan tests.
+- `opengrepTriageReview` — native/local/Settings dispositions, expiry and corrupt
+  store protection; agent report validation and stale-input fences; selected
+  preview/application idempotency; durable completion, route scope validation
+  and queued cancellation. All HOME writes and task fixtures are isolated;
+  injected launch/cleanup seams never run a coding harness or live board action.
+- `opengrepCache` — incremental replacement/reuse of findings and clean coverage,
+  deletion/rename, rule/ignore/git-selection invalidation, mid-scan edits and
+  cancellation. `opengrepRealCache` optionally runs a tiny authored rule against
+  `LATTICE_TEST_OPENGREP_BINARY` in an isolated git project/HOME (Windows child
+  profile override: `LATTICE_TEST_OPENGREP_USERPROFILE`); no downloads or live scans.
 
 ## Cross-cutting guards (hard to find by name)
 

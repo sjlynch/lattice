@@ -1,5 +1,13 @@
 # forceGraph/hooks
 
+`useSecurityFindings` owns durable review polling (3 seconds while running,
+30 seconds otherwise, plus focus refresh) and mutation feedback. Operation
+claims block duplicate ordinary writes while permitting cancellation of a
+pending start; busy lasts until every concurrent operation settles. Abort and
+project-epoch fences keep late reads/writes from updating another project.
+Successful mutations refresh reviews and saved scan presentation, never scan
+or launch another harness. `useSecurityOverlay` retains scan ownership.
+
 The coordinator's (`../ForceGraphView.tsx`) extracted effects. Each owns one
 concern and reads volatile inputs through refs so its listeners register once
 and don't churn per keystroke/frame. Pure decision logic is split into sibling
@@ -105,23 +113,32 @@ so don't reorder calls inside or across them.
 - `useGraphOverlays` — composes `useGraphSettings` + `useGitTimeline` +
   `useLocOverlay` + `useHealthOverlay` + `useDeadCodeOverlay` + `useLabelsOverlay`
   + `useSecurityOverlay` + `useGraphFilter` into one setup point.
-- `useSecurityOverlay` — explicit Security chip activation starts one OpenGrep
-  scan, polls its exact id, and refreshes colors without reheating the layout.
-  Shows a chip spinner, an ETA based on the previous scan, and completed duration.
+- `useSecurityOverlay` — first Security activation without saved results starts
+  one full OpenGrep scan; saved snapshots restore on mount. Idle chip activation
+  toggles saved results (per-project localStorage view preference); separate
+  Update changed files / Full scan actions POST. Polls the exact accepted id
+  and refreshes colors without reheating the layout. Background focus/git-change/
+  30 s reads check freshness only. Owns category/severity filters and file/all
+  findings-panel state; filtering preserves nodes and engine coverage.
+  Shows a chip spinner and an ETA based on the previous scan.
   On refresh/project open, status discovers an already running scan and resumes
   GET polling of its exact id; only clicks POST. The countdown uses the backend
   start time, shows "Estimating…" without history, and keeps spinning past the
-  estimate — until `OPENGREP_GRAPH_SCAN_TIMEOUT_MS` (12 min, `api/opengrep.ts`,
-  timed from when this mount began waiting, not the backend start). Then the
-  client stops polling and the chip turns off with a "still running" error but
-  cancels nothing: the backend scan may still be running (a click gets 409
-  `busy`). This mount won't re-attach that id; a remount will. Its clock stays inside the chip so it never rerenders the graph.
+  estimate until the backend reports completion, cancellation or failure. The
+  backend owns the timeout; a client deadline must never hide a still-running
+  scan or remove its cancel action. Its clock stays inside the chip so it never
+  rerenders the graph.
   Security recolor/visibility activates only when results arrive. A second click
   while scanning cancels that exact id and shows "Cancelling…" until confirmed;
   early cancellation waits for acceptance, and failed cancellation permits retry.
   No shortcut or automatic scan retry. Project-scoped results and request identity fence
   late completion; project change/unmount abort waiting without cancelling an
-  already accepted backend scan. Toggling off and back on starts a fresh scan.
+  already accepted backend scan. Updates keep previous findings available;
+  cancellation preserves them, and a completed scan wins a late cancel response.
+- `useSecurityGraphInteraction` — ordinary file-node clicks in Security open
+  the scoped findings panel; modified clicks keep existing selection behavior.
+  Findings actions select/highlight a file and focus the camera, waking the idle
+  loop only across the camera tween.
 - `useOpengrepAvailability` — hides Security until `status.available` confirms
   a usable engine (managed or PATH). Reads status on mount and window focus/tab
   return, shares Settings' status responses, and polls only during an engine
@@ -185,8 +202,11 @@ so don't reorder calls inside or across them.
   copy of the task board's Git Setup interception, and it resumes the create
   afterwards rather than making the user retype the prompt.
   `useGraphViewKeyboard` — the Escape chord (menu → search → select).
-- `useCanvasDragTracking` — drives `pointerDraggingRef` + suspends pointer
-  interaction during a drag. `useHoverNodeDebounce` — hover tooltip state + the
+- `useCanvasDragTracking` — drives `pointerDraggingRef` from pointerdown, but
+  suspends library pointer interaction only after 4 px of movement. Interaction
+  setters clear the picked node; stationary clicks must never call them. Drag
+  release/cancel/unmount restores suspended interaction. Adapter regressions in
+  `canvasDragTracking.test.ts`. `useHoverNodeDebounce` — hover tooltip state + the
   null-transition debounce + the `flushSync` hover-in; ignores hover mid-drag.
   `useOverlayTooltipDismiss` — clears a stale tooltip when an LOC/health view ends.
   `usePointerLeaveTooltipDismiss` — hides the React + native node tooltips when

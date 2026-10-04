@@ -12,6 +12,7 @@ import { useHoverNodeDebounce } from './hooks/useHoverNodeDebounce';
 import { useCanvasDragTracking } from './hooks/useCanvasDragTracking';
 import { usePointerLeaveTooltipDismiss } from './hooks/usePointerLeaveTooltipDismiss';
 import { useRefMirror } from './hooks/useRefMirror';
+import { useSecurityGraphInteraction } from './hooks/useSecurityGraphInteraction';
 
 type Props = {
   data: ScanResult | null;
@@ -204,6 +205,8 @@ function ForceGraphViewCoordinator({
     });
 
   // ----- Phase 4: render data + JSX overlays -----
+  const onFocusSecurityFile = useSecurityGraphInteraction(security, graphRef, setSelected);
+  const securityChrome = useMemo(() => ({ ...security, onFocusFile: onFocusSecurityFile }), [security, onFocusSecurityFile]);
   const chrome = useGraphViewChromeModel({
     containerRef,
     loading,
@@ -231,7 +234,7 @@ function ForceGraphViewCoordinator({
     contextMenu,
     search,
     pinned,
-    security,
+    security: securityChrome,
     togglePin,
     dragRect,
     openMenuItem,

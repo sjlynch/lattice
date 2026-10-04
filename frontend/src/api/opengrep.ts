@@ -21,9 +21,9 @@ export type {
   OpengrepScanEnvelope,
   OpengrepGraphFile,
   OpengrepGraphResult,
+  OpengrepFinding,
 } from './types/opengrep';
 
-const OPENGREP_GRAPH_SCAN_TIMEOUT_MS = 12 * 60_000;
 const OPENGREP_GRAPH_SCAN_POLL_INTERVAL_MS = 1500;
 
 // Called only by the Security chip. A long scan hands back its id, then GETs
@@ -32,18 +32,23 @@ export async function runOpengrepGraphScan(
   project: string,
   signal: AbortSignal,
   onAccepted?: (scan: { id: string; startedAt?: number }) => void,
+  mode: 'full' | 'incremental' = 'full',
 ): Promise<OpengrepGraphResult> {
   const started = await asJson<OpengrepScanEnvelope | { scanId: string; status: 'running'; startedAt?: number }>(
     await fetch('/api/opengrep/scan', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ project, async: true, acceptImmediately: true }),
+      body: JSON.stringify({ project, async: true, acceptImmediately: true, mode }),
       signal,
     }),
   );
   const id = 'scanId' in started ? started.scanId : started.scan.id;
   onAccepted?.({ id, startedAt: 'scanId' in started ? started.startedAt : started.scan.startedAt });
   return waitForOpengrepGraphScan(project, id, signal);
+}
+
+export async function fetchOpengrepGraphResult(project: string, id = 'latest', signal?: AbortSignal): Promise<OpengrepGraphResult> {
+  return asJson<OpengrepGraphResult>(await fetch(`/api/opengrep/scans/${encodeURIComponent(id)}?${new URLSearchParams({ project, format: 'graph' })}`, { signal }));
 }
 
 export async function cancelOpengrepGraphScan(project: string, id: string, signal: AbortSignal) {
@@ -60,12 +65,12 @@ export async function waitForOpengrepGraphScan(
   signal: AbortSignal,
 ): Promise<OpengrepGraphResult> {
   const params = new URLSearchParams({ project, format: 'graph' });
-  const deadline = Date.now() + OPENGREP_GRAPH_SCAN_TIMEOUT_MS;
   while (true) {
     signal.throwIfAborted();
     const response = await fetch(`/api/opengrep/scans/${encodeURIComponent(id)}?${params}`, { signal });
     if (response.status !== 202) return asJson<OpengrepGraphResult>(response);
-    if (Date.now() >= deadline) throw new Error('The security scan is still running. Check Settings → Tools for its status.');
+    // The backend owns timeout/failure policy. A running response must keep
+    // the chip spinning and cancellable even after its estimated duration.
     await new Promise<void>((resolve, reject) => {
       signal.throwIfAborted();
       const onAbort = () => {

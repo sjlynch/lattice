@@ -60,6 +60,10 @@ answers `ready:false`. Current sites:
   instant where neither the lock file nor anything else said "mid-transition".
 - `terminalServerClient/createSession.ts` — every `proxyCreateSession` (pty
   created → registry record written).
+- `opengrep/reviewSession.ts` — review setup/admission through the durable PTY
+  ownership update, with a `finally` release on failure and queued cancellation.
+  `POST /api/opengrep/reviews` is also a top-level admission-gated start; report
+  callbacks, reads and cancellations remain available during drain.
 
 A transition that legitimately runs long (an advance whose next step runs an
 Opengrep pre-run scan, a multi-GB worktree checkout in an admitted spawn) just

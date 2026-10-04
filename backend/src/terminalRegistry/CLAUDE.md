@@ -194,7 +194,9 @@ from.
   their own, and a relaunch racing them puts two Claudes on one conflict —
   a live resolver is adopted like anything else; `startup` — never: the dead
   record is ended silently and `useStartupTerminals` re-seeds a fresh one;
-  one-shot runs — never, ended as `owner-finished`). Relaunches clear the dead
+  one-shot runs (including `security-review`) — never, ended as
+  `owner-finished`). Security review recovery owns report collection; a terminal
+  restore must not launch a second review. Relaunches clear the dead
   `serverId` (and any `ended` marker) first — every client renders the tab as
   "restoring", no pane attaches to a dead id — go through the spawn queue at
   `batch` priority, and land as `restored` / `restore-failed` events. An

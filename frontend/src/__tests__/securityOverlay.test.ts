@@ -62,6 +62,7 @@ async function setup(t: TestContext, status: OpengrepStatus | null = installedSt
     }
     requests.push({ url, init });
     if (url.endsWith('/cancel')) return cancelReply();
+    if (url.includes('/scans/latest?')) return Promise.resolve(json({ ...result, scan: nextStatus?.project?.lastScan ?? result.scan }));
     if (init?.method === 'POST') return new Promise<Response>((resolve) => pending.push(resolve));
     return graphReply(url, init);
   });
@@ -105,7 +106,7 @@ test('only a chip click starts a scan; waiting keeps the graph visible and the c
   assert.equal(h.refreshes, 0);
   await act(async () => { h.chip().props.onClick(); });
   assert.equal(h.requests.length, 1);
-  assert.deepEqual(JSON.parse(h.requests[0].init!.body as string), { project: 'C:/projA', async: true, acceptImmediately: true });
+  assert.deepEqual(JSON.parse(h.requests[0].init!.body as string), { project: 'C:/projA', async: true, acceptImmediately: true, mode: 'full' });
   assert.equal(h.chip().props['aria-busy'], true);
   assert.equal(h.chip().props.disabled, false);
   assert.equal(h.chip().findAll((n) => n.props.className === 'spinner graph-security-spinner').length, 1);
@@ -119,15 +120,17 @@ test('only a chip click starts a scan; waiting keeps the graph visible and the c
   assert.match(h.requests[1].url, /\/scans\/og_first\?/);
   assert.equal(new URL(h.requests[1].url, 'http://test').searchParams.get('format'), 'graph');
   assert.equal(h.latest.securityFilesRef.current?.get('c:/proja/src/a.ts')?.severity, 'ERROR');
-  assert.equal(h.chip().findAllByType('span').at(-1)?.children.join(''), '1.3s');
+  assert.equal(h.chip().findAllByType('span').at(-1)?.children.join(''), '1');
   await h.update('C:/projA');
-  assert.equal(h.requests.length, 2, 'new renders never refresh a completed scan');
+  assert.equal(h.requests.length, 3, 'completion enables one read-only freshness check; rerendering never starts a scan');
   await act(async () => { h.chip().props.onClick(); });
   assert.equal(h.latest.security.active, false);
   assert.equal(h.latest.securityFilesRef.current, null);
-  assert.equal(h.requests.length, 2, 'turning the view off cannot scan');
+  assert.equal(h.requests.length, 3, 'turning the view off cannot scan');
   await act(async () => { h.chip().props.onClick(); });
-  assert.equal(h.requests.filter((r) => r.init?.method === 'POST').length, 2, 'reenabling explicitly starts a fresh scan');
+  assert.equal(h.requests.filter((r) => r.init?.method === 'POST').length, 1, 'reenabling reuses saved results');
+  await act(async () => { void h.latest.security.onScan('incremental'); });
+  assert.equal(h.requests.filter((r) => r.init?.method === 'POST').length, 2, 'updating requires an explicit scan action');
   assert.equal(h.latest.security.estimatedDurationMs, 1250, 'the completed scan supplies an ETA for the next activation');
 });
 
@@ -186,8 +189,8 @@ test('refresh during the initial POST restores the exact scan and its countdown 
   const h = await setup(t, { ...installedStatus,
     project: { path: 'C:/projA', scanning: false, runningScan: null,
       lastScan: { ...result.scan, durationMs: 65_000 } } });
-  await act(async () => { h.chip().props.onClick(); });
-  const originalSignal = h.requests[0].init!.signal!;
+  await act(async () => { void h.latest.security.onScan('full'); });
+  const originalSignal = h.requests.find((r) => r.init?.method === 'POST')!.init!.signal!;
   now += 10_000;
   h.setStatus({ ...installedStatus,
     project: { path: 'c:\\ProjA', scanning: true, runningScan: { id: 'og_first', startedAt: 100_000 },
@@ -197,7 +200,7 @@ test('refresh during the initial POST restores the exact scan and its countdown 
   assert.equal(originalSignal.aborted, true, 'refresh stops waiting for the original POST');
   assert.equal(h.chip().props['aria-busy'], true);
   assert.equal(h.chip().props.disabled, false);
-  assert.equal(h.latest.securityModeRef.current, false, 'restored scans also keep the normal graph visible while waiting');
+  assert.equal(h.latest.securityModeRef.current, true, 'restored scans keep previous results visible while waiting');
   assert.equal(h.chip().findAll((n) => n.props.className === 'spinner graph-security-spinner').length, 1);
   const eta = () => h.chip().findByProps({ className: 'graph-overlay-chip-key graph-security-eta' }).children.join('');
   assert.equal(eta(), 'ETA ~0:55', 'the countdown uses the backend start time');
@@ -221,7 +224,7 @@ test('refresh during the initial POST restores the exact scan and its countdown 
   assert.equal(h.latest.securityFilesRef.current?.get('c:/proja/src/a.ts')?.severity, 'ERROR');
   assert.equal(timers.scheduled.length, 0, 'both polling and countdown stop after completion');
   assert.equal(h.requests.filter((r) => r.init?.method === 'POST').length, 1);
-  assert.ok(h.requests.slice(1).every((r) => r.url.includes('/scans/og_first?')));
+  assert.ok(h.requests.filter((r) => r.init?.method !== 'POST').every((r) => /\/scans\/(og_first|latest)\?/.test(r.url)));
   await act(async () => { h.chip().props.onClick(); });
   await act(async () => { h.browserWindow.dispatchEvent(new Event('focus')); });
   assert.equal(h.latest.security.active, false, 'a stale running snapshot cannot reactivate a completed scan');
@@ -267,7 +270,48 @@ test('project switches abort restored polling and ignore late project snapshots 
   await act(async () => { h.renderer.unmount(); });
   assert.equal(h.statusRequests[0].init!.signal!.aborted, true);
   await act(async () => { h.statusRequests[0].resolve(json(installedStatus)); });
+  assert.equal(h.requests.length, 2, 'one running poll and one saved snapshot read; stale project answers add neither');
+});
+
+test('saved results restore on refresh, toggle without a scan, and expose a file findings panel', async (t) => {
+  const values = new Map<string, string>();
+  const restoreStorage = installGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  t.after(restoreStorage);
+  const h = await setup(t, { ...installedStatus, project: { path: 'C:/projA', scanning: false, lastScan: result.scan } });
+  assert.equal(h.latest.security.active, true);
   assert.equal(h.requests.length, 1);
+  assert.match(h.requests[0].url, /scans\/latest\?/);
+  await act(async () => { h.latest.security.onShowFindings('src/a.ts'); });
+  assert.equal(h.latest.security.panelOpen, true);
+  assert.equal(h.latest.security.panelFile, 'src/a.ts');
+  await act(async () => { await h.latest.security.onToggle(); });
+  assert.equal(h.latest.security.active, false);
+  await h.remount();
+  assert.equal(h.latest.security.active, false, 'refresh remembers that the overlay was hidden');
+  assert.equal(h.latest.security.result?.shown, 1, 'the saved report remains available while hidden');
+  await act(async () => { await h.latest.security.onToggle(); });
+  assert.equal(h.latest.security.active, true);
+  assert.equal(h.requests.filter((request) => request.init?.method === 'POST').length, 0);
+});
+
+test('cancelling an update retains the prior snapshot and a completed scan wins a late cancellation', async (t) => {
+  const h = await setup(t, { ...installedStatus, project: { path: 'C:/projA', scanning: false, lastScan: result.scan } });
+  await act(async () => { void h.latest.security.onScan('incremental'); });
+  assert.equal(h.latest.security.result?.scan.id, 'og_first');
+  assert.equal(h.latest.securityModeRef.current, true);
+  await act(async () => { void h.latest.security.onToggle(); });
+  await act(async () => { h.pending.shift()!(json({ scanId: 'og_update', status: 'running' }, 202)); });
+  assert.equal(h.latest.security.scanning, false);
+  assert.equal(h.latest.security.result?.scan.id, 'og_first');
+  assert.equal(h.latest.security.active, true);
+  h.setCancelReply(async () => json({ cancelled: false }));
+  h.setGraphReply(async () => json({ ...result, scan: { ...result.scan, id: 'og_completed', startedAt: 2000 } }));
+  await act(async () => { void h.latest.security.onScan('full'); });
+  await act(async () => { void h.latest.security.onToggle(); });
+  await act(async () => { h.pending.shift()!(json({ scanId: 'og_completed', status: 'running' }, 202)); });
+  assert.equal(h.latest.security.result?.scan.id, 'og_completed', 'a false cancel response allows completed results to publish');
+  assert.equal(h.latest.security.scanning, false);
 });
 
 test('Security is hidden until engine availability is confirmed, including an unusable managed installation', async (t) => {
@@ -401,10 +445,14 @@ test('long scans poll the accepted id without POSTing again and cancellation cle
   t.after(() => timers.restore());
   const requests: string[] = [];
   let polls = 0;
+  const realNow = Date.now;
+  let now = realNow();
+  Date.now = () => now;
+  t.after(() => { Date.now = realNow; });
   const restore = installGlobal('fetch', async (url: string, init?: RequestInit) => {
     requests.push(`${init?.method ?? 'GET'} ${url}`);
     if (init?.method === 'POST') return json({ scanId: 'og_long', status: 'running' }, 202);
-    return ++polls === 1 ? json({ status: 'running' }, 202) : json(result);
+    return ++polls < 3 ? json({ status: 'running' }, 202) : json(result);
   });
   t.after(restore);
   const controller = new AbortController();
@@ -412,6 +460,10 @@ test('long scans poll the accepted id without POSTing again and cancellation cle
   await microtasks();
   assert.equal(timers.scheduled.length, 1);
   assert.equal(timers.scheduled[0].delay, 1500);
+  now += 20 * 60_000;
+  timers.fireAll();
+  await microtasks();
+  assert.equal(timers.scheduled.length, 1, 'a running scan stays cancellable after the old client deadline');
   timers.fireAll();
   assert.equal((await pending).shown, 1);
   assert.equal(requests.filter((r) => r.startsWith('POST')).length, 1);

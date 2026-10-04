@@ -22,7 +22,8 @@ export type TerminalOwner =
   | 'push'
   | 'qa'
   | 'post-merge'
-  | 'prompt-customization';
+  | 'prompt-customization'
+  | 'security-review';
 
 export type TerminalEndReason =
   | 'exit'           // the pty exited while the executor lived (agent quit, shell exited)

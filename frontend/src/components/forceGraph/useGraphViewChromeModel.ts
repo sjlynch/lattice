@@ -145,7 +145,8 @@ export function useGraphViewChromeModel({
         // so it doesn't sit over the menu. Gating (rather than a one-shot
         // clear) also keeps it from flickering back if the raycaster re-hovers
         // the still-under-cursor node while the menu is up.
-        hoverNode: contextMenu || security.active ? null : hoverNode,
+        hoverNode: contextMenu ? null : hoverNode,
+        security,
         ...search,
       },
       overlayKey: {

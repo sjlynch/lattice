@@ -1,6 +1,7 @@
 # frontend/src/components/floatingPanel
 
 - `geometry.ts` owns viewport padding, position clamping, initial placement, and the persisted `{ pos, size }` localStorage shape.
+- `FloatingPanel` / `useFloatingPanelState` accept optional `defaultPosition` for first-open placement (Security uses the right edge). Saved geometry takes precedence, and placement is still clamped to the viewport.
 - `hooks.ts` is a re-export barrel only (`useFloatingPanelState`, `panelForEscape`, `useFloatingPanelEscape`, `usePanelDrag`, `usePanelResize`); `../FloatingPanel.tsx` and tests import from it, so new hooks go in the concern modules below and are re-exported here. `../FloatingPanel.tsx` should stay focused on portal markup and wiring.
 - `usePanelGeometry.ts` — `useFloatingPanelState`: `pos`/`size` state seeded from storage, the open-clamp, the `maximized`/`toggleMaximize` toggle, and persistence. Writes are **coalesced** through `createGeometryWriteQueue`: drag/resize change geometry on every mousemove, so each key's latest `{ pos, size }` is written at most once per animation frame, and flushed synchronously on unmount, on `pagehide`, and before a mounting panel reads its key — the stored value always ends where a write per change would have left it. Pinned by `__tests__/floatingPanelGeometryWrites.test.ts`.
 - `panelEscapeStack.ts` — the module-level open-panel stack, `panelForEscape`, and `useFloatingPanelEscape` (see Escape below). The stack must stay a single module instance.

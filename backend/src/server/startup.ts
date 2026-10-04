@@ -25,6 +25,7 @@ import { beginWorkflowRecovery } from '../workflowRuns/recoveryReadiness.js';
 import { startTerminalRegistryWatch } from '../terminalRegistry/watch.js';
 import { ensureCallbackScript, startCallbackOutboxLoop } from '../callbackOutbox.js';
 import { fireOwedPostMergeHooks } from '../recovery/owedPostMergeHooks.js';
+import { recoverSecurityReviews, sweepSecurityReviews } from '../opengrep/reviewRecovery.js';
 
 export async function startBackend(
   config: BackendServerConfig = getBackendServerConfig(),
@@ -97,6 +98,7 @@ export async function runPreListenStartupRecovery(): Promise<void> {
     console.error('[startup] startSpawnQueue failed:', err),
   );
   await recoverOrphanedTasks();
+  await recoverSecurityReviews();
 }
 
 export function listenForRequests(
@@ -183,6 +185,7 @@ export function runBootRecoveryChain(
 }
 
 export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecovery = () => {}): void {
+  void sweepSecurityReviews().catch(console.error);
   void runBootRecoveryChain(backendOrigin, finishWorkflowRecovery);
   // Re-enqueue task runs that were waiting in the spawn queue when the
   // backend stopped (their `runQueued` flag is persisted on the task).

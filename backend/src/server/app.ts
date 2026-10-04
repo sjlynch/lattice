@@ -123,7 +123,7 @@ export function mountRouteFactories(
   app.use(buildSettingsRouter());
   app.use(buildGlobalSettingsRouter());
   app.use(buildMcpRouter());
-  app.use(buildOpengrepRouter());
+  app.use(buildOpengrepRouter(options.backendOrigin));
   // Both paths are static (no `:param` segment), so nothing later can shadow
   // them and they shadow nothing.
   app.use(buildProjectInitRouter());

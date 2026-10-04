@@ -27,7 +27,10 @@ ordered partial folder, each `@import`ed in its own cascade order:
   rule-pack cards + scan-filter textareas). Shell imports first (its
   section/control/checkbox base is built on by the later tabs).
 - `graph.css` → `graph/` (`hud-search` — overlay/search/counts + loc-view chip;
-  `overlay-key`; `context-menu` — box-select rect + selection chip + node menu;
+  `overlay-key`; `security` — scan actions, findings panel and hover preview,
+  virtual rows, responsive detail pane, triage/review controls and selected
+  recommendation preview;
+  `context-menu` — box-select rect + selection chip + node menu;
   `settings-panel` — gear FAB + settings popover; `toast`; `renderer-notice` —
   `.graph-view-root` + `.graph-renderer-notice*`, the WebGL-renderer
   failure/recovery notice). Imported in the original source order (each

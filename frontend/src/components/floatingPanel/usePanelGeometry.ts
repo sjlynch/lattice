@@ -83,6 +83,7 @@ export function useFloatingPanelState(
   open: boolean,
   defaultSize: Size,
   storageKey?: string,
+  defaultPosition?: Pos,
 ): FloatingPanelState {
   const [initialGeometry] = useState<PanelGeometry>(() => {
     // A panel that unmounted in this same commit may still have this key's
@@ -92,7 +93,7 @@ export function useFloatingPanelState(
     const initialSize = persisted?.size ?? defaultSize;
     return {
       size: initialSize,
-      pos: persisted?.pos ?? getInitialFloatingPanelPos(initialSize),
+      pos: persisted?.pos ?? defaultPosition ?? getInitialFloatingPanelPos(initialSize),
     };
   });
   const [size, setSize] = useState<Size>(initialGeometry.size);

@@ -19,7 +19,7 @@ export const AGENT_SESSION_SOURCES: ReadonlySet<AgentSessionSource> = new Set<Ag
 
 export const OWNERS: ReadonlySet<string> = new Set<TerminalOwner>([
   'user', 'task', 'merge', 'startup', 'workflow-step', 'push', 'qa',
-  'post-merge', 'prompt-customization',
+  'post-merge', 'prompt-customization', 'security-review',
 ]);
 export const END_REASONS: ReadonlySet<string> = new Set<TerminalEndReason>([
   'exit', 'closed', 'killed', 'owner-finished', 'cwd-missing', 'restore-failed',

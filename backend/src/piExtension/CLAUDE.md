@@ -7,10 +7,13 @@ completion even if the model forgets to curl. `../piExtension.ts` is the stable
 public facade; external consumers import from `'../piExtension.js'`. Internal
 modules import their implementation dependencies directly, never the facade.
 
-One renderer feeds all five call-sites — task `/complete`, push `/done`,
+One renderer feeds all call-sites — task `/complete`, push `/done`,
 workflow-step-complete, post-merge-hook-complete, and
-workflow-customization-complete (the `PiExtensionSite` union) — so all backstops
+workflow-customization-complete, plus security-review-done
+(the `PiExtensionSite` union) — so all backstops
 share one hardening (retry loop + per-attempt timeout + sentinel audit log).
+Security review briefs explicitly POST their completed report before waiting
+for another user turn: ending a Pi turn does not trigger `session_shutdown`.
 
 ## Modules
 

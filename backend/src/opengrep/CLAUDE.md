@@ -135,7 +135,16 @@ licence text + a source pointer) — keep it a runtime download.
   scan per project (`OpengrepScanBusyError`; `isAnyOpengrepScanRunning` is
   what the pack routes consult; the rules read slot is what actually excludes
   a swap), `--jobs = max(1, cores-2)`, hard wall-clock
-  timeout (kill), last 10 scans kept as `<id>.json` + `<id>.meta.json`.
+  timeout (kill), last 10 scans kept as `<id>.json` (engine output),
+  `<id>.snapshot.json` (complete merged findings/coverage), `<id>.cache.json`
+  (input identities/reusable paths) and `<id>.meta.json` (record). Metadata is
+  atomically promoted last, so incomplete snapshots never enter history.
+  Default `mode: full` always runs the engine; explicit `incremental` reuses
+  compatible unchanged files and selects changed files with include filters
+  against the original targets/cwd, preserving engine exclusion semantics.
+  No changed inputs skips the engine. Missing/unsupported caches, engine/rule/
+  context changes, or unrepresentable include patterns fall back to a full scan
+  with `record.update.reason`; update metadata reports analyzed/reused coverage.
   Cancellable: a request `signal` or `abortOpengrepScan(project)` kills the
   engine, stores nothing, rejects with `OpengrepScanAbortedError` and frees
   the slot at once. A cancelled workflow run aborts through the request
@@ -164,6 +173,21 @@ licence text + a source pointer) — keep it a runtime download.
 - `scanRecords.ts` — the stored scans: `OpengrepScanRecord`,
   `listOpengrepScans` / `readOpengrepScan` / `latestOpengrepScan` and the
   prune to `MAX_SCANS_PER_PROJECT`, over one shared `readAllMetas(dir)`.
+  Reads complete snapshots before legacy raw output; incremental records require
+  their snapshot. Corrupt/missing cache metadata disables reuse without hiding
+  saved findings. Pruning removes all sidecars.
+- `scanCache.ts` — SHA-256 content identities for candidate regular files up to
+  the engine's 1 MB limit, enabled rule contents, engine identity, scan scope,
+  exclusions, ignore/config context and Opengrep environment. Never follows
+  symlinks/reparse points. Path casing is preserved in CLI includes (comparison
+  keys are case-insensitive on Windows). Reuse is validated for independent-file
+  Opengrep 1.30.0 only; git index/ignore changes invalidate target selection.
+  External git config/ignore includes, linked/parent git directories and linked rules
+  conservatively disable it. Partial/error paths, skipped rules, global failures
+  and files edited during analysis cannot be reused as clean. Retain zero-finding
+  coverage only from engine `paths.scanned`; unvisited files stay unknown. Merge
+  replaces changed findings and drops deleted/renamed paths. Severity/ignore
+  presentation settings re-filter saved findings without invalidating analysis.
 - `digest.ts` — pure. `parseOpengrepJson` (project-relative forward-slash
   paths, severity normalization, `PartialParsing` errors split out) →
   `buildDigest` (severity floor + `ignoreRuleIds` (full id or dot-suffix) +
@@ -185,10 +209,16 @@ licence text + a source pointer) — keep it a runtime download.
 - `parseOutput.ts` — pure parse step: `parseOpengrepJson`, the finding/error
   types (including normalized `scannedPaths` for coverage), and the
   `shortFingerprint` / `fingerprintMatches` / `ruleMatches` matchers.
+  Native `extra.is_ignored` suppressions remain in the raw inventory, with
+  `nativeIgnored`; digests and graph colors exclude them.
 - `graph.ts` — complete filtered per-file findings and highest severity,
+  structured finding objects, counts/filter metadata and coverage caveats,
   independent of markdown caps. Visited files with no shown findings can be
   green; partial parsing, file errors, skipped rules and engine failures keep
   coverage uncertain. Unvisited files never appear clean.
+  `allFindings` also preserves deduplicated findings below the severity floor
+  and ignored/deferred findings for the viewer. Only open shown findings color
+  the graph; changing presentation policy never destroys scan evidence.
 - `renderDigest.ts` — pure markdown step: `renderDigestMarkdown` (header →
   budgeted sections → tail) with its budget knobs as named constants.
 - `settings.ts` — `globalSettings.opengrep.packs` (per-pack enable, machine-
@@ -200,9 +230,49 @@ licence text + a source pointer) — keep it a runtime download.
   `startProjectScanWithDigest` (the id at once + the digest result as `done`;
   its caller MUST observe `done`, or a failing scan is an unhandled rejection),
   `digestOfStoredScan` (with `rule` / `file` / `severity` / budget overrides
-  for drill-down), `graphOfStoredScan` (read-only, exact stored scan id).
+  for drill-down), `graphOfStoredScan` (read-only, exact stored scan id or latest).
+  Graph reads hash current inputs to report current/changed/unknown freshness
+  and per-file `stale`; legacy records remain readable with unknown freshness.
   Routes, MCP tools and the workflow pre-run hook call only
   this.
+
+## Finding triage and agent review
+
+- `triage.ts` — durable local dispositions and history in
+  `~/.lattice/per-project/<hash>/opengrep-triage.json`. Writes are serialized
+  and atomic; corrupt state is never replaced. Ignores require reasons;
+  deferred risks require an owner and future review date. Expired exceptions
+  read as open. Source suppressions and Settings ignores retain their distinct
+  scope and cannot be overridden by a local reopen. These are presentation
+  choices, never exclusions from scanner inputs or CI policy.
+- `reviewStore.ts` — versioned `opengrep-reviews.json` in the same home project
+  directory. Keeps running reviews and the latest 20 finished reports, including
+  their findings and input identities. Validates agent output: exact finding
+  IDs, evidence, confidence, action, and concrete changes/checks for fixes.
+  Missing recommendations become `needs-review`. Recommendations become stale
+  when rule/configuration identities, the finding file, or any declared context
+  file changes; current input verification is required again when applying.
+- `reviewSession.ts` — shared home-scratch spawn and cleanup, under
+  `security-reviews/sreview_<ts>_<hex>/`. Persist ownership before spawn and
+  install all harness completion/activity hooks. The brief permits source reads
+  and writing the scratch report only; it prohibits project edits, executing
+  project code, board writes and delegation. Codex additionally uses
+  `--sandbox workspace-write` with the scratch as cwd; Claude/Pi follow the
+  explicit review-only brief. Pi must POST completion after writing the report
+  because its shutdown hook is only a backstop. Cancellation aborts pending
+  spawn admission as well as reclaiming an existing PTY.
+- `review.ts` — current-scan admission, review listing, cancellation and selected
+  recommendation preview/application. Grouped fixes become ordinary Open tasks;
+  shared suppressions become tasks to independently verify narrow, exact-rule
+  `nosemgrep` comments and CI compatibility. Neither starts agents nor merges
+  code automatically. Local ignores and deferred risks use `triage.ts`.
+  Application is serialized and task markers make retries idempotent.
+- `reviewRecovery.ts` — pre-listen presence recovery and a 30-second liveness
+  watchdog. Callbacks read durable ownership directly after restarts. An
+  unreachable terminal server is never proof of death; absent PTYs get 90 seconds
+  for delayed report callbacks. A two-hour backstop settles stuck reviews.
+  The shared boot sweep preserves running reports until the watchdog collects
+  them, and delegates orphan deletion to guarded home-scratch cleanup.
 
 ## Consumers
 
@@ -219,10 +289,11 @@ licence text + a source pointer) — keep it a runtime download.
   `GET /scans/:id` answers a still-running id with 202 and
   a failed one with the status/code its POST would have had; after a backend
   restart the id is unknown (404 — the restart killed the engine). The
-  synchronous form (the Settings button) is unchanged; one scan per project
+  synchronous form (the Settings button) remains a full scan; one scan per project
   either way. `GET /scans/:id?format=graph` returns the complete filtered
-  per-file snapshot for the Security graph overlay, with the same 202/failure
-  polling semantics.
+  findings/per-file snapshot and freshness for the Security graph overlay,
+  with the same 202/failure polling semantics. Scan requests accept optional
+  `mode: full | incremental` (default full).
 - `latticeMcp/createServer.ts` — `opengrep_scan`, `opengrep_findings` (every
   session; both return the digest markdown, never raw JSON — `opengrep_scan`
   uses the async form and polls, because Node's fetch drops a response after
@@ -247,13 +318,16 @@ licence text + a source pointer) — keep it a runtime download.
   becomes a one-paragraph explanation and the step runs.
 - Settings → Tools tab (`frontend/src/components/settings/ToolsTab.tsx`).
 - Graph Security chip (`frontend/src/components/forceGraph/hooks/useSecurityOverlay.ts`):
-  POST only on activation; refresh reconnects through `status.project.runningScan`
+  first activation without saved results runs a full scan; refresh reconnects through `status.project.runningScan`
   and GET polling of that exact id. Shows a spinner and an ETA from the previous
-  scan's duration, then duration on completion. Keeps the normal graph visible
-  until results arrive. Clicking while scanning cancels the exact id (including
+  scan's duration. Restores saved snapshots; idle chip toggles the view without
+  rescanning. Hover previews and file/total-findings clicks open the searchable
+  findings panel. Separate Update changed files / Full scan actions POST;
+  background focus/git-change/30 s reads only check freshness. Keeps the normal
+  graph or previous results visible until completion. Clicking while scanning cancels the exact id (including
   a restored scan), with "Cancelling…" until the backend confirms. Cancellation
-  intent before acceptance is honored once the id arrives. Disable/re-enable
-  explicitly starts a new scan. Project changes
+  intent before acceptance is honored once the id arrives; cancellation preserves
+  the previous snapshot. Project changes
   and unmount abort HTTP waiting; an accepted backend scan may finish normally.
 
 ## Tests
@@ -269,3 +343,8 @@ running scan and a scan waits for a pending swap, removal refused mid-scan),
 `opengrepRulesPrune` (the licence boundary on a fixture tree),
 `opengrepPlatformSettings` (asset table, pin presence, settings sanitizing),
 `opengrepNoVendoredAssets` (no binary / pack in `git ls-files`).
+`opengrepCache` covers changed/clean/deleted/renamed files, rule invalidation,
+mid-scan edits and cancellation; `opengrepRealCache` optionally validates include
+selection (including mixed-case Windows paths) against an installed engine in
+an isolated project/HOME. Set `LATTICE_TEST_OPENGREP_BINARY` to opt in; Windows
+also needs `LATTICE_TEST_OPENGREP_USERPROFILE` for the engine child only.

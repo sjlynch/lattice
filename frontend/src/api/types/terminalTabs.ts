@@ -13,7 +13,8 @@ export type TerminalOwner =
   | 'push'
   | 'qa'
   | 'post-merge'
-  | 'prompt-customization';
+  | 'prompt-customization'
+  | 'security-review';
 
 export type TerminalEndReason =
   | 'exit'

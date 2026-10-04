@@ -2,6 +2,8 @@ import { memo } from 'react';
 import type { GraphNode } from '../../api';
 import { GraphSearchBar } from './GraphSearchBar';
 import { HealthTooltip } from './HealthTooltip';
+import { SecurityTooltip } from './SecurityTooltip';
+import type { SecurityOverlayControl } from './hooks/useSecurityOverlay';
 import type { SearchStatus } from './hooks/useGraphSearch';
 
 type Counts = { files: number; dirs: number; hidden: number; loc: number };
@@ -25,6 +27,7 @@ type Props = {
   // narrows the label overlay to just those nodes (depth scrolling disabled).
   selectionCount: number;
   hoverNode: GraphNode | null;
+  security?: SecurityOverlayControl;
   // Search bar (bottom-left, inline with the counts chip).
   searchQuery: string;
   onSearchQueryChange: (q: string) => void;
@@ -54,6 +57,7 @@ export const GraphHud = memo(function GraphHud({
   maxDepth,
   selectionCount,
   hoverNode,
+  security,
   searchQuery,
   onSearchQueryChange,
   searchRegex,
@@ -105,7 +109,7 @@ export const GraphHud = memo(function GraphHud({
           )}
         </div>
       )}
-      {hoverNode && <HealthTooltip node={hoverNode} />}
+      {hoverNode && (security?.active && security.result ? <SecurityTooltip node={hoverNode} result={security.result} /> : <HealthTooltip node={hoverNode} />)}
       {hasData && (
         <div className="graph-bottom-left">
           <GraphSearchBar

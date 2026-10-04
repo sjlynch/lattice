@@ -19,6 +19,7 @@ type Props = {
   defaultSize?: Size;
   minSize?: Size;
   storageKey?: string;
+  defaultPosition?: { x: number; y: number };
 };
 
 export function FloatingPanel({
@@ -29,11 +30,13 @@ export function FloatingPanel({
   defaultSize = { width: 720, height: 520 },
   minSize = { width: 380, height: 280 },
   storageKey,
+  defaultPosition,
 }: Props) {
   const { pos, size, setPos, setSize, maximized, toggleMaximize } = useFloatingPanelState(
     open,
     defaultSize,
     storageKey,
+    defaultPosition,
   );
   // Non-modal: panels have no backdrop and can sit side by side, so Tab is left
   // to the browser (a trap here hijacked Tab from older panels and from the page

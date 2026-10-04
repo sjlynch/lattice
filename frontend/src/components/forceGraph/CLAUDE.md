@@ -67,6 +67,23 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `HealthTooltip` (+ `HealthTooltipSections`/`healthTooltipMetrics`/
   `tooltipPosition`/`cursorTracker`/`healthScoreContributions`) — file-health hover
   tooltip; writes its own `transform` so cursor moves don't re-render React.
+- `SecurityTooltip` — per-file severity counts, message/line previews and stale/
+  incomplete coverage hints; uses the same cursor placement helpers without
+  React renders per pointer move. `SecurityFindingsPanel` — persisted FloatingPanel
+  with search, category/severity/status filters, file/rule sorting, scan actions
+  and a virtualized list (`SecurityFindingList`, fixed 72px rows). The default
+  list respects the Settings severity floor; lower-severity raw evidence can be
+  included explicitly. `SecurityFindingDetail` owns snippets/references, editor
+  links, graph focus and reasoned local ignore/defer/reopen history.
+  `SecurityReviewControls` selects Claude/Codex/Pi and all/filtered/selected open
+  findings, restores durable review reports, and previews selected actions.
+  Harness/scope/start-or-cancel controls are always visible in one compact row;
+  the existing `SettingsInfo` popover holds explanatory copy. A stale scan shows
+  an actionable update hint and the disabled start button exposes its reason.
+  Fixes and shared suppressions create normal Open tasks; local dispositions
+  take effect after explicit application. Stale/applied/uncertain recommendations
+  cannot be selected. No automatic fix, suppression, scan or harness launch.
+  `securityFindings.ts` owns filtering/grouping/freshness/editor-link helpers.
 - `TimelineScrubber.tsx` (+ `timelineRange`/`useTimelineScrubberDrag`/`timelineDiff`/
   `timelineReset`) — git timeline scrubber UI + range math. `timelineDiff`'s
   `buildGhostGraphData` uses **`GitHistoryResult.deletedPaths`**, the backend's
@@ -124,8 +141,9 @@ label physics in `labelPhysics/CLAUDE.md`.
 - `securityOverlay` — pure per-file OpenGrep recolor preserving language shapes;
   path lookup normalizes Windows casing/separators. ERROR red, WARNING yellow,
   INFO blue, completely visited files with no shown findings green, unscanned
-  or incomplete gray. `useSecurityOverlay` starts scans only from the Security
-  chip; no automatic refresh scans. Security keeps config files visible even
+  incomplete or stale gray. `useSecurityOverlay` starts scans only from explicit
+  chip/panel scan actions; idle toggles restore saved results and background
+  reads check freshness without scans. Security keeps config files visible even
   when their extensions are on the health/LOC metrics-ignore list.
 - `measuredLabelTexture.ts` — lazy shared measuring context + fresh rasterized
   textures. `labelTexture.ts` owns cache keying, refcounts, free-entry eviction

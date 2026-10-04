@@ -112,6 +112,7 @@ const REFUSED_WHILE_DRAINING = [
   '/api/tasks/:id/resume',
   '/api/push-runs',
   '/api/qa-runs',
+  '/api/opengrep/reviews',
 ];
 
 export function buildRestartDrainAdmissionGate(): Router {

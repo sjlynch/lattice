@@ -55,6 +55,47 @@ the full stop that ends every agent.
 Ports are offset +10 from the typical Vite default (5173) to avoid collisions
 with other local dev servers.
 
+## Security findings in the graph
+
+Install Opengrep and a rule pack in Settings → Tools, then click the graph's
+Security chip to scan. Hover a file for a preview; click it for that file's
+findings, or click the findings count to browse all results. The panel supports
+search, severity/category filters, file/rule grouping, snippets, references,
+VS Code line links and highlighting a file in the graph. **View findings** opens
+a resizable/maximizable window with continuously scrolling rows and a detail
+pane. Its Open/Ignored/Deferred filter keeps triage separate from severity;
+the Settings severity floor applies until you opt into lower-severity findings.
+
+**Review with agent** uses Claude, Codex or Pi for all open, filtered or selected
+findings. Reviews produce structured Fix/Suppress/Defer/Needs review advice,
+with evidence, confidence, proposed changes, validation plans and assumptions.
+Review-only briefs prohibit project edits; Codex additionally uses a scratch
+workspace sandbox. Reports persist across reloads/restarts. Changes to reviewed
+files, referenced context or scan configuration make recommendations stale.
+**Preview selected** shows exactly what applying them will do. Fixes become
+grouped Open tasks in the normal worktree/review pipeline; suppressions are
+selected separately. Run, verify, merge and rescan through the normal workflow.
+
+Local ignores require a reason, preserve history and can be undone. Deferred
+risks also require an owner and a future review date; expired exceptions reopen.
+These dispositions affect Lattice's graph/digests, not CI. **Shared with
+repository / CI** creates a review task proposing a rule-specific `nosemgrep`
+comment and verifying CI uses compatible rule IDs and honors source
+suppressions (without `--disable-nosem`). It preserves other rule coverage.
+Native source suppressions and legacy Settings ignores remain identifiable in
+the viewer; remove them in source/Settings to reopen them. The engine may omit
+native suppressed findings entirely, so the Ignored filter is not an exhaustive
+inventory of every suppression in the repository.
+
+Saved results return after refresh. The chip toggles the saved view; its adjacent
+scan menu and the findings panel offer **Update changed files** and **Full scan**.
+Updates reuse unchanged files when their content and scan configuration match;
+the first update of an older scan establishes a full cache baseline. Freshness
+and coverage are shown separately, so unscanned, incomplete or stale files
+remain gray. During a scan the graph and previous results stay available;
+clicking the spinning chip cancels it. Refresh reconnects to the running scan
+and its estimated countdown.
+
 ## Build
 
 From the repository root (there is no root `npm run build` script):

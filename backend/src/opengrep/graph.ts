@@ -8,6 +8,7 @@ export type OpengrepGraphFile = {
   severity: OpengrepSeverity | null;
   findings: number;
   incomplete: boolean;
+  stale?: boolean;
 };
 
 export function buildOpengrepGraph(
@@ -16,6 +17,15 @@ export function buildOpengrepGraph(
   filter: DigestFilter,
 ) {
   const digest = buildDigest(parsed, filter);
+  const findingKey = (f: { fingerprint: string; path: string; line: number; severity: string }) => `${f.fingerprint}\0${f.path}\0${f.line}\0${f.severity}`;
+  const included = new Set(digest.groups.flatMap((group) => group.files.flatMap((file) => file.occurrences.map((o) => findingKey({ ...o, path: file.path })))));
+  const seen = new Set<string>();
+  const findings = parsed.findings.filter((finding) => {
+    if (!included.has(findingKey(finding)) || seen.has(finding.fingerprint)) return false;
+    seen.add(finding.fingerprint); return true;
+  });
+  const allFindings = new Map([...parsed.findings].reverse().map((f) => [f.fingerprint, f]));
+  for (const f of findings) allFindings.set(f.fingerprint, f);
   const pathKey = (p: string) => process.platform === 'win32' ? p.toLowerCase() : p;
   const uncertainPaths = [
     ...parsed.partiallyParsed,
@@ -63,5 +73,12 @@ export function buildOpengrepGraph(
     errors: parsed.errors.length,
     partiallyParsed: parsed.partiallyParsed.length,
     skippedRules: parsed.skippedRules,
+    findings,
+    allFindings: [...allFindings.values()],
+    bySeverity: digest.bySeverity,
+    total: digest.total,
+    dropped: digest.dropped,
+    filter,
+    caveats: { errors: parsed.errors, partiallyParsed: parsed.partiallyParsed },
   };
 }

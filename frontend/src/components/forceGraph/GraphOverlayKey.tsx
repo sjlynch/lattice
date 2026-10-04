@@ -2,6 +2,8 @@ import { memo, useEffect, useState } from 'react';
 import type { OverlayPinKey, OverlayPins } from './hooks/useOverlayPins';
 import type { SecurityOverlayControl } from './hooks/useSecurityOverlay';
 import { SECURITY_COLORS } from './securityOverlay';
+import { DEFAULT_SECURITY_FILTER, securityFreshnessLabel } from './securityFindings';
+import { RefreshCw } from 'lucide-react';
 
 type OverlayDef = {
   key: OverlayPinKey;
@@ -97,35 +99,58 @@ export const GraphOverlayKey = memo(function GraphOverlayKey({
           className={`graph-overlay-chip${security.active || security.scanning ? ' is-active is-pinned' : ''}`}
           aria-pressed={security.active || security.scanning}
           aria-busy={security.scanning}
-          disabled={security.cancelling}
+          disabled={security.cancelling || security.restoring && !security.result}
           title={security.cancelling ? 'Cancelling the security scan…' : security.scanning
             ? 'Scanning for security issues… Click to cancel the scan.' : security.active
-            ? 'Hide Security view. Turn it on again to run a fresh scan.'
-            : 'Scan this project with OpenGrep and color files by severity'}
+            ? 'Hide saved Security results.'
+            : security.result ? 'Show saved Security results.' : 'Scan this project with OpenGrep and color files by severity'}
           onClick={() => void security.onToggle()}
         >
-          {security.scanning && <span className="spinner graph-security-spinner" aria-hidden="true" />}
+          {(security.scanning || security.restoring && !security.result) && <span className="spinner graph-security-spinner" aria-hidden="true" />}
           <span className="graph-overlay-chip-label">Security</span>
           {security.cancelling && <span className="graph-overlay-chip-key">Cancelling…</span>}
           {security.scanning && !security.cancelling && security.startedAt !== null && (
             <SecurityScanEta startedAt={security.startedAt} durationMs={security.estimatedDurationMs} />
           )}
-          {security.active && security.result && (
-            <span className="graph-overlay-chip-key">{(security.result.scan.durationMs / 1000).toFixed(1)}s</span>
+          {!security.scanning && security.result && (
+            <span className="graph-overlay-chip-key">{security.result.shown}</span>
           )}
         </button>
       )}
+      {security.available && security.result && <details className="graph-security-scan-menu">
+        <summary className="graph-overlay-chip" aria-label="Security scan actions" title="Update results or run a full scan"><RefreshCw size={12} /></summary>
+        <div className="graph-security-scan-options">
+          <button disabled={security.scanning} onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); void security.onScan?.('incremental'); }}>Update changed files</button>
+          <button disabled={security.scanning} onClick={(e) => { e.currentTarget.closest('details')?.removeAttribute('open'); void security.onScan?.('full'); }}>Full scan</button>
+          <button onClick={() => security.onShowFindings?.()}>View findings</button>
+        </div>
+      </details>}
       {security.available && security.active && security.result && (
-        <div className="graph-security-legend" role="status" title="Uses the severity and ignore filters in Settings → Tools. Green means scanned with no findings after those filters.">
-          <span>{security.result.shown} findings</span>
-          <span style={{ color: SECURITY_COLORS.ERROR }}>ERROR</span>
-          <span style={{ color: SECURITY_COLORS.WARNING }}>WARNING</span>
-          <span style={{ color: SECURITY_COLORS.INFO }}>INFO</span>
+        <div className="graph-security-legend" title="Uses the severity and ignore filters in Settings → Tools. Green means scanned with no shown findings. Gray also includes outdated results.">
+          <button className="graph-security-results-link" onClick={() => security.onShowFindings?.()}>View findings ({security.result.shown})</button>
+          {(['ERROR', 'WARNING', 'INFO'] as const).map((severity) => <button key={severity} style={{ color: SECURITY_COLORS[severity] }}
+            aria-pressed={security.filter?.severity === severity}
+            onClick={() => security.onFilterChange?.({ ...(security.filter ?? DEFAULT_SECURITY_FILTER), severity: security.filter?.severity === severity ? 'all' : severity })}>
+            {severity} {security.result?.bySeverity?.[severity] ?? ''}
+          </button>)}
+          <select aria-label="Finding category" value={security.filter?.category ?? 'all'} onChange={(e) => security.onFilterChange?.({ ...(security.filter ?? DEFAULT_SECURITY_FILTER), category: e.target.value as 'all' | 'security' | 'quality' })}>
+            <option value="all">All findings</option><option value="security">Security</option><option value="quality">Code quality</option>
+          </select>
           <span style={{ color: SECURITY_COLORS.clear }}>No shown findings</span>
-          <span>Gray: unscanned / incomplete</span>
+          <span>Gray: unscanned / incomplete / stale</span>
+          <span className="graph-security-freshness" title={`Scanned ${new Date(security.result.scan.finishedAt).toLocaleString()} · ${(security.result.scan.durationMs / 1000).toFixed(1)}s`}>
+            {securityFreshnessLabel(security.result)} · <SecurityScanAge finishedAt={security.result.scan.finishedAt} />
+          </span>
         </div>
       )}
       {security.available && security.error && <span className="graph-security-message" role="alert">{security.error}</span>}
     </div>
   );
 });
+
+function SecurityScanAge({ finishedAt }: { finishedAt: number }) {
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 30_000); return () => clearInterval(timer); }, []);
+  const minutes = Math.max(0, Math.floor((now - finishedAt) / 60_000));
+  return <span>{minutes < 1 ? 'scanned just now' : minutes < 60 ? `scanned ${minutes}m ago` : minutes < 1440 ? `scanned ${Math.floor(minutes / 60)}h ago` : `scanned ${Math.floor(minutes / 1440)}d ago`}</span>;
+}

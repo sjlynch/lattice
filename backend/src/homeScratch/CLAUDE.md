@@ -1,12 +1,13 @@
 # backend/src/homeScratch
 
 The **canonical home-scoped-scratch contract** shared by the one-off
-agent run-types — `pushRuns/`, `qaRuns/`, and `postMergeHooks/`. Each of those
+agent run-types — `pushRuns/`, `qaRuns/`, `postMergeHooks/`, and security reviews.
+Each of those
 spawns a throwaway Claude/Pi session in a per-run scratch dir under
 `~/.lattice/per-project/<hash>/<dir>/<id>/` (OUTSIDE the repo on purpose), and
 each used to carry its own near-identical copy of the path-safety guard, the
 session-setup lifecycle, and the bounded recursive cleanup. This module is the
-single source of truth for all three.
+single source of truth for their path safety, setup and cleanup.
 
 ## Files
 
@@ -115,8 +116,15 @@ its methods under the legacy names, so all existing import paths keep working:
 | pushRuns       | `push`              | `push`   | `[pushRuns]`         | `push session` |
 | qaRuns         | `qa`                | `qa`     | `[qaRuns]`           | `qa session`   |
 | postMergeHooks | `post-merge-hooks`  | `pmh`    | `[post-merge-hook]`  | `hook`         |
+| opengrep review | `security-reviews` | `sreview` | `[security-review]` | `security review` |
 
-## Adding a fourth run-type
+Security review uses `startHomeScratchAgentSession` directly and the
+`security-review` terminal owner. Its strict, versioned `opengrep-reviews.json`
+retains completed reports too; callbacks read durable ownership directly.
+`opengrep/reviewRecovery.ts` provides presence recovery, liveness checking and
+the shared orphan sweep. See [../opengrep/CLAUDE.md](../opengrep/CLAUDE.md).
+
+## Adding a run-type
 
 Call `createHomeScratchPaths(...)` in a feature `paths.ts`, drive setup/spawn
 through `startHomeScratchAgentSession` (or `setupHomeScratchSession` if you need

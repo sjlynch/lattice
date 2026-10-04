@@ -18,6 +18,20 @@ Commands from `frontend/` (reference only): `npm test` (tests), `npx tsc -b`
 
 Selected suites and the contracts they own (not exhaustive):
 
+- `securityTriageViewer.test.ts` — combined status/category/severity/search
+  matching, severity floor visibility and virtual list boundaries.
+- `securityReviewController.test.ts` — real review hook mutation ownership:
+  duplicate start prevention, concurrent cancellation, busy counting and
+  project epoch fences that discard late results.
+
+- `securityOverlay.test.ts` — explicit scans, refresh reconnection/ETA, exact-id
+  cancellation, retained saved findings, scan-free toggling, project fences and
+  graph visibility. `securityFindings.test.ts` pins filtering without lost
+  coverage, grouping order, stale colors and encoded editor links.
+- `canvasDragTracking.test.ts` — stationary clicks retain the library's picked
+  node; actual drags suspend raycasts and release on cancel/unmount. Complements
+  `pointerLeaveTooltipDismiss.test.ts` for off-canvas hover suppression.
+
 - `terminalCloseRecovery.test.ts` / `terminalCleanupAtomic.test.ts` — registered
   close confirmation, retained PTY ownership on failure, explicit retry, and
   functional bulk removals. Render the provider with the real task-cleanup hook
