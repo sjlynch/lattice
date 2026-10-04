@@ -14,7 +14,6 @@ test('finding filters combine severity, category, search, file scope and disposi
   assert.equal(matchesSecurityFinding(ignored, DEFAULT_SECURITY_FILTER, '', 'open'), false);
   assert.equal(matchesSecurityFinding(ignored, DEFAULT_SECURITY_FILTER, '', 'ignored'), true);
   assert.equal(matchesSecurityFinding(ignored, DEFAULT_SECURITY_FILTER, '', 'all'), true);
-  assert.equal(matchesSecurityFinding(f, DEFAULT_SECURITY_FILTER, 'defer', 'open', null, 'defer'), true);
   assert.equal(passesSecurityFloor({ ...f, severity: 'INFO' }, 'WARNING'), false);
   assert.equal(passesSecurityFloor(f, 'WARNING'), true);
 });

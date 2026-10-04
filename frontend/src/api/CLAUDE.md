@@ -7,10 +7,10 @@ Backend bindings, grouped by domain. `import { ... } from '../api'` resolves to 
 - `types/` — domain-split shared API types (scan/health, settings, tasks, workflows, runs, git history, git setup). `types.ts` is a compatibility re-export shim.
 - `types/opengrep.ts` — Opengrep job, status, scan, and graph payload types; re-exported by `types/index.ts` and `opengrep.ts`.
   Includes the complete raw finding inventory, disposition scopes, durable
-  security reviews, recommendations and selected-application preview types.
-- `opengrepReview.ts` — review list/start/cancel, selected action preview/apply,
+  security review session metadata (conversation advice stays in the harness).
+- `opengrepReview.ts` — review session list/start/end,
   local triage/history and shared suppression task requests. Reads accept abort
-  signals; no automatic review or recommendation application.
+  signals; no automatic review or recommendation report storage/application.
 - `http.ts` — `asJson<T>(r)` extracts `{error, code, detail}` from non-2xx responses so toasts get real messages, throwing a status-bearing `HttpError` (callers branch on `.status`, e.g. the workflow queue treating 409 as retry-able, or the Git Setup dialog treating 422 as "git doesn't know who you are"). `.detail` carries verbatim tool output the backend forwarded (git's stderr) — it must survive rather than being flattened into `.message`, because it is often the only place the fix is spelled out. `postJson`/`patchJson`/`deleteJson` centralize JSON request formation.
 - `ws.ts` — compatibility exports for every WS function, type, and timing constant. Every domain WS subscriber builds on `subscribeWs` or `subscribeWsShared` through this facade; internal imports flow from shared channels → transport → connection health, never back to the facade.
 - `wsTransport.ts` — `subscribeWs<T>(pathWithQuery, onMessage, onDisconnect?)` owns each socket's reconnect and stability timers (exponential backoff cap 5 s; resets only after `WS_STABLE_MS`). Disconnect callbacks fire before scheduling a retry; close and teardown clear stability timers, and teardown cancels pending retries. Malformed frames are dropped silently; consumer failures log `console.error('[ws] handler failed', path, err)` without closing the socket.

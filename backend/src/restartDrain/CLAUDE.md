@@ -62,7 +62,7 @@ answers `ready:false`. Current sites:
   created → registry record written).
 - `opengrep/reviewSession.ts` — review setup/admission through the durable PTY
   ownership update, with a `finally` release on failure and queued cancellation.
-  `POST /api/opengrep/reviews` is also a top-level admission-gated start; report
+  `POST /api/opengrep/reviews` is also a top-level admission-gated start; turn
   callbacks, reads and cancellations remain available during drain.
 
 A transition that legitimately runs long (an advance whose next step runs an

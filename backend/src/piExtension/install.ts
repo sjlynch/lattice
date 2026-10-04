@@ -30,6 +30,7 @@ export async function installPiCompletionExtension(args: {
   callbackUrl: string;
   site: PiExtensionSite;
   respectQuitGate: boolean;
+  eventName?: 'session_shutdown' | 'agent_settled';
   promptFile?: string;
 }): Promise<{ extensionFile: string; sentinelFile: string }> {
   const extDir = path.join(args.dir, '.pi', 'extensions');
@@ -40,6 +41,7 @@ export async function installPiCompletionExtension(args: {
     callbackUrl: args.callbackUrl,
     site: args.site,
     respectQuitGate: args.respectQuitGate,
+    eventName: args.eventName,
     promptFile: args.promptFile,
     extensionFile,
     sentinelFile,

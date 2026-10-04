@@ -60,9 +60,6 @@
 .security-below-floor input { flex-basis: auto; accent-color: var(--accent); }
 .security-panel-footer .security-scan-caveats { padding: 2px 0; }
 .security-panel-feedback { padding: 8px 16px; color: var(--accent); }
-.security-panel-tabs { display: flex; gap: 6px; padding: 0 16px 8px; }
-.security-panel-tabs button { padding: 6px 10px; border: 1px solid var(--border); border-radius: 5px; color: var(--text-secondary); background: transparent; cursor: pointer; }
-.security-panel-tabs button[aria-selected="true"] { color: var(--accent); border-color: var(--accent); background: var(--bg-hover); }
 .security-panel-content { flex: 1; display: flex; min-height: 120px; overflow: hidden; }
 .security-finding-list { flex: 1; min-width: 0; overflow-y: auto; overscroll-behavior: contain; }
 .security-finding-list .security-panel-empty { padding: 8px 16px; }
@@ -85,8 +82,7 @@
 .security-detail-pane small { color: var(--text-tertiary); }
 .security-detail-pane pre { margin: 0; padding: 10px; background: #0003; border-radius: 5px; overflow-x: auto; font-size: 11px; min-height: 40px; flex-shrink: 0; }
 .security-detail-actions { padding: 0; }
-.security-disposition, .security-recommendation-detail { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
-.security-recommendation-detail ul { padding-left: 18px; margin: 6px 0; line-height: 1.5; }
+.security-disposition { display: flex; flex-direction: column; gap: 8px; padding: 10px; border: 1px solid var(--border); border-radius: 6px; }
 .security-triage-form { display: flex; flex-direction: column; gap: 10px; padding: 12px; border: 1px solid var(--border); border-radius: 6px; }
 .security-triage-form label { display: flex; flex-direction: column; gap: 5px; }
 .security-triage-form textarea { min-height: 70px; resize: vertical; }
@@ -95,7 +91,7 @@
 .security-triage-history p { margin: 10px 0; }
 .security-review-controls { padding: 0 16px 10px; flex-shrink: 0; }
 .security-review-launch { position: relative; }
-.security-review-config, .security-review-bulk { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
+.security-review-config { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; }
 .security-review-config label { flex: 1; min-width: 130px; }
 .security-review-launch-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto auto; }
 .security-review-launch-row label { min-width: 0; }
@@ -110,17 +106,12 @@
 .security-review-controls button { display: inline-flex; gap: 5px; align-items: center; }
 .security-review-controls button:disabled, .security-triage-form button:disabled { opacity: .5; cursor: default; }
 .security-review-controls select, .security-review-controls input, .security-triage-form input, .security-triage-form select, .security-triage-form textarea { background: var(--bg-panel); color: var(--text-primary); border: 1px solid var(--border); padding: 6px; border-radius: 4px; font: inherit; min-width: 0; }
-.security-review-report-header { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; max-height: 180px; overflow-y: auto; }
-.security-review-report-header small, .security-review-launch small { color: var(--text-tertiary); }
-.security-apply-preview { position: absolute; inset: 12px; z-index: 5; display: flex; flex-direction: column; gap: 10px; background: var(--bg-panel); border: 1px solid var(--accent); border-radius: 8px; padding: 18px; box-shadow: 0 0 0 12px #0009; }
-.security-apply-preview p { margin: 0; line-height: 1.5; }
-.security-apply-preview > div:last-child { display: flex; gap: 8px; }
-.security-apply-tasks { flex: 1; min-height: 0; overflow: auto; }
-.security-apply-tasks details { border: 1px solid var(--border); border-radius: 4px; padding: 10px; margin-bottom: 8px; }
-.security-apply-tasks summary { cursor: pointer; }
-.security-apply-tasks pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; line-height: 1.6; }
 @container (max-width: 620px) {
   .security-panel-content.has-detail { flex-direction: column; }
   .has-detail .security-finding-list { flex: 1; min-height: 100px; }
   .security-detail-pane { width: 100%; min-width: 0; max-height: 55%; border-left: 0; border-top: 1px solid var(--border); flex: 1; }
 }
+.security-review-session { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding-top: 10px; }
+.security-review-session [role="status"] { display: inline-flex; gap: 6px; align-items: center; flex: 1; min-width: 150px; color: var(--text-secondary); }
+.security-review-session p { margin: 0; }
+.security-review-launch small { color: var(--text-tertiary); }

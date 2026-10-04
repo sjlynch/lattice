@@ -76,13 +76,15 @@ label physics in `labelPhysics/CLAUDE.md`.
   included explicitly. `SecurityFindingDetail` owns snippets/references, editor
   links, graph focus and reasoned local ignore/defer/reopen history.
   `SecurityReviewControls` selects Claude/Codex/Pi and all/filtered/selected open
-  findings, restores durable review reports, and previews selected actions.
-  Harness/scope/start-or-cancel controls are always visible in one compact row;
-  the existing `SettingsInfo` popover holds explanatory copy. A stale scan shows
-  an actionable update hint and the disabled start button exposes its reason.
-  Fixes and shared suppressions create normal Open tasks; local dispositions
-  take effect after explicit application. Stale/applied/uncertain recommendations
-  cannot be selected. No automatic fix, suppression, scan or harness launch.
+  findings and launches an interactive harness conversation. Selecting findings
+  automatically chooses Selected open and the start button states the count.
+  Harness/scope/start-or-end controls stay in one compact row; `SettingsInfo`
+  explains the flow. Status distinguishes running and awaiting-decision, with
+  Open/Restore console returning to the conversation and closing the panel so
+  the console is visible. A stale scan shows an actionable update hint.
+  Recommendations remain in the harness conversation; no report tabs, action
+  selection or Apply UI. The brief waits for the user's choice before creating
+  agreed Open tasks, with no automatic fix, suppression, scan or task launch.
   `securityFindings.ts` owns filtering/grouping/freshness/editor-link helpers.
 - `TimelineScrubber.tsx` (+ `timelineRange`/`useTimelineScrubberDrag`/`timelineDiff`/
   `timelineReset`) — git timeline scrubber UI + range math. `timelineDiff`'s

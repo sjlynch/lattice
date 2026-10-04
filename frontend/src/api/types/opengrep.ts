@@ -133,22 +133,10 @@ export type FindingDisposition = {
   status: 'open' | 'ignored' | 'deferred'; scope: 'local' | 'settings' | 'source';
   reason: string; updatedAt: number; owner?: string; reviewAt?: string; expired?: boolean;
 };
-export type SecurityRecommendation = {
-  findingId: string; action: 'fix' | 'suppress' | 'defer' | 'needs-review';
-  confidence: 'high' | 'medium' | 'low'; rationale: string; evidence: string;
-  proposedChange: string; checks: string[]; assumptions: string[]; contextFiles: string[];
-  group: string; owner?: string; reviewAt?: string; stale?: boolean;
-  applied?: { at: number; taskId?: string; action: string };
-};
 export type SecurityReview = {
   id: string; project: string; scanId: string; harness: 'claude' | 'codex' | 'pi'; piModel?: string;
-  status: 'running' | 'done' | 'failed' | 'cancelled'; createdAt: number; finishedAt?: number;
-  error?: string; serverId?: string; terminalId?: string; findings: OpengrepFinding[];
-  recommendations: SecurityRecommendation[];
-};
-export type RecommendationSelection = { findingId: string; scope?: 'local' | 'shared'; owner?: string; reviewAt?: string };
-export type SecurityApplyPreview = {
-  counts: { fixes: number; sharedIgnores: number; localIgnores: number; deferred: number };
-  tasks: { title: string; description: string; kind: 'fix' | 'shared-ignore' }[];
-  taskIds: string[];
+  status: 'running' | 'awaiting-decision' | 'closed' | 'failed' | 'cancelled';
+  createdAt: number; updatedAt: number; lastTurnAt?: number; finishedAt?: number; findingCount: number;
+  error?: string; serverId?: string; terminalId?: string;
+  consoleAvailable?: boolean; restoring?: boolean; needsRestore?: boolean;
 };

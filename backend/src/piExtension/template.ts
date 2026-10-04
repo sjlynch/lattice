@@ -218,11 +218,14 @@ export function renderExtensionSource(opts: {
   promptFileLiteral: string;
   site: string;
   respectQuitGate: boolean;
+  eventName?: 'session_shutdown' | 'agent_settled';
 }): string {
   const { urlWithSource, sentinelFile, outboxFile, promptFileLiteral, site, respectQuitGate } =
     opts;
   const sections = [
-    renderHeaderComment({ site, respectQuitGate }),
+    opts.eventName === 'agent_settled'
+      ? renderHeaderComment({ site, respectQuitGate }).replace('when the Pi session exits.', 'when the Pi turn settles.')
+      : renderHeaderComment({ site, respectQuitGate }),
     'import fs from "node:fs";\nimport path from "node:path";',
     buildExtensionConstants({
       urlWithSource,
@@ -233,7 +236,12 @@ export function renderExtensionSource(opts: {
       respectQuitGate,
     }),
     EXTENSION_HELPERS,
-    EXTENSION_DEFAULT_HANDLER,
+    opts.eventName === 'agent_settled'
+      ? EXTENSION_DEFAULT_HANDLER.replace('pi.on("session_shutdown", async (event) => {',
+          'pi.on("agent_settled", async (event, ctx) => {\n' +
+          '    const sm = ctx && ctx.sessionManager;\n' +
+          '    if (sm && typeof sm.getSessionFile === "function" && !sm.getSessionFile()) return;')
+      : EXTENSION_DEFAULT_HANDLER,
   ];
   return `${sections.join('\n\n')}\n`;
 }

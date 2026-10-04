@@ -1,5 +1,5 @@
 import { asJson, postJson } from './http';
-import type { FindingDisposition, RecommendationSelection, SecurityApplyPreview, SecurityReview } from './types/opengrep';
+import type { FindingDisposition, SecurityReview } from './types/opengrep';
 export async function fetchSecurityReviews(project: string, signal?: AbortSignal) {
   return asJson<SecurityReview[]>(await fetch(`/api/opengrep/reviews?${new URLSearchParams({ project })}`, { signal }));
 }
@@ -8,9 +8,6 @@ export function startSecurityReview(project: string, scanId: string, findingIds:
 }
 export function cancelSecurityReview(project: string, id: string) {
   return postJson<{ cancelled: boolean }>(`/api/opengrep/reviews/${encodeURIComponent(id)}/cancel`, { project });
-}
-export function applySecurityRecommendations(project: string, id: string, selections: RecommendationSelection[], preview: boolean) {
-  return postJson<SecurityApplyPreview>(`/api/opengrep/reviews/${encodeURIComponent(id)}/apply`, { project, selections, preview });
 }
 export function triageSecurityFinding(project: string, scanId: string, findingId: string, input: Partial<FindingDisposition>) {
   return postJson<FindingDisposition>('/api/opengrep/triage', { project, scanId, findingId, ...input });

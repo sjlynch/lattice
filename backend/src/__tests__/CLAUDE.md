@@ -44,8 +44,8 @@ importing them by relative path.
   loads to hang on its own thread (worker-timeout tests).
 - `fixtures/opengrep-scan.json` — recorded engine output for the Opengrep digest/scan tests.
 - `opengrepTriageReview` — native/local/Settings dispositions, expiry and corrupt
-  store protection; agent report validation and stale-input fences; selected
-  preview/application idempotency; durable completion, route scope validation
+  store protection; metadata-only review persistence, per-turn completion without
+  cleanup/board writes, waiting conversation recovery, route scope validation
   and queued cancellation. All HOME writes and task fixtures are isolated;
   injected launch/cleanup seams never run a coding harness or live board action.
 - `opengrepCache` — incremental replacement/reuse of findings and clean coverage,

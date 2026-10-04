@@ -7,13 +7,16 @@ import type { AddressInfo } from 'node:net';
 import { withTempDir } from './helpers/tempDir.js';
 import { parseOpengrepJson, buildDigest, type DigestFilter } from '../opengrep/digest.js';
 import { effectiveDisposition, readTriage, setFindingDisposition, triageFile, validateDisposition, withFindingTriage } from '../opengrep/triage.js';
-import { publicReview, readReviewStore, recommendationIsStale, updateReviewStore, validateRecommendations, type ReviewRun } from '../opengrep/reviewStore.js';
-import { applyRecommendations, cancelSecurityReview, planRecommendations } from '../opengrep/review.js';
+import { isActiveReview, readReviewStore, reviewStoreFile, updateReviewStore, type ReviewRun } from '../opengrep/reviewStore.js';
+import { cancelSecurityReview, listSecurityReviews } from '../opengrep/review.js';
 import { finishReview, reviewPaths, startReviewSession } from '../opengrep/reviewSession.js';
 import { listTasks } from '../tasks.js';
 import { projectScansDir } from '../opengrep/paths.js';
 import { buildOpengrepReviewRouter } from '../routes/opengrepReview.js';
 import { homeProjectDir } from '../projectPath.js';
+import { reconcileSecurityReviews } from '../opengrep/reviewRecovery.js';
+import { terminalRegistry } from '../terminalRegistry/store.js';
+import type { TerminalRecord } from '../terminalRegistry/types.js';
 import { pendingRestartTransitions } from '../restartDrain/gate.js';
 
 const filter: DigestFilter = { severityFloor: 'INFO', ignoreRuleIds: [], ignoreFingerprints: [] };
@@ -23,15 +26,10 @@ const raw = { results: [
   { check_id: 'security.native', path: 'src/c.ts', start: { line: 1 }, extra: { fingerprint: 'native', severity: 'ERROR', is_ignored: true } },
 ] };
 function fixture(project = path.resolve('review-fixture')): ReviewRun {
-  const findings = parseOpengrepJson(raw, project).findings;
-  const run: ReviewRun = { id: 'sreview_100_abcd', project, scanId: 'og_triage_test', targets: [project], harness: 'claude', status: 'done', createdAt: 100, findings,
-    inputs: { configuration: 'rules', files: { 'src/a.ts': 'a', 'src/b.ts': 'b', 'src/c.ts': 'c', 'src/helper.ts': 'h' } }, recommendations: [] };
-  run.recommendations = validateRecommendations({ recommendations: [
-    { findingId: 'one', action: 'fix', confidence: 'high', rationale: 'User input reaches eval', evidence: 'src/a.ts:2', proposedChange: 'Use a whitelist parser', checks: ['Reject injected expressions'], contextFiles: ['src/helper.ts'], group: 'Input validation' },
-    { findingId: 'two', action: 'suppress', confidence: 'medium', rationale: 'The call is a mock fixture', evidence: 'src/b.ts:1 is test data', proposedChange: 'Rule-specific comment', checks: [], contextFiles: [], group: 'Fixture' },
-  ] }, run);
-  return run;
+  return { id: 'sreview_100_abcd', project, scanId: 'og_triage_test', harness: 'claude',
+    status: 'running', createdAt: 100, updatedAt: 100, findingCount: 2 };
 }
+
 test('native ignores and durable local dispositions stay inspectable, expire and undo', async () => withTempDir('lattice-triage-', async (project) => {
   const parsed = parseOpengrepJson(raw, project);
   assert.equal(parsed.findings[2].nativeIgnored, true);
@@ -63,66 +61,119 @@ test('legacy Settings ignores are identified without changing native CI behavior
   assert.equal(parsed.findings[0].triage?.status, 'ignored');
   assert.equal(buildDigest(parsed, { ...filter, ignoreRuleIds: ['eval'] }).shown, 1);
 }));
-test('review schema rejects unknown/duplicate findings and unsupported context; omissions need review', () => {
-  const run = fixture();
-  assert.equal(run.recommendations[2].action, 'needs-review');
-  for (const patch of [{ findingId: 'invented' }, { action: 'ignore-all' }, { evidence: '' }, { contextFiles: ['../private'] }, { checks: [] }]) {
-    assert.throws(() => validateRecommendations({ recommendations: [{ ...run.recommendations[0], ...patch }] }, run));
-  }
-  assert.throws(() => validateRecommendations({ recommendations: [run.recommendations[0], run.recommendations[0]] }, run), /duplicate/);
-  assert.equal(recommendationIsStale(run.recommendations[0], run, run.inputs), false);
-  assert.equal(recommendationIsStale(run.recommendations[0], run, { ...run.inputs, files: { ...run.inputs.files, 'src/helper.ts': 'changed' } }), true);
-  assert.equal(recommendationIsStale(run.recommendations[0], run, { ...run.inputs, configuration: 'new-rules' }), true);
-  assert.equal(recommendationIsStale(run.recommendations[0], run, null), true);
-  assert.ok(!('inputs' in publicReview(run, run.inputs)), 'do not send the input inventory to the browser');
-});
-test('application preview groups fixes, distinguishes shared/local ignores and requires risk ownership', () => {
-  const run = fixture();
-  let plan = planRecommendations(run, [{ findingId: 'one' }, { findingId: 'two', scope: 'shared' }], run.inputs);
-  assert.deepEqual(plan.counts, { fixes: 1, sharedIgnores: 1, localIgnores: 0, deferred: 0 });
-  assert.match(plan.tasks[1].description, /nosemgrep: <exact-rule-id>/);
-  assert.match(plan.tasks[1].description, /no --disable-nosem/);
-  plan = planRecommendations(run, [{ findingId: 'two', scope: 'local' }], run.inputs);
-  assert.equal(plan.local[0].disposition.status, 'ignored');
-  assert.throws(() => planRecommendations(run, [{ findingId: 'native' }], run.inputs), /human review/);
-  assert.throws(() => planRecommendations(run, [{ findingId: 'one' }], { ...run.inputs, configuration: 'changed' }), /changed/);
-  run.recommendations[1].action = 'defer';
-  assert.throws(() => planRecommendations(run, [{ findingId: 'two' }], run.inputs), /owner/);
-  assert.equal(planRecommendations(run, [{ findingId: 'two', owner: 'Security', reviewAt: '2099-01-01' }], run.inputs).counts.deferred, 1);
-});
-test('selected application is durable and double clicks cannot duplicate tasks or ignores', async () => withTempDir('lattice-review-apply-', async (project) => {
-  const run = fixture(project);
-  await updateReviewStore(project, (s) => { s.runs.push(run); });
-  const selections = [{ findingId: 'one' }, { findingId: 'two', scope: 'local' as const }];
-  const deps = { inputs: async () => run.inputs };
-  const preview = await applyRecommendations(project, run.id, selections, true, deps);
-  assert.equal(preview.tasks.length, 1);
-  assert.equal((await listTasks(project)).length, 0, 'preview must have no side effects');
-  await Promise.all([applyRecommendations(project, run.id, selections, false, deps), applyRecommendations(project, run.id, selections, false, deps)]);
-  assert.equal((await listTasks(project)).length, 1);
-  assert.equal((await readTriage(project)).history.length, 1);
-  const persisted = (await readReviewStore(project)).runs[0];
-  assert.ok(persisted.recommendations[0].applied?.taskId);
-  assert.equal(persisted.recommendations[1].applied?.action, 'ignored');
-  assert.equal(persisted.recommendations[2].applied, undefined, 'unselected/uncertain findings are untouched');
+test('review storage keeps metadata only, protects legacy/corrupt data and never evicts waiting conversations', async () => withTempDir('lattice-review-store-', async (project) => {
+  const legacy = path.join(homeProjectDir(project), 'opengrep-reviews.json');
+  await fs.mkdir(path.dirname(legacy), { recursive: true });
+  await fs.writeFile(legacy, '{"oldReport":"keep"}');
+  assert.deepEqual((await readReviewStore(project)).runs, []);
+  await updateReviewStore(project, (store) => {
+    store.runs.push({ ...fixture(project), status: 'awaiting-decision', recommendations: ['must not persist'], findings: ['must not persist'], inputs: {} } as ReviewRun);
+    for (let i = 0; i < 25; i++) store.runs.push({ ...fixture(project), id: `sreview_${i + 200}_ab`, createdAt: i + 200, status: 'closed' });
+  });
+  const state = await readReviewStore(project);
+  assert.equal(state.runs.length, 21);
+  assert.equal(state.runs.filter(isActiveReview).length, 1);
+  const text = await fs.readFile(reviewStoreFile(project), 'utf8');
+  assert.doesNotMatch(text, /recommendations|findings|inputs/);
+  assert.equal(await fs.readFile(legacy, 'utf8'), '{"oldReport":"keep"}');
+  assert.equal((await listSecurityReviews(project)).length, 21);
+  await fs.writeFile(reviewStoreFile(project), '{broken');
+  await assert.rejects(updateReviewStore(project, (store) => { store.runs.length = 0; }));
+  assert.equal(await fs.readFile(reviewStoreFile(project), 'utf8'), '{broken');
 }));
-test('completion collects a validated report after restart, is idempotent and guards scratch paths', async () => withTempDir('lattice-review-done-', async (project) => {
-  const run = fixture(project); run.status = 'running'; run.id = reviewPaths.createSessionId();
+
+test('turn completion keeps the conversation and creates no report, tasks or dispositions; late callbacks cannot revive cancellation', async () => withTempDir('lattice-review-turn-', async (project) => {
+  const run = fixture(project); run.id = reviewPaths.createSessionId();
   const cwd = reviewPaths.assertSafeSessionPath(project, run.id);
   assert.ok(!cwd.startsWith(project));
   assert.throws(() => reviewPaths.assertSafeSessionPath(project, '../project'), /id/i);
   await fs.mkdir(cwd, { recursive: true });
-  await fs.writeFile(path.join(cwd, 'recommendations.json'), JSON.stringify({ recommendations: run.recommendations.slice(0, 2) }));
-  await updateReviewStore(project, (s) => { s.runs.push(run); });
-  let cleanups = 0;
-  await finishReview(project, run.id, { cleanup: async () => { cleanups++; } });
-  await finishReview(project, run.id, { cleanup: async () => { cleanups++; } });
-  const saved = (await readReviewStore(project)).runs[0];
-  assert.equal(saved.status, 'done');
-  assert.equal(saved.recommendations.length, 3);
-  assert.ok(cleanups >= 1);
-  assert.ok(saved.finishedAt);
+  await fs.writeFile(path.join(cwd, 'findings.json'), JSON.stringify(raw));
+  await updateReviewStore(project, (store) => { store.runs.push(run); });
+  await finishReview(project, run.id);
+  await finishReview(project, run.id);
+  let saved = (await readReviewStore(project)).runs[0];
+  assert.equal(saved.status, 'awaiting-decision');
+  assert.ok(saved.lastTurnAt);
+  assert.equal(saved.finishedAt, undefined);
+  assert.equal((await fs.stat(cwd)).isDirectory(), true, 'Stop must not reclaim cwd or kill the PTY');
+  assert.equal((await listTasks(project)).length, 0);
+  assert.equal((await readTriage(project)).history.length, 0);
+  let cleaned = 0;
+  await cancelSecurityReview(project, run.id, { cleanup: async () => { cleaned++; } });
+  await finishReview(project, run.id);
+  saved = (await readReviewStore(project)).runs[0];
+  assert.equal(saved.status, 'cancelled');
+  assert.equal(cleaned, 1);
 }));
+
+test('an early Stop before launch bookkeeping retains its terminal and interactive brief', async () => withTempDir('lattice-review-early-stop-', async (project) => {
+  let cleaned = 0, brief = '';
+  const started = await startReviewSession({ project, scanId: 'og_triage_test', findings: parseOpengrepJson(raw, project).findings.slice(0, 1), harness: 'claude', backendOrigin: 'http://localhost:5184' }, {
+    cleanup: async () => { cleaned++; },
+    start: async (opts) => {
+      const id = opts.paths.createSessionId(), cwd = opts.paths.assertSafeSessionPath(project, id);
+      await fs.mkdir(cwd, { recursive: true });
+      assert.equal(opts.registryOwner, 'user', 'ordinary conversation restore must be allowed');
+      brief = await opts.renderInstructions({ id, cwd });
+      await opts.installHooks({ id, cwd });
+      const pi = await fs.readFile(path.join(cwd, '.pi/extensions/lattice-complete.ts'), 'utf8');
+      assert.match(pi, /pi.on\("agent_settled"/);
+      assert.doesNotMatch(pi, /pi.on\("session_shutdown"/);
+      await finishReview(project, id);
+      return { id, cwd, command: 'claude', serverId: 'fake-pty', terminalId: 'fake-tab' };
+    },
+  });
+  const run = (await readReviewStore(project)).runs[0];
+  assert.equal(run.status, 'awaiting-decision');
+  assert.equal(run.terminalId, started.terminalId);
+  assert.equal(cleaned, 0);
+  assert.match(brief, /Scope: EXACTLY the 1 findings/);
+  assert.match(brief, /STOP AND WAIT FOR AN EXPLICIT REPLY/);
+  assert.match(brief, /recommended\/default option is not authorization/);
+  assert.match(brief, /ordinary Open lane/);
+  assert.match(brief, /opengrep:<shortFingerprint>/);
+  assert.match(brief, /Never implement on main/);
+  assert.match(brief, /Do not create recommendations.json/);
+}));
+
+test('waiting reviews survive long absences, executor replacement and retryable restore failures; closed tabs are reclaimed', async () => withTempDir('lattice-review-recovery-', async (project) => {
+  const run = { ...fixture(project), status: 'awaiting-decision' as const, terminalId: 'fake-tab' };
+  await updateReviewStore(project, (store) => { store.runs.push(run); });
+  let now = 10 * 60 * 60_000, cleanups = 0;
+  let terminal: TerminalRecord | null = { id: 'fake-tab', projectPath: project, cwd: reviewPaths.assertSafeSessionPath(project, run.id),
+    label: 'Security review', owner: 'user', launch: {}, order: 0, createdAt: 100, updatedAt: 100 };
+  const deps = { now: () => now, registry: { get: async () => terminal }, cleanup: async () => { cleanups++; }, pending: () => false };
+  await reconcileSecurityReviews(project, new Set(), deps);
+  now += 3 * 60 * 60_000;
+  terminal.ended = { at: now, reason: 'restore-failed' };
+  await reconcileSecurityReviews(project, new Set(), deps);
+  assert.equal((await readReviewStore(project)).runs[0].status, 'awaiting-decision');
+  assert.equal(cleanups, 0);
+  terminal = null;
+  await reconcileSecurityReviews(project, null, deps);
+  await reconcileSecurityReviews(project, new Set(), deps);
+  now += 91_000;
+  await reconcileSecurityReviews(project, new Set(), deps);
+  assert.equal((await readReviewStore(project)).runs[0].status, 'closed');
+  assert.equal(cleanups, 1);
+}));
+
+test('review status uses current terminal identity and busy turns without exposing conversation content', async () => withTempDir('lattice-review-status-', async (project) => {
+  const run = { ...fixture(project), status: 'awaiting-decision' as const, lastTurnAt: 200 };
+  const tab = await terminalRegistry.create({ projectPath: project, cwd: reviewPaths.assertSafeSessionPath(project, run.id),
+    label: 'Security review', owner: 'user', launch: {}, serverId: 'restored-pty', lastBusy: { busy: true, at: 300 } });
+  run.terminalId = tab.id;
+  await updateReviewStore(project, (store) => { store.runs.push(run); });
+  const publicRun = (await listSecurityReviews(project))[0];
+  assert.equal(publicRun.status, 'running');
+  assert.equal(publicRun.serverId, 'restored-pty');
+  assert.equal('recommendations' in publicRun, false);
+  await terminalRegistry.update(tab.id, { lastBusy: { busy: false, at: 400 } }, project);
+  assert.equal((await listSecurityReviews(project))[0].status, 'awaiting-decision');
+  await terminalRegistry.remove(tab.id, project);
+}));
+
 test('triage HTTP routes validate project scope and keep a complete ignored inventory', async () => withTempDir('lattice-triage-route-', async (project) => {
   const dir = projectScansDir(project); await fs.mkdir(dir, { recursive: true });
   const id = 'og_triage_test';
@@ -148,7 +199,7 @@ test('a review waiting for spawn admission can be cancelled without leaving a te
   let ready!: (id: string) => void;
   const materialized = new Promise<string>((resolve) => { ready = resolve; });
   let command = '', brief = '', cleanups = 0;
-  const started = startReviewSession({ project, scanId: run.scanId, targets: run.targets, findings: run.findings, inputs: run.inputs, harness: 'codex', backendOrigin: 'http://localhost:5184' }, {
+  const started = startReviewSession({ project, scanId: run.scanId, findings: parseOpengrepJson(raw, project).findings, harness: 'codex', backendOrigin: 'http://localhost:5184' }, {
     cleanup: async () => { cleanups++; },
     start: async (opts) => {
       const id = opts.paths.createSessionId(); const cwd = opts.paths.assertSafeSessionPath(project, id);
@@ -165,7 +216,8 @@ test('a review waiting for spawn admission can be cancelled without leaving a te
   assert.match(command, /--sandbox workspace-write --ask-for-approval never/);
   assert.doesNotMatch(command, /--yolo/);
   assert.match(brief, /Never edit, delete, commit, suppress or execute project code/);
-  assert.match(brief, /Pi must send this POST/);
+  assert.match(brief, /STOP AND WAIT FOR AN EXPLICIT REPLY/);
+  assert.match(command, /sandbox_workspace_write.network_access=true/);
   assert.deepEqual(await cancelSecurityReview(project, id, { cleanup: async () => { cleanups++; } }), { cancelled: true });
   await rejected;
   assert.equal((await readReviewStore(project)).runs[0].status, 'cancelled');

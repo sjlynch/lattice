@@ -2,7 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { readProjectParam, requireExistingProjectDir } from './projectParam.js';
 import { graphOfStoredScan } from '../opengrep/service.js';
 import { readTriage, setFindingDisposition } from '../opengrep/triage.js';
-import { applyRecommendations, cancelSecurityReview, createSharedIgnoreTask, listSecurityReviews, startSecurityReview } from '../opengrep/review.js';
+import { cancelSecurityReview, createSharedIgnoreTask, listSecurityReviews, startSecurityReview } from '../opengrep/review.js';
 import { finishReview } from '../opengrep/reviewSession.js';
 
 export function buildOpengrepReviewRouter(backendOrigin: string) {
@@ -31,6 +31,5 @@ export function buildOpengrepReviewRouter(backendOrigin: string) {
   r.post('/api/opengrep/reviews', handler((project, req) => startSecurityReview(project, req.body, backendOrigin), true));
   r.post('/api/opengrep/reviews/:id/done', handler(async (project, req) => { await finishReview(project, String(req.params.id)); return { ok: true }; }, true, true));
   r.post('/api/opengrep/reviews/:id/cancel', handler((project, req) => cancelSecurityReview(project, String(req.params.id)), true));
-  r.post('/api/opengrep/reviews/:id/apply', handler((project, req) => applyRecommendations(project, String(req.params.id), req.body.selections, req.body.preview !== false), true));
   return r;
 }

@@ -2,8 +2,9 @@
 
 Renders + installs Pi's `.pi/extensions/lattice-complete.ts` completion
 backstop — Pi's analogue of the Claude Stop hook. It POSTs `/complete` (or a
-site-specific callback) on `session_shutdown`, so a Pi session reports
-completion even if the model forgets to curl. `../piExtension.ts` is the stable
+site-specific callback) on `session_shutdown` by default, so a Pi session reports
+completion even if the model forgets to curl. Interactive callers may choose
+`eventName: 'agent_settled'` to report each completed turn without closing Pi. `../piExtension.ts` is the stable
 public facade; external consumers import from `'../piExtension.js'`. Internal
 modules import their implementation dependencies directly, never the facade.
 
@@ -12,8 +13,9 @@ workflow-step-complete, post-merge-hook-complete, and
 workflow-customization-complete, plus security-review-done
 (the `PiExtensionSite` union) — so all backstops
 share one hardening (retry loop + per-attempt timeout + sentinel audit log).
-Security review briefs explicitly POST their completed report before waiting
-for another user turn: ending a Pi turn does not trigger `session_shutdown`.
+Security reviews use `agent_settled` (after retries/compaction/queued messages),
+with no quit gate: the callback records awaiting-decision and preserves the
+conversation. All existing shutdown callers keep byte-identical output.
 
 ## Modules
 
@@ -23,7 +25,8 @@ for another user turn: ending a Pi turn does not trigger `session_shutdown`.
   path, and prompt-file literal, then calls `template.ts` without I/O.
 - `template.ts` — *how the extension text is assembled*, no I/O. The banner
   comment, the `const` block, the static helper fns, and the `session_shutdown`
-  handler, joined by `renderExtensionSource`. **The produced string is
+  handler (or its opt-in `agent_settled` variant), joined by `renderExtensionSource`.
+  **The produced string is
   byte-significant** (Pi loads it verbatim; the on-disk up-to-date check compares
   it character-for-character) — reorganize the assembly freely, but never change
   the output bytes. `appendSourceParam` tags the callback URL with `?source=` so

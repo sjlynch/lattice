@@ -11,12 +11,12 @@ export function passesSecurityFloor(f: OpengrepFinding, floor: OpengrepSeverity 
 export function isSecurityFinding(finding: OpengrepFinding): boolean {
   return finding.category === 'security' || finding.cwe.length > 0 || /(^|\.)security\./.test(finding.ruleId);
 }
-export function matchesSecurityFinding(f: OpengrepFinding, filter: SecurityFilter, query: string, status: 'all' | 'open' | 'ignored' | 'deferred', file?: string | null, recommendation = '') {
+export function matchesSecurityFinding(f: OpengrepFinding, filter: SecurityFilter, query: string, status: 'all' | 'open' | 'ignored' | 'deferred', file?: string | null) {
   return (!file || f.path === file) &&
     (status === 'all' || (f.triage?.status ?? 'open') === status) &&
     (filter.severity === 'all' || filter.severity === f.severity) &&
     (filter.category === 'all' || isSecurityFinding(f) === (filter.category === 'security')) &&
-    `${f.path} ${f.ruleId} ${f.message} ${f.cwe.join(' ')} ${recommendation}`.toLowerCase().includes(query.trim().toLowerCase());
+    `${f.path} ${f.ruleId} ${f.message} ${f.cwe.join(' ')}`.toLowerCase().includes(query.trim().toLowerCase());
 }
 export function filteredSecurityResult(result: OpengrepGraphResult, filter: SecurityFilter): OpengrepGraphResult {
   if (!result.findings) return result;

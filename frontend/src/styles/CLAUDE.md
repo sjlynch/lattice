@@ -28,8 +28,7 @@ ordered partial folder, each `@import`ed in its own cascade order:
   section/control/checkbox base is built on by the later tabs).
 - `graph.css` → `graph/` (`hud-search` — overlay/search/counts + loc-view chip;
   `overlay-key`; `security` — scan actions, findings panel and hover preview,
-  virtual rows, responsive detail pane, triage/review controls and selected
-  recommendation preview;
+  virtual rows, responsive detail pane, triage controls and interactive review launcher/session status;
   `context-menu` — box-select rect + selection chip + node menu;
   `settings-panel` — gear FAB + settings popover; `toast`; `renderer-notice` —
   `.graph-view-root` + `.graph-renderer-notice*`, the WebGL-renderer

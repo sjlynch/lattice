@@ -1,13 +1,13 @@
 import { useEffect, useState } from 'react';
 import { ExternalLink, MapPin, X } from 'lucide-react';
 import type { OpengrepFinding } from '../../api/opengrep';
-import type { FindingDisposition, SecurityRecommendation } from '../../api/types/opengrep';
+import type { FindingDisposition } from '../../api/types/opengrep';
 import { fetchSecurityTriageHistory, shareSecurityIgnore, triageSecurityFinding } from '../../api/opengrepReview';
 import { findingEditorUrl } from './securityFindings';
 import type { useSecurityFindings } from './hooks/useSecurityFindings';
 
-export function SecurityFindingDetail({ finding: f, project, scanId, recommendation: r, onFocusFile, onClose, controller, fresh }: {
-  finding: OpengrepFinding; project: string; scanId: string; recommendation?: SecurityRecommendation;
+export function SecurityFindingDetail({ finding: f, project, scanId, onFocusFile, onClose, controller, fresh }: {
+  finding: OpengrepFinding; project: string; scanId: string;
   onFocusFile: (path: string) => void; onClose: () => void; controller: ReturnType<typeof useSecurityFindings>; fresh: boolean;
 }) {
   const [mode, setMode] = useState<'ignored' | 'deferred' | null>(null);
@@ -44,15 +44,6 @@ export function SecurityFindingDetail({ finding: f, project, scanId, recommendat
     </div>
     {f.references.filter((url) => /^https?:\/\//i.test(url)).map((url) => <a className="security-finding-reference" key={url} href={url} target="_blank" rel="noreferrer">{url}</a>)}
     {f.triage?.reason && <div className="security-disposition"><strong>{f.triage.expired ? 'Exception expired · reopened' : `${f.triage.status} · ${f.triage.scope}`}</strong><p>{f.triage.reason}</p>{f.triage.owner && <small>Owner: {f.triage.owner}</small>}{f.triage.reviewAt && <small>Review: {new Date(f.triage.reviewAt).toLocaleDateString()}</small>}</div>}
-    {r && <section className="security-recommendation-detail">
-      <strong>Agent recommendation: {r.action} · {r.confidence} confidence</strong>
-      {r.stale && <p className="security-panel-notice">Code or rules changed since this review. Review again before applying.</p>}
-      <p>{r.rationale}</p><p><b>Evidence:</b> {r.evidence}</p>
-      {r.proposedChange && <p><b>Proposed change:</b> {r.proposedChange}</p>}
-      {!!r.checks.length && <div><b>Validation plan</b><ul>{r.checks.map((c, i) => <li key={i}>{c}</li>)}</ul></div>}
-      {!!r.assumptions.length && <div><b>Assumptions</b><ul>{r.assumptions.map((a, i) => <li key={i}>{a}</li>)}</ul></div>}
-      {r.applied && <small>Applied {new Date(r.applied.at).toLocaleString()}{r.applied.taskId ? ` · task ${r.applied.taskId}` : ''}</small>}
-    </section>}
     {f.triage?.scope && f.triage.scope !== 'local' ? <p className="security-panel-notice">Managed in {f.triage.scope === 'settings' ? 'Settings → Tools. Remove the matching rule/fingerprint ignore there to reopen.' : 'source. Remove the rule-specific suppression in code and rescan to reopen.'}</p> : <div className="security-panel-actions security-detail-actions">
       {(f.triage?.status ?? 'open') === 'open' ? <><button disabled={controller.busy} onClick={() => setMode('ignored')}>Ignore…</button><button disabled={controller.busy} onClick={() => setMode('deferred')}>Defer / accept risk…</button></> : <button disabled={controller.busy} onClick={() => void controller.act(() => triageSecurityFinding(project, scanId, f.fingerprint, { status: 'open', reason: 'Reopened by user' }), 'Finding reopened.')}>Undo / reopen</button>}
     </div>}

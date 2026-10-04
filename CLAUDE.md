@@ -436,11 +436,10 @@ through ordinary Open tasks):
 | GET | `/api/opengrep/triage?project=&findingId=` | Local disposition history (last 100) |
 | POST | `/api/opengrep/triage` | `{project, scanId, findingId, status, reason, owner?, reviewAt?}` local ignore/defer/reopen |
 | POST | `/api/opengrep/shared-ignore` | `{project, scanId, findingId, reason}` create a shared source/CI suppression review task |
-| GET | `/api/opengrep/reviews?project=` | Persistent reports and running reviews, with stale recommendation flags |
-| POST | `/api/opengrep/reviews` | `{project, scanId, findingIds, harness, piModel?}` start a review-only harness session |
-| POST | `/api/opengrep/reviews/:id/done?project=` | Collect and validate the scratch report; durable Stop-hook callback |
-| POST | `/api/opengrep/reviews/:id/cancel` | `{project}` cancel this review and reclaim its guarded scratch |
-| POST | `/api/opengrep/reviews/:id/apply` | `{project, selections, preview?}` preview (default) or explicitly apply selected recommendations |
+| GET | `/api/opengrep/reviews?project=` | Review session metadata and current console identity; no recommendation reports |
+| POST | `/api/opengrep/reviews` | `{project, scanId, findingIds, harness, piModel?}` start an interactive review of current open findings; harness waits for the user's choice |
+| POST | `/api/opengrep/reviews/:id/done?project=` | Mark a review turn awaiting decision; durable callback keeps the conversation open |
+| POST | `/api/opengrep/reviews/:id/cancel` | `{project}` end this conversation and reclaim guarded scratch; agreed tasks remain |
 
 ## Ports
 

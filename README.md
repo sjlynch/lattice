@@ -66,15 +66,22 @@ a resizable/maximizable window with continuously scrolling rows and a detail
 pane. Its Open/Ignored/Deferred filter keeps triage separate from severity;
 the Settings severity floor applies until you opt into lower-severity findings.
 
-**Review with agent** uses Claude, Codex or Pi for all open, filtered or selected
-findings. Reviews produce structured Fix/Suppress/Defer/Needs review advice,
-with evidence, confidence, proposed changes, validation plans and assumptions.
-Review-only briefs prohibit project edits; Codex additionally uses a scratch
-workspace sandbox. Reports persist across reloads/restarts. Changes to reviewed
-files, referenced context or scan configuration make recommendations stale.
-**Preview selected** shows exactly what applying them will do. Fixes become
-grouped Open tasks in the normal worktree/review pipeline; suppressions are
-selected separately. Run, verify, merge and rescan through the normal workflow.
+Choose a harness and scope, then **Start review** to discuss findings with Claude,
+Codex or Pi in its console. Selecting findings automatically chooses **Selected
+open**; the start button shows the exact count. A current scan is required.
+The harness explains its evidence and recommends a short menu of next steps,
+then waits for your reply. Nothing is filed or changed by starting the review.
+After you choose, agreed fixes/investigations become grouped Open tasks for you
+to review and run through the normal worktree pipeline. Unfixable risks and
+false positives are discussed separately, without silently ignoring them.
+
+**Open console** returns to the conversation after a refresh. Lattice retains
+session metadata and uses normal terminal conversation recovery; recommendations
+stay in the harness conversation, with no separate report or Apply UI.
+**End review** closes the console; previously agreed tasks remain on the board.
+The initial brief prohibits edits and executing project code; Codex additionally
+uses a scratch workspace sandbox. Existing legacy report files are left untouched
+but no longer displayed or updated.
 
 Local ignores require a reason, preserve history and can be undone. Deferred
 risks also require an owner and a future review date; expired exceptions reopen.

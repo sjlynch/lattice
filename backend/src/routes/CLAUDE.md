@@ -57,9 +57,11 @@ mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
 - `opengrepReview.ts` — mounted by `opengrep.ts`. `GET/POST
   /api/opengrep/triage` reads local history or saves a disposition; `POST
   /api/opengrep/shared-ignore` creates a reviewed source-suppression task.
-  `GET/POST /api/opengrep/reviews` restores reports or starts a review;
-  `POST /api/opengrep/reviews/:id/{done,cancel,apply}` collects a scratch report,
-  cancels a run, or previews/applies selected recommendations. Writes validate
+  `GET/POST /api/opengrep/reviews` lists session metadata or starts an interactive
+  review; `POST /api/opengrep/reviews/:id/{done,cancel}` marks a turn waiting
+  without closing the conversation, or explicitly ends/reclaims it. No report
+  storage or application endpoint; the harness waits for the user's choice
+  before creating agreed Open tasks. Writes validate
   an existing project directory; completion takes the project in its query.
   Apply defaults to preview and requires `preview: false` for mutations.
 - `projectInit.ts` — `POST /api/project-init/preview` (what a first commit

@@ -245,34 +245,36 @@ licence text + a source pointer) — keep it a runtime download.
   read as open. Source suppressions and Settings ignores retain their distinct
   scope and cannot be overridden by a local reopen. These are presentation
   choices, never exclusions from scanner inputs or CI policy.
-- `reviewStore.ts` — versioned `opengrep-reviews.json` in the same home project
-  directory. Keeps running reviews and the latest 20 finished reports, including
-  their findings and input identities. Validates agent output: exact finding
-  IDs, evidence, confidence, action, and concrete changes/checks for fixes.
-  Missing recommendations become `needs-review`. Recommendations become stale
-  when rule/configuration identities, the finding file, or any declared context
-  file changes; current input verification is required again when applying.
-- `reviewSession.ts` — shared home-scratch spawn and cleanup, under
-  `security-reviews/sreview_<ts>_<hex>/`. Persist ownership before spawn and
-  install all harness completion/activity hooks. The brief permits source reads
-  and writing the scratch report only; it prohibits project edits, executing
-  project code, board writes and delegation. Codex additionally uses
-  `--sandbox workspace-write` with the scratch as cwd; Claude/Pi follow the
-  explicit review-only brief. Pi must POST completion after writing the report
-  because its shutdown hook is only a backstop. Cancellation aborts pending
-  spawn admission as well as reclaiming an existing PTY.
-- `review.ts` — current-scan admission, review listing, cancellation and selected
-  recommendation preview/application. Grouped fixes become ordinary Open tasks;
-  shared suppressions become tasks to independently verify narrow, exact-rule
-  `nosemgrep` comments and CI compatibility. Neither starts agents nor merges
-  code automatically. Local ignores and deferred risks use `triage.ts`.
-  Application is serialized and task markers make retries idempotent.
-- `reviewRecovery.ts` — pre-listen presence recovery and a 30-second liveness
-  watchdog. Callbacks read durable ownership directly after restarts. An
-  unreachable terminal server is never proof of death; absent PTYs get 90 seconds
-  for delayed report callbacks. A two-hour backstop settles stuck reviews.
-  The shared boot sweep preserves running reports until the watchdog collects
-  them, and delegates orphan deletion to guarded home-scratch cleanup.
+- `reviewStore.ts` — strict, versioned `opengrep-review-sessions.json` in the
+  home project directory. Stores ONLY session metadata: harness, scan id, finding
+  count, terminal identity and running/awaiting-decision/closed/failed/cancelled
+  lifecycle. Keeps all active conversations and the newest 20 ended ones.
+  Legacy `opengrep-reviews.json` reports are left untouched and no longer consumed.
+- `reviewBrief.ts` — interactive conversation contract. Review supplied findings
+  read-only, explain evidence/confidence and blockers, propose a tailored menu
+  with a recommended option, then WAIT for an explicit reply. Only agreed tasks
+  are created through project-scoped MCP/documented HTTP, with duplicate searches,
+  exact finding markers, acceptance criteria and current-source verification.
+  Tasks enter Open without being run/merged; ignore decisions are separate.
+- `reviewSession.ts` — shared home-scratch spawn/guarded cleanup under
+  `security-reviews/sreview_<ts>_<hex>/`. Writes the findings snapshot and brief,
+  persists metadata before spawn, and installs all harness activity/turn hooks.
+  New sessions use terminal owner `user` so ordinary conversation recovery can
+  resume them. Codex uses `--sandbox workspace-write` with scratch as cwd and
+  network enabled for the local API; Claude/Pi follow the explicit initial
+  read-only brief. Stop (Pi: `agent_settled`) marks awaiting-decision, never
+  collects a report, kills the PTY, or deletes scratch. Cancellation aborts
+  pending admission and durably blocks terminal restore before guarded cleanup.
+- `review.ts` — current-scan admission, metadata listing and ending reviews.
+  Only one active conversation per project. Listing uses current terminal
+  identities/activity without hashing the whole project for report staleness.
+  Manual shared-ignore tasks remain independent of the conversation.
+- `reviewRecovery.ts` — presence recovery and a 30-second liveness watchdog.
+  Preserves conversations indefinitely while live or durably registered,
+  including executor replacement, queued relaunch and retryable restore failure.
+  Unreachable terminal servers are never evidence of death. An absent, unregistered
+  PTY gets a 90-second grace period before marking closed and guarded cleanup.
+  The shared orphan sweep also protects registered conversation cwd paths.
 
 ## Consumers
 

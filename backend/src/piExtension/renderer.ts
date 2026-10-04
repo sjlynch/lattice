@@ -25,6 +25,8 @@ export type PiCompletionExtensionOptions = {
    * trigger the callback.
    */
   respectQuitGate: boolean;
+  /** Interactive sessions report each settled turn; existing callers keep shutdown semantics. */
+  eventName?: 'session_shutdown' | 'agent_settled';
   /**
    * If provided (absolute path), read this file at shutdown and POST its
    * contents as JSON `{prompt: <contents>}`. Used by the workflow
@@ -65,5 +67,6 @@ export function renderPiCompletionExtension(
     promptFileLiteral,
     site,
     respectQuitGate,
+    eventName: opts.eventName,
   });
 }

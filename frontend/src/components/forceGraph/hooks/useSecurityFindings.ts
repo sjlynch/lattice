@@ -11,7 +11,7 @@ export function useSecurityFindings(project: string, onRefresh?: () => Promise<v
   const alive = useRef(true);
   const claimed = useRef(new Set<symbol>());
   const lifetime = useRef(0);
-  const running = reviews.some((r) => r.status === 'running');
+  const running = reviews.some((r) => r.status === 'running' || r.status === 'awaiting-decision');
   const refreshRef = useRef(onRefresh); refreshRef.current = onRefresh;
   const refresh = useCallback(async (signal?: AbortSignal) => {
     const epoch = lifetime.current;

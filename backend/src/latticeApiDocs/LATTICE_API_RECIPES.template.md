@@ -68,11 +68,10 @@ Security finding review and triage:
 | GET | /api/opengrep/triage?project=&findingId= | Local finding disposition history; last 100 events |
 | POST | /api/opengrep/triage | `{project, scanId, findingId, status:"open"/"ignored"/"deferred", reason, owner?, reviewAt?}`; local policy only, never CI exclusions. Defer requires owner/future date; expired exceptions reopen |
 | POST | /api/opengrep/shared-ignore | `{project, scanId, findingId, reason}` propose a rule-specific source suppression via an Open task, for independent verification/merge and compatible CI |
-| GET | /api/opengrep/reviews?project= | Persistent review reports and active sessions; recommendations include evidence, confidence and stale/applied state |
-| POST | /api/opengrep/reviews | `{project, scanId, findingIds:[exact fingerprints], harness:"claude"/"codex"/"pi", piModel?}` review current open findings; review-only brief, writes report in guarded home scratch |
-| POST | /api/opengrep/reviews/:id/done?project= | Stop-hook callback: validate `recommendations.json`, persist report, reclaim scratch. Idempotent |
-| POST | /api/opengrep/reviews/:id/cancel | `{project}` cancel this review; no recommendations applied |
-| POST | /api/opengrep/reviews/:id/apply | `{project, selections:[{findingId, scope?:"local"/"shared", owner?, reviewAt?}], preview?}` defaults to preview; explicit `preview:false` creates grouped Open fix/shared-ignore tasks and saves selected local dispositions. Refuses stale/uncertain recommendations; duplicate applications are idempotent |
+| GET | /api/opengrep/reviews?project= | Session metadata only: finding count, harness, running/awaiting-decision/closed/failed/cancelled status and current terminal identity; no recommendation content |
+| POST | /api/opengrep/reviews | `{project, scanId, findingIds:[exact fingerprints], harness:"claude"/"codex"/"pi", piModel?}` start interactive review of current open findings in guarded home scratch; explain options and wait for the user's explicit choice before creating agreed Open tasks |
+| POST | /api/opengrep/reviews/:id/done?project= | Turn-completion callback: mark awaiting-decision, preserve console/scratch for the user's reply. Idempotent; never creates tasks or stores recommendations |
+| POST | /api/opengrep/reviews/:id/cancel | `{project}` end the conversation and reclaim guarded scratch; tasks already agreed to remain on the board |
 
 Statuses: `backlog | open | in_progress | ready_to_merge | qa | done | deleted`.
 Typical pipeline: `backlog → open → in_progress → ready_to_merge → qa → done`.
