@@ -7,10 +7,10 @@
 // silently vanishing.
 
 import type { WorkflowVariable } from './types.js';
+import { WORKFLOW_VARIABLE_PATTERN } from '../shared/workflowVariables.js';
 
-// Same grammar as normalizeVariableName: `{{` + identifier + `}}`, with
-// optional surrounding whitespace inside the braces.
-export const WORKFLOW_VARIABLE_PATTERN = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
+// The `{{name}}` grammar is shared with the frontend editor.
+export { WORKFLOW_VARIABLE_PATTERN };
 
 export function interpolateWorkflowVariables(
   prompt: string,

@@ -25,10 +25,8 @@ export const LANE_BY_ID: Record<TaskStatus, Lane> = LANES.reduce(
 // confused with native text drags onto unrelated targets.
 export const DRAG_MIME = 'application/x-lattice-task';
 
-export function shortLabel(title: string): string {
-  const t = title.trim();
-  return t.length > 18 ? t.slice(0, 17) + '…' : t;
-}
+// Shared with the backend's registry labels (backend/src/shared/terminalLabels.ts).
+export { shortLabel } from '../../../../backend/src/shared/terminalLabels';
 
 // Decode a drag payload, which may be a single task ID string or a
 // JSON-encoded array of IDs for multi-select drags.

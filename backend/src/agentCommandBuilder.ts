@@ -7,6 +7,7 @@
 
 import path from 'node:path';
 import type { AgentHarness } from './harnesses.js';
+import { isPiModelPattern } from './shared/harnesses.js';
 
 // A Pi model selector is a `provider/model` pattern, optionally with a
 // `:thinking`-style suffix (e.g. `qwen-local/qwen`, `openai-codex/gpt-5.5`).
@@ -22,15 +23,14 @@ import type { AgentHarness } from './harnesses.js';
 // the provider; the rest is the model id, handed to Pi verbatim. A
 // single-slash-only rule silently dropped `--model` for those servers, so the
 // session quietly ran Pi's default model instead of the one that was picked.
-const PI_MODEL_PATTERN_RE =
-  /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)+(:[A-Za-z0-9_.-]+)?$/;
+// (The pattern itself is shared with the frontend: shared/harnesses.ts.)
 
 // Coerce an untrusted value to a safe Pi model pattern, or `undefined`.
 export function normalizePiModel(value: unknown): string | undefined {
   if (typeof value !== 'string') return undefined;
   const trimmed = value.trim();
   if (!trimmed) return undefined;
-  return PI_MODEL_PATTERN_RE.test(trimmed) ? trimmed : undefined;
+  return isPiModelPattern(trimmed) ? trimmed : undefined;
 }
 
 // The single place that turns a resolved Pi model into a `--model` flag (and

@@ -1,4 +1,4 @@
-import type { McpSpawnScope } from '../mcp/taskWorktreeScope.js';
+import type { McpSpawnScope } from '../mcp/spawnScope.js';
 import type { AgentHarness } from '../harnesses.js';
 
 // Who "owns" a terminal tab — i.e. which lifecycle decides when it should

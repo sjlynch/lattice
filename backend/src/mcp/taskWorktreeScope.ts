@@ -46,7 +46,8 @@ import { taskAgentsLatticeMcpOnlyIn, type UserSettings } from '../userSettings.j
 import { parseCodexMcpServers } from './import/codexToml.js';
 import type { ClaudeMcpServerConfig } from './claudeInject.js';
 
-export type McpSpawnScope = 'task-worktree';
+export type { McpSpawnScope } from './spawnScope.js';
+import type { McpSpawnScope } from './spawnScope.js';
 
 // `~/.lattice/worktrees/` — every current task worktree lives below it
 // (`<hash>/<slug>-<id>`). Legacy in-repo worktrees (`<repo>/.lattice/worktrees`)

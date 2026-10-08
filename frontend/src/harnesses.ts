@@ -1,13 +1,18 @@
-export type AgentHarness = 'claude' | 'pi' | 'codex';
+// The agent-harness vocabulary and the Pi model pattern are the backend's own
+// (backend/src/shared/harnesses.ts), imported rather than mirrored.
+import {
+  ALL_AGENT_HARNESSES,
+  isAgentHarness,
+  isPiModelPattern,
+  normalizeAgentHarness,
+  type AgentHarness,
+} from '../../backend/src/shared/harnesses';
+
+export { ALL_AGENT_HARNESSES, isAgentHarness, normalizeAgentHarness, type AgentHarness };
+
 export type HarnessChoice = AgentHarness | 'interleave';
 
 export type HarnessAvailability = Record<AgentHarness, boolean>;
-
-export const ALL_AGENT_HARNESSES: readonly AgentHarness[] = [
-  'claude',
-  'pi',
-  'codex',
-] as const;
 
 export const ALL_HARNESS_CHOICES: readonly HarnessChoice[] = [
   ...ALL_AGENT_HARNESSES,
@@ -21,14 +26,6 @@ export const HARNESS_LABELS: Record<HarnessChoice | 'default', string> = {
   codex: 'Codex',
   interleave: 'Interleave',
 };
-
-export function isAgentHarness(value: unknown): value is AgentHarness {
-  return value === 'claude' || value === 'pi' || value === 'codex';
-}
-
-export function normalizeAgentHarness(value: unknown): AgentHarness {
-  return isAgentHarness(value) ? value : 'claude';
-}
 
 export function isHarnessChoice(value: unknown): value is HarnessChoice {
   return isAgentHarness(value) || value === 'interleave';
@@ -79,17 +76,10 @@ export type HarnessSelection = { harness: HarnessChoice; piModel?: string };
 
 const PI_MODEL_VALUE_PREFIX = 'pi:';
 
-// Mirrors the backend's PI_MODEL_PATTERN_RE (agentCommandBuilder.ts): a
-// `provider/model[:thinking]` token of safe chars only. Used as a
-// shell-injection guard before a Pi model ever lands in a command string.
-// The model half may contain further slashes — an OpenAI-compatible endpoint
-// commonly reports a HuggingFace repo id (`meta-llama/Llama-3.1-8B-Instruct`),
-// giving `my-vllm/meta-llama/Llama-3.1-8B-Instruct`. Keep in lockstep with the
-// backend: a pattern either rejects has its `--model` flag silently dropped.
-const PI_MODEL_RE = /^[A-Za-z0-9_.-]+(\/[A-Za-z0-9_.-]+)+(:[A-Za-z0-9_.-]+)?$/;
-
+// The backend's own `provider/model[:thinking]` shell-injection guard (no
+// trimming here: a padded value is not a valid selection in the UI).
 export function isValidPiModel(piModel: string | undefined): piModel is string {
-  return !!piModel && PI_MODEL_RE.test(piModel);
+  return !!piModel && isPiModelPattern(piModel);
 }
 
 export function encodeHarnessValue(harness: HarnessChoice, piModel?: string): string {

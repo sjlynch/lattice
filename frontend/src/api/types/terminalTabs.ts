@@ -1,84 +1,26 @@
-import type { AgentHarness } from '../../harnesses';
+// The durable terminal-tab registry (backend/src/terminalRegistry/) that lets
+// the sidebar rebuild — and relaunch — its tabs after a backend restart, a
+// closed browser, a Ctrl+C of the dev server, or a reboot. The record types
+// are the backend's own (re-exported through backend/src/shared/wireTypes.ts);
+// only the browser-side event union and settings enum are declared here.
 
-// Mirrors backend/src/terminalRegistry/types.ts — the durable terminal-tab
-// registry that lets the sidebar rebuild (and relaunch) its tabs after a
-// backend restart, a closed browser, a Ctrl+C of the dev server, or a reboot.
+import type {
+  RestoreSummary as BackendRestoreSummary,
+  TerminalEnded,
+  TerminalRecord,
+} from '../../../../backend/src/shared/wireTypes';
 
-export type TerminalOwner =
-  | 'user'
-  | 'task'
-  | 'merge'
-  | 'startup'
-  | 'workflow-step'
-  | 'push'
-  | 'qa'
-  | 'post-merge'
-  | 'prompt-customization'
-  | 'security-review';
+export type {
+  AgentSessionRef,
+  RestoreDropped,
+  TerminalEndReason,
+  TerminalEnded,
+  TerminalOwner,
+  TerminalRecord,
+} from '../../../../backend/src/shared/wireTypes';
 
-export type TerminalEndReason =
-  | 'exit'
-  | 'closed'
-  | 'killed'
-  | 'owner-finished'
-  | 'cwd-missing'
-  | 'restore-failed';
-
-export type TerminalEnded = {
-  at: number;
-  reason: TerminalEndReason;
-  exitCode?: number;
-  detail?: string;
-};
-
-export type AgentSessionRef = {
-  harness: AgentHarness;
-  id: string;
-  // Mirrors backend `AgentSessionSource` (backend/src/terminalRegistry/types.ts).
-  source: 'minted' | 'rollout-scan' | 'transcript-scan' | 'command';
-  ambiguous?: boolean;
-};
-
-export type TerminalRecord = {
-  id: string;
-  projectPath: string;
-  cwd: string;
-  label: string;
-  order: number;
-  kind?: 'merge' | 'startup';
-  taskId?: string;
-  startupId?: string;
-  owner: TerminalOwner;
-  launch: {
-    initialCommand?: string;
-    harness?: AgentHarness;
-    piModel?: string;
-    isQaRun?: boolean;
-    taskId?: string;
-    mcpScope?: 'task-worktree';
-  };
-  agentSession?: AgentSessionRef;
-  serverId?: string;
-  serverInstanceId?: string;
-  createdAt: number;
-  updatedAt: number;
-  restoreCount?: number;
-  restoredAt?: number;
-  // A restore pass (possibly another browser tab's) has this tab's relaunch
-  // queued or in flight.
-  relaunching?: boolean;
-  closePending?: boolean;
-  ended?: TerminalEnded;
-};
-
-export type RestoreDropped = { id: string; label: string; reason: string };
-
-export type RestoreSummary = {
-  status: 'ok' | 'terminal-server-unreachable' | 'already-running';
-  adopted: number;
-  queued: number;
-  dropped: RestoreDropped[];
-  // Tab ids queued for a relaunch (marked "restored" from this response).
+// `relaunchedIds` is optional on the wire for an older backend that predates it.
+export type RestoreSummary = Omit<BackendRestoreSummary, 'relaunchedIds'> & {
   relaunchedIds?: string[];
 };
 

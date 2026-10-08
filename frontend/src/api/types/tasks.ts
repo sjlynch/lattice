@@ -1,61 +1,10 @@
+// `Task` / `TaskStatus` are the backend's own (backend/src/taskCache/types.ts,
+// re-exported through backend/src/shared/wireTypes.ts); the request/response
+// and WS event shapes below are declared here.
 import type { AgentHarness } from '../../harnesses';
 
-export type TaskStatus =
-  | 'backlog'
-  | 'open'
-  | 'in_progress'
-  | 'ready_to_merge'
-  | 'qa'
-  | 'done'
-  | 'deleted';
+export type { Task, TaskStatus } from '../../../../backend/src/shared/wireTypes';
 
-export type Task = {
-  id: string;
-  projectPath: string;
-  title: string;
-  description?: string;
-  // Agent-contributed resolution / progress notes appended via
-  // /append-summary (worktree change summary, QA verdict, …). Stored apart
-  // from `description` so the original ticket text is never overwritten — the
-  // card + detail overlay render both. Multiple appends are `---`-separated.
-  summary?: string;
-  status: TaskStatus;
-  createdAt: number;
-  updatedAt?: number;
-  worktreePath?: string;
-  branch?: string;
-  startedAt?: number;
-  completedAt?: number;
-  mergedAt?: number;
-  doneAt?: number;
-  conflict?: boolean;
-  conflictStartedAt?: number;
-  sortOrder?: number;
-  workflowRunId?: string;
-  workflowStepIndex?: number;
-  // True while an Open task's run is waiting in the backend spawn queue
-  // (concurrency softCap was full when it was requested). Status stays
-  // `open`; the card renders a "queued" badge. Cleared when the run is
-  // admitted and the task flips to in_progress.
-  runQueued?: boolean;
-  runQueuedAt?: number;
-  // Why a queued run is held: its worktree wouldn't fit above the disk reserve.
-  runWaitingForDisk?: string;
-  // How many times a queued run has failed deterministically. Boot recovery
-  // uses it as a retry ceiling; cleared once the run finally spawns.
-  runFailureCount?: number;
-  // The harness that ran this task's worktree agent (recorded at spawn). The
-  // graph's Claude-agent overlay scopes itself to `claude` tasks.
-  harness?: AgentHarness;
-  // Stable palette slot assigned at spawn; drives the per-task accent color
-  // (card left edge, Claude node, `W` worktree rings). Absent on legacy /
-  // never-run tasks — callers fall back to hashing the id.
-  colorIndex?: number;
-};
-
-// `/api/tasks/:id/run` and `/resume` no longer return the pty synchronously
-// — the run may be deferred by the spawn queue. They acknowledge acceptance;
-// the terminal arrives later via the `task-spawned` WS event.
 export type RunTaskResult = {
   accepted: boolean;
   // true ⇒ deferred (no concurrency headroom); false ⇒ spawning now.

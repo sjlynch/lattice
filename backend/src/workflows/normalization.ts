@@ -4,6 +4,7 @@ import {
   normalizeAgentHarness,
 } from '../harnesses.js';
 import { normalizePiModel } from '../worktree/commands.js';
+import { normalizeVariableName, USER_INSTRUCTIONS_VAR } from '../shared/workflowVariables.js';
 import {
   RUN_TESTS_MAX_TIMEOUT_MINUTES,
   RUN_TESTS_MIN_TIMEOUT_MINUTES,
@@ -43,20 +44,9 @@ export function normalizeTestTimeoutMinutes(value: unknown): number | undefined 
   );
 }
 
-// The built-in variable every workflow carries. Built-in workflow steps end
-// with `{{user_instructions}}`, so its value is injected at the bottom of each
-// step prompt at run time. Defaults to empty (a no-op substitution).
-export const USER_INSTRUCTIONS_VAR = 'user_instructions';
-
-// Variable names are referenced as `{{name}}`, so they must match the same
-// token grammar the interpolator recognizes: letters, digits, underscores.
-export function normalizeVariableName(value: unknown): string {
-  if (typeof value !== 'string') return '';
-  return value
-    .trim()
-    .replace(/[^A-Za-z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
+// The built-in `{{user_instructions}}` variable and the name grammar are
+// shared with the frontend editor (shared/workflowVariables.ts).
+export { normalizeVariableName, USER_INSTRUCTIONS_VAR };
 
 function normalizeStepKind(value: unknown): WorkflowStepKind {
   return typeof value === 'string' && STEP_KINDS.has(value as WorkflowStepKind)

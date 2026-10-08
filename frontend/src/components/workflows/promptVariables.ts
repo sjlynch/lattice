@@ -1,23 +1,20 @@
-// Shared helpers for workflow variables on the frontend. Mirrors the backend
-// grammar in backend/src/workflows/{normalization,interpolate}.ts so the
-// editor's highlighting and name sanitization match what the server stores
-// and substitutes at run time.
+// Frontend helpers for workflow variables. The grammar itself — the
+// `{{name}}` token, name normalization and the built-in variable — is the
+// backend's own (backend/src/shared/workflowVariables.ts), so the editor's
+// highlighting and name sanitization match what the server substitutes.
 
 import type { WorkflowVariable } from '../../api';
+import {
+  normalizeVariableName,
+  USER_INSTRUCTIONS_VAR,
+  WORKFLOW_VARIABLE_PATTERN,
+} from '../../../../backend/src/shared/workflowVariables';
 
-export const USER_INSTRUCTIONS_VAR = 'user_instructions';
+export { normalizeVariableName, USER_INSTRUCTIONS_VAR };
 
-// `{{` + identifier + `}}`, optional inner whitespace. Global + capturing so
-// it can drive both splitting (for highlighting) and replacement.
-export const VAR_TOKEN_RE = /\{\{\s*([A-Za-z0-9_]+)\s*\}\}/g;
-
-// Variable names are referenced as `{{name}}`, so they must reduce to the
-// identifier grammar above.
-export function normalizeVariableName(value: string): string {
-  return value
-    .replace(/[^A-Za-z0-9_]+/g, '_')
-    .replace(/^_+|_+$/g, '');
-}
+// `{{` + identifier + `}}` (global + capturing): drives both splitting (for
+// highlighting) and replacement. Reset `lastIndex` before an `exec` loop.
+export const VAR_TOKEN_RE = WORKFLOW_VARIABLE_PATTERN;
 
 // Lighter sanitization for live typing in the name input: collapse invalid
 // characters to `_` but keep edge underscores so the field doesn't fight the

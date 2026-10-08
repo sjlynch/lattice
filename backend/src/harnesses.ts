@@ -1,18 +1,12 @@
-export type AgentHarness = 'claude' | 'pi' | 'codex';
+// The vocabulary itself lives in shared/ (the frontend imports the same file).
+import { isAgentHarness, type AgentHarness } from './shared/harnesses.js';
 
-export const ALL_AGENT_HARNESSES: readonly AgentHarness[] = [
-  'claude',
-  'pi',
-  'codex',
-] as const;
-
-export function isAgentHarness(value: unknown): value is AgentHarness {
-  return value === 'claude' || value === 'pi' || value === 'codex';
-}
-
-export function normalizeAgentHarness(value: unknown): AgentHarness {
-  return isAgentHarness(value) ? value : 'claude';
-}
+export {
+  ALL_AGENT_HARNESSES,
+  isAgentHarness,
+  normalizeAgentHarness,
+  type AgentHarness,
+} from './shared/harnesses.js';
 
 // Which harness (if any) a pty's initial command launches — i.e. "is this
 // terminal running an agent, or is it a plain shell / `npm run dev` startup

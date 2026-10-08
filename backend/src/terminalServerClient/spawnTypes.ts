@@ -1,6 +1,6 @@
 import type { ClaudeMcpServerConfig } from '../mcp/claudeInject.js';
 import type { McpResolveContext } from '../mcp/registry.js';
-import type { McpSpawnScope } from '../mcp/taskWorktreeScope.js';
+import type { McpSpawnScope } from '../mcp/spawnScope.js';
 import type { SessionRequestIdentity } from '../terminalProtocol.js';
 import type { TerminalRegistryHint } from '../terminalRegistry/types.js';
 

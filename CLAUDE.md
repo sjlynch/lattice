@@ -186,10 +186,9 @@ before changing the area.
   see digests, never raw JSON.
 - **Pi** (`backend/src/piModels/CLAUDE.md`, `backend/src/piSubagents/CLAUDE.md`):
   `piModel` (`provider/model`; the model half may contain `/`) is a separate
-  field, never a composite with `harness`. The backend pattern and frontend
-  `PI_MODEL_RE` (`frontend/src/harnesses.ts`) must stay in lockstep — a model
-  either side rejects has its `--model` silently dropped. The user's global Pi
-  config is never touched.
+  field, never a composite with `harness`; a model the shared pattern
+  (`backend/src/shared/harnesses.ts`) rejects has its `--model` silently
+  dropped. The user's global Pi config is never touched.
 - **Terminals** (`backend/src/terminal/CLAUDE.md`, `backend/src/terminalRegistry/CLAUDE.md`,
   `frontend/src/components/sidebar/CLAUDE.md`): tabs survive restarts (the
   conversation is pinned at spawn and relaunched into); spawns pre-create the
@@ -212,6 +211,9 @@ before changing the area.
   `<project>/.lattice/userSettings.json` via `/api/settings`.
 - **Memory:** register a gauge (`registerMemGauge`) beside every long-lived
   collection, listener set or GPU resource (`backend/src/memDiag/CLAUDE.md`).
+- **Shared code:** logic or wire types both packages need live once in
+  `backend/src/shared/` (relative imports only; the frontend imports it by
+  path) — never a hand-mirrored copy (`backend/src/shared/CLAUDE.md`).
 - Prefer editing existing files; no new abstractions for one-off tweaks.
 
 ## Ports

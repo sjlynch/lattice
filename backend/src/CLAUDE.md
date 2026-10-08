@@ -49,7 +49,8 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 
 ### Agents & harness commands
 
-- `harnesses.ts` — the `AgentHarness` vocabulary (`claude`/`pi`/`codex`) + `agentHarnessForCommand`; reuse it instead of open-coding harness unions.
+- `harnesses.ts` — re-exports the `AgentHarness` vocabulary (`claude`/`pi`/`codex`, defined in `shared/harnesses.ts`) + `agentHarnessForCommand`; reuse it instead of open-coding harness unions.
+- `shared/` — code the FRONTEND imports too (harness vocab + Pi model pattern, search wildcard, `{{var}}` grammar, tab labels, wire types). Relative imports only. See `shared/CLAUDE.md`.
 - `harnessDetect.ts` — PATH probe for installed agent CLIs; memoizes only definitive results (a timed-out / failed probe is "unknown": reported unavailable, never cached, re-probed in the background and pushed via `onHarnessAvailabilityChange`). `resetHarnessCache()` re-probes; drives `/ws/harnesses`.
 - `agentCommandBuilder.ts` — shared harness command syntax: permission-bypass flags, Pi `--approve` + validated `--model`, shell quoting.
 - `spawnQueue.ts` / `spawnQueue/` — admission controller in front of every agent spawn (`softCap` = `maxConcurrentAgents`; defers, never drops). See `spawnQueue/CLAUDE.md`.
@@ -112,7 +113,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `gitDir.ts` — `resolveGitDir`: walks up like git and follows a worktree's / submodule's `.git` pointer file (`gitdir: <path>`), so watchers watch the real git dir.
 - `gitHistory.ts` / `gitHistory/` — the timeline scrubber's `git log`, ghost-node `deletedPaths`, status signature. See `gitHistory/CLAUDE.md`.
 - `watchTree.ts` — win32 recursive `fs.watch` (one handle) replacing chokidar's per-dir handles, which locked directories; `LATTICE_WATCH_MODE` overrides; symlinks not followed.
-- `search.ts` — file-contents search for `/api/search`; `regexSource` wildcards must match the frontend's `forceGraph/searchMatcher.ts`; returns absolute paths (= graph node ids). Its JS fallback (`search/jsGrepWorker.ts`) greps in a worker thread with a wall-clock budget, so a ReDoS user regex can't freeze the event loop.
+- `search.ts` — file-contents search for `/api/search`; `regexSource` is the shared wildcard translation (`shared/searchPattern.ts`, also the frontend's filename pass); returns absolute paths (= graph node ids). Its JS fallback (`search/jsGrepWorker.ts`) greps in a worker thread with a wall-clock budget, so a ReDoS user regex can't freeze the event loop.
 - `ripgrep.ts` — optional memoized `rg` fast path for `search.ts` (`LATTICE_DISABLE_RG`, `LATTICE_RG_PATH`); cancel-poll interval shared with the JS fallback in `search/constants.ts`.
 - `scanner.ts` / `scanner/` — project → `{nodes, links}` graph pipeline; `scanner.ts` is a re-export facade. See `scanner/CLAUDE.md`.
 - `health/` — tree-sitter per-file metrics, health score, cross-file dead code, file watcher. See `health/CLAUDE.md`.

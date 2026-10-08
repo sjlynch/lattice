@@ -46,7 +46,7 @@ Each subscription owns a separate registration even when callbacks are reused;
 cleanup is bound to that channel instance. Message, disconnect, and immediate
 replay callback failures are isolated from other subscribers and cleanup.
 
-1. Type goes in the matching `types/<domain>.ts` file, and is re-exported by `types/index.ts`.
+1. Type goes in the matching `types/<domain>.ts` file, and is re-exported by `types/index.ts`. If the backend already declares it in a node-free module, re-export it through `backend/src/shared/wireTypes.ts` instead of copying it (see `backend/src/shared/CLAUDE.md`).
 2. Function goes in the matching domain file. Use `asJson` for simple GETs and `postJson`/`patchJson`/`deleteJson` for JSON writes.
 3. WS endpoints: call `subscribeWs(path, cb)` (or `subscribeWsShared` when several features watch the same path) — don't reinvent reconnect/backoff.
 4. New domains: add a file + add `export *` to `index.ts`.

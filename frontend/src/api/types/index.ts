@@ -1,5 +1,7 @@
-// Shared types for the Lattice API. Mirrors the backend type surface
-// (intentionally hand-maintained — Lattice has no codegen step).
+// Types for the Lattice API. `tasks.ts` and `terminalTabs.ts` re-export the
+// backend's own wire types (backend/src/shared/wireTypes.ts); the rest are
+// still hand-maintained mirrors — move a type to the shared re-export when you
+// touch it (see backend/src/shared/CLAUDE.md).
 
 export * from './health';
 export * from './scan';

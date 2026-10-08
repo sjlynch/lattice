@@ -24,6 +24,7 @@ import { resolveRipgrep, searchWithRipgrep } from './ripgrep.js';
 import { loadGitignore } from './scanner/ignore.js';
 import { collectSourceFiles } from './scanner/collectSourceTree.js';
 import { runBoundedJsGrep } from './search/jsGrepWorker.js';
+import { wildcardRegexSource } from './shared/searchPattern.js';
 
 export type SearchOptions = {
   pattern: string;
@@ -67,16 +68,9 @@ function jsGrepBudgetMs(): number {
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_JS_GREP_BUDGET_MS;
 }
 
-// The regex *source string* for a query. KEEP THE WILDCARD TRANSLATION IN SYNC
-// with the frontend's searchMatcher.ts so a wildcard query selects the same
-// files whether the hit came from the filename pass (frontend) or the content
-// pass (here / rg).
-export function regexSource(pattern: string, regex: boolean): string {
-  if (regex) return pattern;
-  // Escape every regex metacharacter, then re-enable * and ? as wildcards.
-  const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return escaped.replace(/\\\*/g, '.*').replace(/\\\?/g, '.');
-}
+// The regex *source string* for a query — the same translation the frontend's
+// filename pass uses (shared/searchPattern.ts).
+export const regexSource = wildcardRegexSource;
 
 export async function searchProjectContents(
   root: string,
