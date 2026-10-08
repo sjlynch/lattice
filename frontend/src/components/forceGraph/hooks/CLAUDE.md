@@ -1,291 +1,166 @@
 # forceGraph/hooks
 
-`useSecurityFindings` owns durable review polling (3 seconds while running,
-30 seconds otherwise, plus focus refresh) and mutation feedback. Operation
-claims block duplicate ordinary writes while permitting cancellation of a
-pending start; busy lasts until every concurrent operation settles. Abort and
-project-epoch fences keep late reads/writes from updating another project.
-Successful mutations refresh reviews and saved scan presentation, never scan
-or launch another harness. `useSecurityOverlay` retains scan ownership.
-
 The coordinator's (`../ForceGraphView.tsx`) extracted effects. Each owns one
-concern and reads volatile inputs through refs so its listeners register once
-and don't churn per keystroke/frame. Pure decision logic is split into sibling
-non-hook modules (`graphDataSyncCore`, `boxSelectGeometry`, `orbitControlLock`,
-`refresh`) and unit-tested where noted.
+concern and reads volatile inputs through refs so listeners register once
+instead of churning per keystroke/frame; pure logic lives in the non-`use*`
+siblings. Module-level resources and invariants: [../CLAUDE.md](../CLAUDE.md).
 
 ## Coordinator phases
 
-The coordinator calls the hooks below through two phase hooks, in this order
-(after its own shared refs / hover / drag tracking, before
-`../useGraphViewChromeModel`). Each is a straight extraction: it adds no state,
-takes the coordinator's refs by identity (never copies), and keeps every
-member's call order and dependency array — effect ordering follows call order,
-so don't reorder calls inside or across them.
+Called through two phase hooks, in this order (after the coordinator's shared
+refs / hover / drag tracking, before `../useGraphViewChromeModel`). Straight
+extractions: no added state, refs passed by identity (never copied), call order
+and dependency arrays kept — effect order follows call order, so don't reorder
+calls inside or across them.
 
 - `useGraphSceneRuntime` — `useGraphOverlays` → `batchedNodesRef` mirror +
   `worktreeRingsRef` → `useForceGraphInitialization` → `useCameraPersistence`
   → `resetSelection` → `useGraphDataSync` → `useRadialTidyLayout` →
   `useBatchedLinks` → `useInstancedNodes` → `useNodeDragBehavior` →
-  `useAgentOverlay` → `useWorktreeHighlight`. Returns the overlay modes/settings,
-  `dataGeneration`, `runLayout`, `resetSelection` and `worktreeActive`.
+  `useAgentOverlay` → `useWorktreeHighlight`.
 - `useGraphInteraction` — `useGraphSearchController` → `useNodeContextMenu`
   (+ `closeContextMenu`) → `useBoxSelect` → `useGraphTaskCreation` →
   `useSelectionHaloSync` → `useSelectionHaloPulse` → `useSelectionGlowSettings`
   → `useMetricsIgnoreRefresh` → `useGraphViewKeyboard` →
-  `useOverlayTooltipDismiss`. Returns `contextMenu`, `dragRect`, `openMenuItem`,
-  `toast`, and `search` / `taskModal` already shaped for the chrome model.
+  `useOverlayTooltipDismiss`.
 
 ## Init & data
 
-- `useForceGraphInitialization` — once-mounted layout effect supplying
-  `ForceGraph3D` construction/configuration and resource registration to the
-  lifecycle helper below. Accessor closures read live refs via
-  `nodeObjectFactory`; scene/camera setup delegates to `sceneSetup`. Sets d3
-  cooldown bounds, wires frame/motion drivers, and forwards
-  `webglcontextlost`/`webglcontextrestored`, waking the idle loop on restore.
-  `onRendererFailure`, `onContextLost`, and `onContextRestored` must be
-  identity-stable: the effect mounts once and captures them. See
-  `../CLAUDE.md` → `rendererStatus.ts`.
-- `forceGraphInitializationLifecycle.ts` — `initializeForceGraphLifecycle`
-  owns partial setup failures and normal unmount. Captures the returned graph
-  before any configuration setter can throw; records cleanup slots immediately
-  as resources are acquired. Both paths share an idempotent teardown, attempting
-  every acquired cleanup once even if one throws, in this order: context-lost
-  listener → context-restored listener → frame subscription → idle controller →
-  resize observer → label registries → graph `_destructor` (`graph.renderer()`
-  captured just before) → shared resources (`disposeSharedResources` =
-  `../spriteMaterialCache`'s `disposeSharedGraphResources`) →
-  `renderer.forceContextLoss()` → `graphRef.current = null`. The destructor's
-  `renderer.dispose()` keeps the context and its drawing buffer until a GC;
-  only the context loss frees them now and stops remounts piling contexts up
-  toward Chrome's per-page limit. Shared resources go while the context is live
-  (dropping the old renderer's `dispose` listeners); the loss goes last, so
-  nothing after it touches GL, and the listeners removed first mean it raises no
-  "GPU context lost" notice. Both run once for every returned graph, including
-  after a throwing `_destructor`. Failed setup also clears the retry container
-  with `replaceChildren()` before reporting the original renderer error through
-  `onRendererFailure`; cleanup faults cannot replace it. Normal unmount propagates
-  the first cleanup error only after all remaining attempts. A constructor that
-  throws provides no returned instance to own, destroy or lose. Shared label
-  resources are released through `clearAllLabelRegistries`, never ad hoc
-  per-node disposal.
-  See [lifecycle tests](../../../__tests__/forceGraphInitializationLifecycle.test.ts)
-  for configuration/registration fault injection, cleanup order/idempotence,
-  context loss, shared-resource disposal and retry-container behavior.
-- `useRadialTidyLayout` — the on-load untangler. Fires once per project on first
-  data populate (and on demand via the returned `runLayout`, wired to the Spread
-  tab's "Untangle now" button): seeds each node at its radial tidy-tree X/Z
-  (`../radialTidyLayout.computeRadialTidyLayout` — every subtree in its own angular
-  wedge sized by leaf count, radius ∝ directory depth) so sibling subtrees can't
-  tangle, then lets the engine settle from that seed. **Apply + reheat are atomic**
-  in one deferred macrotask (the defer dodges the first-reheat `state.layout` crash;
-  the atomicity stops the still-hot load engine from scattering the crowded shallow
-  nodes between write and reheat — which re-tangles). A per-project guard ref stops
-  file-save re-scans from re-seeding a graph the user has since arranged. Auto-run
-  gated on `tidyLayoutOnLoad` (on by default); the manual trigger always runs.
-- `useCameraPersistence` — persists the camera (position + orbit target) per
-  project to `localStorage` (`lattice.graphCamera.<path>`, debounced off the
-  OrbitControls `change` event via `../cameraState`) and re-aims it to the saved
-  view on mount / project switch, so a page refresh keeps the vantage point. The
-  library only auto-fits while the camera is at its construction default, so a
-  restored non-default view survives later data loads.
-- `useGraphDataSync` — pushes ScanResult + ghost history into `graphData`. A
-  metric-only HealthUpdate (same node ids/links) takes the **fast-patch path**:
-  fields are written onto the in-place sim nodes and `graph.refresh()` runs
-  *only if an H/Z/D overlay is held* (those are the only views that render the
-  patched fields) — an unconditional refresh would rebuild all N sprites and wake
-  the loop on every file save. Two fast-patch tiers (cheap links-identity
-  pre-check, then `shapeFingerprint` fallback) share one cached id→sim-node
-  index. Bumps `dataGeneration` on every full swap (batched-renderer re-capture).
-  Pure shape logic in `graphDataSyncCore.ts` (tested).
-- `useNodeDepthCache` — cached path-depth map for Alt labels, keyed off a cheap
-  structural fingerprint (`../depthMap`).
+- `useForceGraphInitialization` — mount-once layout effect: builds/configures
+  `ForceGraph3D`, wires frame/motion drivers, forwards WebGL context
+  lost/restored (restore wakes the loop). `onRendererFailure`/`onContextLost`/
+  `onContextRestored` must be identity-stable: the effect captures them once.
+- `forceGraphInitializationLifecycle.ts` — one idempotent teardown for failed
+  setup and unmount; attempts every acquired cleanup once even if one throws,
+  **in this order**: context-lost listener → context-restored listener → frame
+  subscription → idle controller → resize observer → label registries
+  (`clearAllLabelRegistries`, never per-node disposal) → graph `_destructor`
+  (`graph.renderer()` captured first) → `disposeSharedGraphResources` →
+  `renderer.forceContextLoss()` → `graphRef.current = null`. Why:
+  `renderer.dispose()` keeps the context + drawing buffer until GC; only the
+  forced loss frees them now and stops remounts piling contexts toward Chrome's
+  per-page cap. Shared resources go while the context is live; the loss goes
+  last (nothing after it touches GL) and raises no "GPU context lost" notice
+  since the listeners went first. Both run for every returned graph, even after
+  a throwing `_destructor`. Capture the graph before any setter can throw;
+  record each cleanup slot as acquired. Failed setup clears the retry container
+  (`replaceChildren()`) and reports the original error (a cleanup fault never
+  replaces it); unmount rethrows the first cleanup error after all attempts.
+- `useRadialTidyLayout` — on-load untangler: once per project on first populate
+  (gated on `tidyLayoutOnLoad`) and via the returned `runLayout` ("Untangle
+  now", always runs). **Apply + reheat are atomic in one deferred macrotask**:
+  the defer dodges the first-reheat `state.layout` crash; a frame between them
+  lets the hot engine scatter shallow nodes and re-tangle. A per-project guard
+  ref stops file-save rescans re-seeding a graph the user has arranged.
+- `useCameraPersistence` — position + orbit target per project
+  (`lattice.graphCamera.<path>`, debounced off OrbitControls `change`). The
+  library auto-fits only while the camera is at its construction default, so a
+  restored view survives later data loads.
+- `useGraphDataSync` — ScanResult + ghost history → `graphData`. A metric-only
+  update takes the **fast-patch** path (fields written onto live sim nodes;
+  `graph.refresh()` *only if H/Z/D is held* — otherwise every save rebuilds all
+  N sprites and wakes the loop). Both tiers (links identity, then
+  `shapeFingerprint`) share one id→node index. Bumps `dataGeneration` on every
+  full swap.
 
 ## Overlays
 
-- `useGitTimeline` owns one `gitHistoryRefresh` coordinator per project: one
-  HTTP request may run at a time, status bursts retain only the newest follow-up
-  signature, and a response already matching it skips that follow-up. An initial
-  websocket snapshot shares the initial HTTP fetch. Obsolete results do not
-  flash old ghost/ring sets; cleanup aborts HTTP and fences late publication.
-  Background failures retain the last good history and scrubber range.
-- `useGraphOverlays` — composes `useGraphSettings` + `useGitTimeline` +
-  `useLocOverlay` + `useHealthOverlay` + `useDeadCodeOverlay` + `useLabelsOverlay`
-  + `useSecurityOverlay` + `useGraphFilter` into one setup point.
-- `useSecurityOverlay` — first Security activation without saved results starts
-  one full OpenGrep scan; saved snapshots restore on mount. Idle chip activation
-  toggles saved results (per-project localStorage view preference); separate
-  Update changed files / Full scan actions POST. Polls the exact accepted id
-  and refreshes colors without reheating the layout. Background focus/git-change/
-  30 s reads check freshness only, and only while the overlay is on or the
-  findings panel is open (each re-fetches the complete result); turning either
-  on refreshes once. Owns category/severity filters and file/all
-  findings-panel state; filtering preserves nodes and engine coverage.
-  Shows a chip spinner and an ETA based on the previous scan.
-  On refresh/project open, status discovers an already running scan and resumes
-  GET polling of its exact id; only clicks POST. The countdown uses the backend
-  start time, shows "Estimating…" without history, and keeps spinning past the
-  estimate until the backend reports completion, cancellation or failure. The
-  backend owns the timeout; a client deadline must never hide a still-running
-  scan or remove its cancel action. Its clock stays inside the chip so it never
-  rerenders the graph.
-  Security recolor/visibility activates only when results arrive. A second click
-  while scanning cancels that exact id and shows "Cancelling…" until confirmed;
-  early cancellation waits for acceptance, and failed cancellation permits retry.
-  No shortcut or automatic scan retry. Project-scoped results and request identity fence
-  late completion; project change/unmount abort waiting without cancelling an
-  already accepted backend scan. Updates keep previous findings available;
-  cancellation preserves them, and a completed scan wins a late cancel response.
-- `useSecurityGraphInteraction` — ordinary file-node clicks in Security open
-  the scoped findings panel; modified clicks keep existing selection behavior.
-  Findings actions select/highlight a file and focus the camera, waking the idle
-  loop only across the camera tween.
-- `useOpengrepAvailability` — hides Security until `status.available` confirms
-  a usable engine (managed or PATH). Reads status on mount and window focus/tab
-  return, shares Settings' status responses, and polls only during an engine
-  installation so completion is noticed even if Settings closes. Reads include
-  the active project so `useSecurityOverlay` can reconnect to a running scan.
-  Shared project snapshots are scoped independently from machine availability.
-  Failed reads retain last confirmed availability. Cleanup aborts HTTP and removes listeners
-  and timers. Availability changes never start a scan.
-- `useHoldKeyMode` — the shared hold-key chord lifecycle (keydown/keyup/blur/
-  visibilitychange + text-input guard) behind every overlay. `momentaryLetterMode`
-  builds H/Z/D/W handlers; Alt supplies bespoke ones. Reuse this for new overlays.
-- `useOverlayPins` — pin state (`{health,loc,dead,worktree,labels}` + `togglePin`);
-  each overlay's effective mode is `held || pinned`. `useOverlayActive` folds those
-  into the `GraphOverlayKey` chips' lit record.
-- `useLocOverlay` / `useHealthOverlay` / `useDeadCodeOverlay` / `useLabelsOverlay`
-  — per-overlay mode + side effects. `useWorktreeHighlight` is the `W` overlay and
-  the **only** one with live scene state to tear down (fetches worktree-modified
-  files, rings them per task color, strips on deactivate/project-change/unmount).
-- `useGraphFilter` — swaps the `nodeVisibility`/`linkVisibility` accessors for
-  `hiddenExts` (no sim restart) and wakes the idle loop so the digest's scene
-  change paints even with the batched renderers off. While a metric view (`h`/`z`/`d`) is active it
-  also hides ghost (deleted-file) nodes and metrics-ignored-ext files (`.json`,
-  …) so the colored view stays uncluttered — reading `metricOverlayActiveRef`
-  live, re-evaluated by the view-toggle refresh. The same flag short-circuits
-  `useGitTimeline`'s scrub delta (no rings/ghosts painted while a view is held)
-  and drives a `useBatchedLinks` re-capture (drop links to the hidden nodes).
-  Security hides ghosts but keeps metrics-ignored config/prose files visible;
-  its own flag also recaptures batched buffers when another metric view is pinned.
+- `useGraphOverlays` composes settings, timeline, the per-overlay hooks and
+  `useGraphFilter`. `useHoldKeyMode` is the shared hold-key lifecycle
+  (keydown/keyup/blur/visibilitychange + text-input guard) — reuse it for new
+  overlays. Effective mode = `held || pinned` (`useOverlayPins`).
+- `useWorktreeHighlight` (`W`) is the **only** overlay hook with live scene
+  state: it strips its rings on deactivate, project change and unmount.
+- `useGraphFilter` — swaps `nodeVisibility`/`linkVisibility` for `hiddenExts`
+  (no sim restart) and wakes the loop so the digest paints with batching off.
+  While H/Z/D is active it hides ghosts + metrics-ignored files, reading
+  `metricOverlayActiveRef` live; the same flag short-circuits the timeline scrub
+  delta and re-captures batched links. Security's own flag re-captures batched
+  buffers when another metric view is pinned.
+- `useGitTimeline` + `gitHistoryRefresh.ts` — one coordinator per project: one
+  HTTP request at a time; status bursts keep only the newest follow-up signature
+  (skipped if the response already matches); the initial websocket snapshot
+  shares the initial fetch; obsolete results never flash old ghosts/rings;
+  cleanup aborts and fences late publication; failures keep the last good
+  history and scrubber range. `reconcileTimelineRange` keeps handle positions.
+
+## Security
+
+- `useSecurityOverlay` owns scans; **only explicit actions POST** (chip click
+  with no saved result = one full scan; Update changed files; Full scan). Saved
+  snapshots restore on mount; an idle chip click toggles them. Status finds an
+  already-running scan and resumes polling its exact id. Background reads
+  (focus, git change, 30 s) check freshness only, only while overlay or panel is
+  open. Recolor waits for results; refreshes never reheat. A click while
+  scanning cancels that exact id (after acceptance; failure allows retry). No
+  shortcut or auto retry. The backend owns the timeout — a client deadline must
+  never hide a running scan or its cancel; the countdown clock lives in the chip
+  so the graph never re-renders. Project + request identity fence late results;
+  project change/unmount stop waiting without cancelling an accepted scan;
+  updates and cancels keep prior findings; a completed scan beats a late cancel.
+- `useSecurityFindings` — review polling (3 s running, else 30 s, plus focus).
+  Operation claims block duplicate writes yet allow cancelling a pending start;
+  busy until every concurrent operation settles; abort + project-epoch fences.
+  Mutations refresh reviews and saved results — never scan or launch a harness.
+- `useSecurityGraphInteraction` — a plain file click opens the scoped findings
+  panel (modified clicks keep selection); findings actions wake only across the
+  camera tween.
+- `useOpengrepAvailability` — hides Security until `status.available`. Reads on
+  mount and focus/tab return, polls only during an engine install, carries the
+  project (so the overlay can reconnect to a running scan), keeps the last
+  confirmed value on failure, aborts on cleanup. Never starts a scan.
 
 ## Search, selection, drag, hover
 
-- `useGraphSearchController` — owns query + regex/contents toggles; wires
-  `useGraphSearch` (filename pass + opt-in debounced contents pass, both feeding
-  the shared `selected` set) and `useGraphSearchNavigation` (prev/next cursor +
-  camera focus, pulsing `wakeForRefresh` across the tween). `useGraphSearch`
-  takes `useGraphDataSync`'s `dataGeneration`: a full structural swap resets the
-  shared selection, so the "already applied" guard is keyed on the generation
-  and the same match set is re-applied once after every swap (search halos used
-  to vanish on the first rescan).
-- `useSelectionHaloSync` — toggles only changed ids + `wakeForRefresh`; never
+- `useGraphSearchController` — wires `useGraphSearch` (filename + opt-in
+  debounced contents pass → shared `selected`) and `useGraphSearchNavigation`
+  (camera focus, waking across the tween). A full swap resets selection, so the
+  "already applied" guard keys on `dataGeneration` and re-applies once per swap.
+- `useSelectionHaloSync` — toggles changed ids + `wakeForRefresh`; never
   `graph.refresh()`.
-- `useSelectionHaloPulse` — `../halo.ts::updateHaloPulse` animates two shared
-  materials in lock-step: ring tint (base ⇄ brighter/whiter) and additive glow
-  opacity (0 ⇄ peak). O(1) per frame regardless of selected-node count.
-  Allocation belongs to `../haloResources.ts`; see the [parent resource
-  guide](../CLAUDE.md) for full ownership details. The hook owns its `onFrame`
-  subscription and holds the idle controller's slow-only `halo` reason only
-  while selected (~30fps when no faster reason is held). Clearing selection
-  releases the reason, resets both existing materials (base ring tint, glow off)
-  and calls `wakeForRefresh` once. Teardown unsubscribes, releases any held
-  reason and resets; neither pulse nor reset allocates resources.
-- `useSelectionGlowSettings` — pushes `selectionGlowStrength`/
-  `selectionGlowScale` into `halo.ts`. Strength is read live per frame; a scale
-  change rebuilds the current selection's halos in place via
-  `rebuildSelectionHalos` (O(selected)), without `graph.refresh()`.
-- `useBoxSelect` + `boxSelectGeometry` + `orbitControlLock` — shift-drag rectangle
-  select.
-- `useNodeContextMenu` — right-click popover. `useGraphTaskCreation` — create-task
-  modal state; `submitTask` runs `ensureGitRepo` (`components/gitSetup/`) before
-  `createTask`, since a non-repo project 400s the create — this is the graph's
-  copy of the task board's Git Setup interception, and it resumes the create
-  afterwards rather than making the user retype the prompt.
-  `useGraphViewKeyboard` — the Escape chord (menu → search → select).
-- `useCanvasDragTracking` — drives `pointerDraggingRef` from pointerdown, but
-  suspends library pointer interaction only after 4 px of movement. Interaction
-  setters clear the picked node; stationary clicks must never call them. Drag
-  release/cancel/unmount restores suspended interaction. Adapter regressions in
-  `canvasDragTracking.test.ts`. `useHoverNodeDebounce` — hover tooltip state + the
-  null-transition debounce + the `flushSync` hover-in; ignores hover mid-drag.
-  `useOverlayTooltipDismiss` — clears a stale tooltip when an LOC/health view ends.
-  `usePointerLeaveTooltipDismiss` — hides the React + native node tooltips when
-  the cursor leaves the canvas (navbar, terminal panel, HUD panels) and suspends
-  library hover until it re-enters; `pointerOutsideRef` also gates the hover
-  setter and the native-label accessor against a stale on-canvas raycast.
+- `useSelectionHaloPulse` — `../halo.ts::updateHaloPulse`, O(1) per frame over
+  the two shared materials. Holds the slow-only `halo` reason only while
+  selected; clearing releases it, resets (base tint, glow off) and wakes once;
+  teardown unsubscribes, releases, resets. Pulse/reset never allocate.
+- `useSelectionGlowSettings` — strength read live; a scale change rebuilds
+  selected halos (`rebuildSelectionHalos`, O(selected)), no refresh.
+- `useBoxSelect` (+ `boxSelectGeometry`, `orbitControlLock`); `useGraphViewKeyboard`
+  (Escape chord: menu → search → select).
+- `useGraphTaskCreation` — `submitTask` awaits `ensureGitRepo`
+  (`components/gitSetup/`) before `createTask` (non-repo projects 400) and then
+  resumes the create, so the prompt is never retyped.
+- `useCanvasDragTracking` — sets `pointerDraggingRef` on pointerdown but
+  suspends library interaction only after 4 px; stationary clicks must never
+  call the interaction setters (they clear the picked node); release/cancel/
+  unmount restore them.
+- `useHoverNodeDebounce` (null-transition debounce, `flushSync` hover-in,
+  ignores hover mid-drag); `useOverlayTooltipDismiss`;
+  `usePointerLeaveTooltipDismiss` suspends library hover off-canvas, and
+  `pointerOutsideRef` gates the hover setter and native-label accessor against a
+  stale raycast.
 - `useNodeDragBehavior` — physics-active drag (lifts `d3AlphaMin` so neighbours
-  follow) + DAG-Y lock (re-pin `fy` so a drag slides only in the node's plane).
+  follow) + DAG-Y lock (re-pins `fy`).
 
-## Batched renderers & misc
+## Batched renderers, APL, settings
 
-- `useBatchedLinks` / `useInstancedNodes` — own the `instancedLinks`/
-  `instancedNodes` controllers: create once, subscribe the per-frame sync to the
-  scene frame driver, toggle on the setting, and **rebuild on a graphData swap /
-  hidden-ext change / node-size change / metric-view toggle /
-  `dataGeneration` bump** (every full
-  `graphData()` swap, so they re-capture the fresh arrays after a ghost merge).
-  Do not depend on `structuralData`: a same-shape backend rescan replaces that
-  reference even when `useGraphDataSync` correctly skips a graph swap. Rebuilding
-  in that case needlessly uploads all buffers and wakes the paused render loop.
-- `useGraphCounts` — file/dir/hidden HUD counts memo, keyed off `useStructuralScan`
-  so metric saves skip the recount. `useMetricsIgnoreRefresh` — refresh when the
-  LOC/health ignore-ext set changes. `useRefMirror` / `refresh.ts` — small helpers.
-- `useAgentOverlay` — hook half of the Agent Presence Layer: owns the
-  `AgentOverlay` (`../agentOverlay`) lifecycle, merges in-progress Claude, Codex,
-  and Pi tasks (`/ws/tasks`) + non-worktree agent-session presence
-  (`/ws/agent-sessions`) into its node set, routes
-  `task-activity`/`agent-activity` beam + subagent-lifecycle
-  frames, and drives the per-frame `tick` off the scene frame driver — holding the
-  idle controller's `agents` reason only while `tick` reports motion. See the APL
-  notes in `../CLAUDE.md`.
-- `agentOverlayEvents` — descriptor projection/equality, activity/lifecycle
-  routing, and the satellite-reap timer beat (`reapStaleSatellites`: reaps
-  without a frame, then wakes the loop), using the hook's existing buffer,
-  timestamp, and kick/refresh callbacks; subscriptions, pending replay, timers
-  and render-loop ownership stay in the hook.
+- `useBatchedLinks` / `useInstancedNodes` — create the controller once, sync per
+  frame via the frame driver, toggle on the setting, rebuild on graphData swap /
+  hidden-ext / node-size / metric-view toggle / `dataGeneration`. Never depend
+  on `structuralData`: a same-shape rescan replaces it without a graph swap →
+  needless full upload + wake.
+- `useAgentOverlay` — APL hook half: `AgentOverlay` lifecycle, merges
+  in-progress tasks (`/ws/tasks`) + non-worktree sessions
+  (`/ws/agent-sessions`), routes activity/subagent frames, ticks off the frame
+  driver holding `agents` only while `tick` reports motion.
+  `agentOverlayEvents.ts` — projection/routing + the satellite-reap beat (reap
+  without a frame, then wake); subscriptions, replay, timers and loop ownership
+  stay in the hook.
+- `useGraphCounts` keys off `useStructuralScan` (metric saves skip the recount);
+  small: `useNodeDepthCache`, `useMetricsIgnoreRefresh`, `useRefMirror`.
+- `useGraphSettings*` / `usePerProjectGraphSettings` / `graphSettingsEffectUtils`
+  — guarded render-vs-physics settings effects:
+  [graphSettingsPanel/CLAUDE.md](../graphSettingsPanel/CLAUDE.md) → "Graph
+  settings flow".
 
-## Render-vs-physics splits (settings effects, all guarded)
-
-`useGraphSettings` keeps its public `{ settings, setSettings, settingsRef }`
-shape but is internally split by concern: per-project persistence/ref mirroring,
-sprite/metric-label refresh, physics/repulsion application, layout-shape ("Spread"
-tab) forces, pixel ratio, and link width. Files:
-- `usePerProjectGraphSettings.ts` — per-project persistence + `settingsRef` mirror.
-- `useGraphSettingsSprites.ts` — `useSpriteAndMetricLabelRefresh` (+ `SPRITE_REFRESH_DEBOUNCE_MS`).
-- `useGraphSettingsPhysics.ts` — `usePhysicsAndRepulsionSettings`.
-- `useGraphSettingsLayoutShape.ts` — `useLayoutShapeSettings`.
-- `useGraphSettingsRendering.ts` — `useRenderPixelRatioSetting` + `useLinkWidthSetting`.
-- `graphSettingsEffectUtils.ts` — shared `GraphRef` type + `hasMountedNodes` (the empty-graph guard).
-
-Settings effects skip work on the initial mount and on an empty/unmounted graph
-(`nodeThreeObject` reads `settingsRef` live, so the data-sync build already uses
-current values — a pre-population refresh/reheat is a byte-identical wake):
-- **Sizes** → clear label registries + `graph.refresh()` (no sim restart),
-  trailing-debounced (`SPRITE_REFRESH_DEBOUNCE_MS`): the sliders fire a change
-  per pointer move and the refresh rebuilds every sprite, so a drag pays one
-  rebuild when it settles. Persistence (`usePerProjectGraphSettings`) is
-  likewise debounced (`SETTINGS_PERSIST_DEBOUNCE_MS`), with the pending save
-  flushed on unmount and before a save for another project.
-- **Physics** (`charge`/`link`/`decay`/`chargeTheta`/`repulsionMode`) → poke
-  `d3Force` + `d3ReheatSimulation`; the force pokes run on *every* run (incl.
-  setup) so persisted non-defaults aren't left at d3 defaults. `repulsionMode`
-  swaps `forceManyBody`↔`forceLocalRepulsion` only when the active force changes.
-  After replacement, the detached cached charge force is initialized with an
-  empty node array; reattachment supplies the current simulation nodes/context.
-- **Layout shape** (`alphaDecay`/`warmupTicks`/`collideRadius`) →
-  `useLayoutShapeSettings`: push `d3AlphaDecay`/`warmupTicks` every run;
-  install/remove the `forceCollideXZ` sim slot when its knob crosses 0; reheat on
-  change to a populated graph (same guard/defer as physics). Not neutral by
-  default: `alphaDecay` 0.014 (d3: 0.0228) and `warmupTicks` 15 shape every
-  default layout; only `collideRadius` (0) is off.
-  `applyCollisionRadius` drops the cached collision closure after removal,
-  releasing its nodes/scratch buffers; re-enable creates a fresh force.
-- **`linkWidth`** / **`pixelRatio`** → render-only prop + `wakeForRefresh`, no
-  reheat. `batchedLinks`/`batchedNodes` are owned by their hooks, not effects.
-
-## Commands
-
-From `frontend/`: `npm run build` (build), `npm test` (tests), `npx tsc -b`
-(type-check). See the [frontend command guide](../../../CLAUDE.md#build-type-check--tests).
+Tests: named after the module in `frontend/src/__tests__/`. Commands:
+[frontend guide](../../../CLAUDE.md#build-type-check--tests).

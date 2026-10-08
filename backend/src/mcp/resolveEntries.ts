@@ -120,7 +120,7 @@ function resolvePlaywrightFor(
 // mutated). Returns `null` when there is no project to serve: the server pins
 // itself to one board and every tool call needs `LATTICE_PROJECT`, so a
 // project-less spawn — a sidebar terminal opened before a project is chosen, a
-// scratch cwd — is better off with no board tools at all than with eleven that
+// scratch cwd — is better off with no board tools at all than with a set that
 // all fail on the first call.
 function shapeLatticeEntry(
   entry: McpServerEntry,

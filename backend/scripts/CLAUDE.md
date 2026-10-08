@@ -34,7 +34,8 @@ sessions for re-adoption. Control-pipe wiring is covered by
 ## Related owners
 
 - [Root scripts](../../scripts/CLAUDE.md): preflight, orchestration, console
-  commands, shared dependency checks/watches and the outer supervisor's logs.
+  commands, shared dependency checks/watches; the outer supervisor's logs are in
+  [scripts/orchestrate](../../scripts/orchestrate/CLAUDE.md).
 - [Backend source](../src/CLAUDE.md): application boot and subsystem navigation.
 - [Restart drain](../src/restartDrain/CLAUDE.md): backend admissions and state flush.
 - [Project run locks](../src/projectRunLock/CLAUDE.md): lock ownership and liveness.

@@ -191,9 +191,7 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   void runBootRecoveryChain(backendOrigin, finishWorkflowRecovery);
   // Re-enqueue task runs that were waiting in the spawn queue when the
   // backend stopped (their `runQueued` flag is persisted on the task).
-  // Runs post-listen and after the pre-listen orphan-worktree sweep so a
-  // half-created worktree is reconciled rather than reclaimed.
-  // Runs after the orphan-worktree sweep (now post-listen, recovery/index.ts
+  // Runs after the post-listen orphan-worktree sweep (`recovery.ts`
   // startBootWorktreeSweep) so a half-created worktree is reconciled rather
   // than reclaimed.
   void startBootWorktreeSweep().then(() =>

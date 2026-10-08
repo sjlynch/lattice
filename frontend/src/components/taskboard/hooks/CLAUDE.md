@@ -1,66 +1,166 @@
 # frontend/src/components/taskboard/hooks
 
-Where the taskboard's real logic lives. `TaskBoardLauncher.tsx` is a thin
-FloatingPanel/JSX shell; `useTaskBoardController.ts` composes the task, merge,
-push, QA, post-merge, harness, search, lane-sort, selection, and terminal
-hooks into the single shape the launcher renders. Most lower-level hooks are
-consumed via composers (`useTaskBoardController`, `useTaskBoardState`,
-`useTaskActions`) rather than directly by components.
+Where the taskboard's real logic lives. `../TaskBoardLauncher.tsx` is panel
+chrome; `useTaskBoardController.ts` composes everything below into the one shape
+it renders. Components, lanes and pure helpers: `../CLAUDE.md`. HTTP/WS
+bindings and the retry policy: `../../../api/CLAUDE.md`.
 
-Hooks handed `addTerminal` type it as the shared `AddTerminal` from `terminal/terminalTypes.ts` (`Ctx['addTerminal']`) — import it, don't redeclare it locally.
+## Map
 
-## State / data-sync
+Composition (put new cross-concern wiring in the controller; a new action in
+its focused hook, never in `useTaskActions`):
 
-- `useTaskList.ts` — per-folder task list: initial fetch + live `/ws/tasks` subscription, structural sharing so unchanged cards skip re-render, and the shared error-toast slot (`showError`, timer from `shared/useAutoDismissMessage`). Its returned list is project-guarded: on folder switch it reports `[]` until the new folder's fetch/WS snapshot arrives, so stale task IDs are never rendered/actionable under the next project. A `partial` `/ws/tasks` update (the in-progress-only replay a late joiner gets) is ignored entirely — it neither replaces the board nor counts as live state that would drop the HTTP fetch (`__tests__/taskListPartialReplay.test.ts`).
-- `useTaskBoardController.ts` — top-level taskboard controller: composes the concern hooks below and derives only cross-concern handlers (slot-drop wrappers, bulk strips, terminal focus). Keep new cross-concern wiring here so `TaskBoardLauncher.tsx` stays mostly panel chrome.
-- `useTaskBoardDataView.ts` — data/view slice: lane visibility, task list + grouping, search filtering, selection (over the *filtered* grouping, so shift-ranges skip cards the search hides), display sorting, and drag affordances.
-- `useTaskBoardDetailActions.ts` — detail/editing slice: viewed task sync, new-task overlay lane, and the callbacks that adapt CRUD/run actions to the viewed task.
-- `useTaskBoardState.ts` — wraps `useTaskList`; adds lane grouping/sorting and derived board counts.
-- `useTaskSearch.ts` — case-insensitive search box state; derives `filteredTasks`/`filteredGrouped` and the `searchActive` flag that gates lane "run all". Lowercased haystacks are cached per Task object in a `WeakMap` (valid because `useTaskList` structurally shares unchanged tasks and never mutates one in place), and with search off `filteredGrouped` is the caller's `grouped` itself, not a re-sort (`__tests__/taskBoardUpdateChurn.test.ts`).
-- `useTaskSelection.ts` — multi-selection on cards: selected ids, shift-range anchor, and the lane the selection is anchored in (cross-lane ranges reset).
-- `useVisibleLanes.ts` — lane-visibility toggle set for the filter chips (all visible by default).
-- `useLaneSort.ts` — per-lane arrival-date sort mode (`recent`/`oldest`/`manual`, default `recent`), persisted per project (`lattice.laneSort.<path>`); backs the lane header clock + caret. `setManual` is wired to slot drops so manual reorder survives.
-- `useSyncedViewedTask.ts` — keeps the detail overlay's viewed task fresh against live updates; closes the overlay if the task disappears.
-- `useTaskDetailEdit.ts` — the detail overlay's editable title/description draft, dirty check, and save-payload prep. Resets on a task switch; on a same-ID update it reconciles per field against a baseline ref (`reconcileEditFields`) — an untouched field adopts the server value (so a WS update lands instead of a stale local field clobbering it on Save), an edited field keeps the user's draft. `computeSavePayload` only sends fields changed vs the current server task.
-- `useHarnessSelector.ts` — agent-harness dropdown: installed CLIs + the curated Pi model menu come from the shared `useHarnessAvailability` / `usePiModelMenu` hooks; this hook keeps only the persisted per-project choice (`{harness, piModel}`) and the round-robin pick used in `interleave` mode. `pickRunHarness()` returns `{harness, piModel}` for run/resume; the dropdown value encodes both (`pi:<provider/model>`). The folder-change settings load is guarded against fast project switches by a monotonic load-id ref + `loadHarnessForFolder` (`harnessSelectorLoad.ts`, pure + unit-tested): a project-A response that resolves after switching to B is dropped, so it can't overwrite B's selection or persist a coerced patch under A. `selectHarness` claims a load id too, so a pick made while the load is in flight wins: that GET began before the pick's PATCH and would otherwise revert the dropdown to the old harness while the new one stayed saved (`__tests__/harnessSelectorUserPick.test.ts`).
+- `useTaskBoardController.ts` — top level: spawn handler → data view → runs → actions → bulk → terminals → detail.
+- `useTaskBoardDataView.ts` — lane visibility, task list, search, selection, lane sort, drag affordances.
+- `useTaskBoardRunControllers.ts` — merge-run sync, push, harness, QA Playwright, QA runs, post-merge hook.
+- `useTaskBoardDetailActions.ts` — viewed task, new-task overlay lane, CRUD/run adapters for it.
+- `useTaskActions.ts` — composes `useTaskCrudActions` / `useTaskReorderActions` / `useTaskLifecycleActions` / `useTaskMergeActions` (also merge-all, cancel, `markAllQaDone`, `clearStuckConflicts` = `/merge-aborted` per orphaned conflict).
+- `useTaskTerminals.ts` — composes `useTaskTerminalFocus` / `useTaskTerminalCleanup` / `useTaskTerminalReattach`.
+- `usePostMergeHook.ts` — composes `usePostMergeHookForm` + `usePostMergeHookRun`; `usePostMergePromptDraft` is the row's draft.
 
-## Task actions
+State: `useTaskList.ts` (fetch + `/ws/tasks`, the shared `showError` toast
+slot), `useTaskBoardState.ts` (grouping/sort/counts), `useTaskSearch.ts`,
+`useTaskSelection.ts`, `useVisibleLanes.ts`, `useLaneSort.ts`,
+`useSyncedViewedTask.ts`, `useTaskDetailEdit.ts`, `useHarnessSelector.ts` +
+`harnessSelectorLoad.ts`.
 
-- `useTaskActions.ts` — composes the four per-concern action hooks below into the single shape the launcher consumes. Add new actions in the matching focused hook, not here.
-- `useTaskCrudActions.ts` — add/edit/delete plus the plain status-change `moveTask`. `editTask`/`addTask`/`deleteTask` resolve `Promise<boolean>` (false on failure, after toasting) so callers can keep a modal open on a rejected save — `TaskDetailOverlay` awaits `editTask` and closes only on success. `addTask` runs `ensureGitRepo` (`components/gitSetup/`) BEFORE the POST: the backend blocks a non-git project at task *create*, not at run, so the interception has to happen before the doomed request — and on success it falls straight through to the create, so the user never retypes their task. A decline returns false, which leaves `NewTaskOverlay` open with their text intact. `deleteTask` reads the API's parsed `DeleteTaskResult`: when the backend kept the task's branch because it had unmerged commits (`keptBranch`), its `hint` goes through the same `showError` toast slot (the delete still counts as a success). An absent/malformed field is ignored (`parseDeleteTaskResult`, pinned by `__tests__/deleteTaskKeptBranch.test.ts`).
-- `useTaskReorderActions.ts` — drag/drop reorder math (`dropAt`/`moveMulti`/`dropAtMulti`); computes a lane's new ID order and ships one batched reorder. Slot indices count only the *visible* (search-filtered) cards, so they are mapped onto the full lane with `fullLaneDropIndex` before splicing.
-- `useTaskLifecycleActions.ts` — `runTask`/`resumeTaskAction` + the lane-level "run/resume all"; requests go through the backend spawn queue (terminals mount later via the `task-spawned` event). `runTask` also guards on `ensureGitRepo` as a backstop for a task the create-time guard never saw (filed over the HTTP API, or a project whose `.git` vanished later); the provider coalesces concurrent calls per project, so "run all" asks once rather than stacking a dialog per task. The "run/resume all" variants (and `markAllQaDone`) return the ids they targeted so the launcher can drive a progress strip.
-- `useBulkRunStrips.ts` — per-lane progress strips for the Open/In Progress/QA bulk actions (the Ready-to-Merge lane keeps its own `useMergeRunSync` strip). `beginBulk(lane, ids, kind)` starts tracking against the targeted ids; the strip clears once each task has spawned (left its lane) or been queued, then flips to a short auto-dismissing summary. Resume has no task-state signal, so its completion rides `task-spawned` via `noteBulkSpawned` (fed from the spawn handler through a ref). Keyed on `activeFolder`: a project switch drops every record (during render) and clears every lane timer — the launcher stays mounted across switches, and A's ids, absent from B's task list, used to read as spawned and flash "Started N tasks" on B (or spin "Resuming…" until the safety timeout); pinned by `src/__tests__/bulkRunStripsFolderSwitch.test.ts`.
-- `useLaneBulkActions.ts` — owns `useBulkRunStrips` and assembles the per-lane `runAllActionByLane` map the lane grid renders (each Open/In-Progress/QA "run all" wraps its ids in `beginBulk`; Ready-to-Merge is `mergeAllReady` verbatim). Bridges the resume-strip's `noteBulkSpawned` back to `useTaskSpawnHandler` via `setBulkSpawnNotifier`. Pulled out of the launcher so it stays panel/layout composition.
-- `useTaskMergeActions.ts` — per-task `mergeTaskAction` (resolver-Claude spawn on conflict), `mergeAllReady`, `cancelActiveRun`, `clearStuckConflicts` (Resolving-strip escape hatch — `POST /merge-aborted` per orphaned conflict task), and `markAllQaDone`. `mergeTaskAction` on a conflict-flagged task with a live `kind: 'merge'` tab (`findLiveResolverTab`: has a `serverId`, not exited/dead/restore-failed — an unactivated tab has no status and counts as live) focuses it and POSTs nothing: a second `/merge` spawned a second resolver into the same worktree. Only while `task.conflict`: a resolver that gave up leaves an idle session, and Merge must retry. A per-task in-flight ref makes a double-click one request; after a spawn it closes the task's stale tabs (`closeTerminalsForTask` with the new pty as `keep`, as `useMergeRunSync`) before adding the tab, focused when the backend answered `existingResolver`. Pinned by `__tests__/mergeFocusesLiveResolver.test.ts`.
-- `useLaneDropTargets.ts` — lane-level drop targeting: background-hover state, per-slot hover index, and one stable `slotHandlers` set shared by every slot in the lane (each slot renders `data-slot-index`, which the handlers read; callbacks/hover go through refs), so `Lane.tsx`'s memoized `DropSlot`s re-render only when their `active` flag flips; drives the reorder actions above.
+Also: `useLaneDropTargets.ts`; `useBulkRunStrips.ts` + `useLaneBulkActions.ts`
+(Open / In Progress / QA bulk strips + the per-lane `runAllActionByLane` map;
+Ready-to-Merge uses `mergeAllReady` and the `useMergeRunSync` strip);
+`useTaskSpawnHandler.ts`; `usePushRun.ts`, `useQaRuns.ts`, `useQaPlaywright.ts`;
+`useVisibilityPolling.ts` (interval / hidden-pause / cancellation shell for push
++ QA polling); `optimisticSave.ts`, `strictSettingsLoad.ts`.
 
-## Run orchestration
+## Invariants
 
-- `useTaskBoardRunControllers.ts` — run-controller slice that composes merge-all, push, harness/model, QA Playwright, QA runs, and post-merge hook state for the top-level controller.
-- `useMergeRunSync.ts` — hydrates + live-syncs the backend "merge all" run; spawns the resolver Claude on conflict events (closing any stale tab for that task first via `closeTerminalsForTask`, so a resolver abort → re-merge doesn't stack a second merge-kind tab) and toasts each new per-task error once. That close passes the event's `terminalId` + `serverId` as `keep`, for the same reason as `useTaskSpawnHandler` below: the registry's `upsert` mounts the fresh resolver's tab before `conflict` arrives, and a plain per-task close killed the resolver ~20 ms after it spawned — the run then stopped on a "dead" resolver and a workflow Merge step failed with "made no progress" (2026-09-25; `__tests__/mergeConflictKeepsFreshResolver.test.ts`).
-- `useVisibilityPolling.ts` — shared lifecycle shell for visibility-aware interval polling with cancellation guards; callers keep domain-specific status/error handling and terminal cleanup decisions.
-- `usePushRun.ts` — QA-lane Push button: probes for `.git`, starts a push run, polls it, and tears down the local terminal when the Stop hook flips it to `done`. `startPush` carries an in-flight ref (the button is disabled only off `activePush`, which is null for the whole POST, and the backend doesn't dedupe — a double-click used to start two pushes) and doesn't track a start that resolves after a project switch.
-- `useQaRuns.ts` — QA-lane "run e2e test" buttons; spawns a Playwright Claude per run (tracked by terminal id — deliberately no `taskId`) and polls to auto-close on `done`.
-- `useQaPlaywright.ts` — reads/persists the QA-lane Playwright MCP toggle (`userSettings.qaPlaywright`); the backend reads it at spawn time (QA runs only). Exposes `loaded`: the Globe/eye are disabled and the toggles no-op until this project's value has loaded, and a toggle patches the whole `qaPlaywright` object (the PATCH merge is shallow) built from the LOADED value, so flipping `enabled` keeps a saved `headless: false`. A failed PATCH reverts the toggle and toasts (`showError`) via `saveOptimistic`.
-- `usePostMergeHook.ts` — unconditional composition of the form and run hooks below for PostMergeHookRow; preserves the arguments/return shape and re-exports `PostMergeHookFormState` as a type.
-- `usePostMergeHookForm.ts` — owns the persisted prompt/enabled/harness/Pi-model form, strict retried loading and folder resets, the `loaded` gate, confirmed values, per-field save sequencing, and pending-save count (`saving`). Saves no-op until loaded; failed toggle/harness saves revert to the last confirmed value only when still current (including A → B → A switches), while failed prompt saves retain typed text. The row's controls stay disabled and its chip reads "Loading…" until loaded.
-- `usePostMergePromptDraft.ts` — the row's unsaved prompt buffer, external-prompt sync, and 250 ms debounced save; loading, confirmed server values, and PATCH sequencing stay in `usePostMergeHookForm`.
-- `usePostMergeHookRun.ts` — owns active/recent hydration, the live subscription, terminal deduplication, and abort. Live events supersede a late GET; changing `activeFolder` or `addTerminal` cleans up and restarts the subscription, resetting run state and the spawned-run-id set. Terminal ids/labels and focus remain tied to the run; abort failures go to `showError`.
-- `optimisticSave.ts` — `saveOptimistic(next, deps)`, the pure apply → PATCH → revert-on-failure helper `useQaPlaywright` and `usePostMergeHookForm` use: the revert target is read at failure time (last confirmed value) and skipped when a later save / project switch superseded this one (`isCurrent`). Pinned by `__tests__/optimisticSave.test.ts`; the hook wiring by `__tests__/qaPlaywrightSettingsLoad.test.ts`.
-- `strictSettingsLoad.ts` — `loadUserSettingsWithRetry(folder, onLoaded, label)`, the strict userSettings load `useQaPlaywright` and `usePostMergeHookForm` use: `fetchUserSettingsStrict` retried with the scan-style backoff until it succeeds or the returned cancel thunk runs (effect cleanup). The lenient `fetchUserSettings` maps a failure — a 502 mid backend restart — to `{}`, which those hooks used to take as the saved state; a toggle then PATCHed the defaults over it. Pinned by `__tests__/qaPlaywrightSettingsLoad.test.ts`.
+General:
 
-## Terminal lifecycle
+- Hooks handed `addTerminal` type it as the shared `AddTerminal` from
+  `terminal/terminalTypes.ts` — import it, don't redeclare it.
+- Everything is project-fenced: the launcher stays mounted across project
+  switches, so each hook drops/resets its per-project state on an
+  `activeFolder` change and ignores results that land after one.
+- Card props keep identity across content-unchanged board updates
+  (`getFocusTerminal` built from `terminals` only; selection/drop callbacks read
+  refs) — every `/ws/tasks` frame is a new array, and memoized cards would
+  all re-render.
 
-Resume retry policy (`useTaskLifecycleActions`): retry recovery 503 and proxy
-ECONNREFUSED only. A lost acknowledgement surfaces an uncertain result and asks
-the user to check the task terminal before another Resume. The spawn queue's
-dedupe key expires on settlement while the task remains In Progress, so an
-automatic replay could allocate another agent and replace the first one's tab.
-Later explicit Resume actions remain independent.
+Task list, search, selection, reorder:
 
-- `useTaskSpawnHandler.ts` — builds the `/ws/tasks` `task-spawned` handler (close any stale tab for the task via `closeTerminalsForTask`, then mount the queued task's terminal + ping the resume strip). The close-first step keeps **one terminal per task per browser tab** — but passes the delivered pty (`terminalId` + `serverId`) as `keep`, because the registry's `upsert` for the new record usually mounts its tab *before* `task-spawned` arrives, and a plain per-task close then DELETEd the agent that had just started (every queued run and every Resume died ~30 ms in while the board was open, 2026-09-23): a Resume re-spawns the harness in the same worktree with a fresh serverId and emits a second `task-spawned`, and `useTaskTerminalCleanup` never closes an in_progress task's tab, so without this the ended pre-resume tab would linger beside the live one. Runs *before* the task list (which needs the handler), so the resume-strip notifier is bridged in later through a ref via the stable `setBulkSpawnNotifier`. Consumed by `useLaneBulkActions`.
-- `useTaskTerminals.ts` — composer over the three lifecycle hooks below (focus + cleanup + reattach); the launcher wires all of taskboard's post-task-list terminal lifecycle in one call and gets back just the focus helpers (`getFocusTerminal` / `focusTerminalByServerId`).
-- `useTaskTerminalCleanup.ts` — closes fresh task terminals on lifecycle transitions and later cache/registry arrivals: qa/done/deleted include resolvers, ready-to-merge leaves resolvers alone. Closing and failed tabs are excluded from automatic cleanup; failures wait for explicit retry. Each task's eligible ids share a bulk close so failed siblings are skipped and a held DELETE cannot delay another task's confirmation.
-- `useTaskTerminalFocus.ts` — task→pty focus map (`getFocusTerminal`, built from `terminals` only so it keeps its identity across board updates) plus a serverId-based focuser for the post-merge hook row (which has no task).
-- `useTaskTerminalReattach.ts` — one-shot on board load: re-mounts terminals for `in_progress` tasks whose pty is alive in the terminal-server but not mounted in this browser tab. It only claims the per-project one-shot after a successful `/api/terminals` parse and uses bounded retry/backoff for transient HTTP/JSON failures or startup no-session races. Since the terminal-tab registry the task's tab normally arrives registered (with its `taskId`) from `/api/terminal-tabs` or the restore pass — this hook skips any task that already has a tab (registered or not), and an unregistered tab it does add is superseded by the registry's record for the same pty (`mergeRegistryTabs`). It remains the fallback for a task whose record is missing.
+- `useTaskList` reports `[]` after a folder switch until the new folder's
+  fetch/WS snapshot arrives (stale ids never actionable under the next project).
+  A `partial` `/ws/tasks` update (the late-joiner replay) is ignored entirely:
+  it neither replaces the board nor counts as live state that would drop the
+  HTTP fetch.
+- `useTaskList` structurally shares unchanged tasks and never mutates one in
+  place — `useTaskSearch`'s per-Task `WeakMap` haystack cache depends on it. With
+  search off, `filteredGrouped` is the caller's `grouped` itself, not a re-sort.
+- Selection ranges run over the *filtered* grouping (shift-ranges skip hidden
+  cards); a cross-lane range resets.
+- Reorder slot indices count only visible cards: map them with
+  `fullLaneDropIndex` (`../reorderMath.ts`) before splicing. A slot drop flips the
+  lane to manual sort (`setManual`). Sort mode persists per project under
+  `lattice.laneSort.<path>`.
+- `useLaneDropTargets` hands every slot one stable `slotHandlers` set that reads
+  `data-slot-index` (callbacks/hover via refs), so memoized `DropSlot`s
+  re-render only when their `active` flag flips.
+- `useTaskDetailEdit`: a task switch resets the draft; a same-id update
+  reconciles per field against a baseline (`reconcileEditFields`) — untouched
+  fields adopt the server value, edited ones keep the draft — and
+  `computeSavePayload` sends only fields changed vs the current server task.
+  Otherwise a stale local field clobbers a WS update on Save.
+- `useHarnessSelector`: a folder switch starts from defaults; the load is
+  strict (failed GET → `claude`, not `{}`) and guarded by a monotonic load id
+  (`loadHarnessForFolder`) so A's late response can't overwrite B or persist
+  under A. `selectHarness` claims a load id too, so a pick made mid-load wins
+  (the in-flight GET would revert the dropdown while the new value stayed
+  saved). Dropdown value: `pi:<provider/model>`.
+
+CRUD and lifecycle:
+
+- `addTask` / `editTask` / `deleteTask` resolve `false` after toasting, so the
+  overlay stays open with the user's text. `addTask` runs `ensureGitRepo`
+  BEFORE the POST (the backend refuses a non-git project at *create*); a
+  decline returns false.
+- `deleteTask` toasts a `keptBranch.hint` (unmerged commits) and still counts
+  as success; a malformed field is ignored (`parseDeleteTaskResult`).
+- Run/resume only enqueue: the terminal mounts later from `task-spawned`, never
+  from the action. `runTask` re-checks `ensureGitRepo` (tasks filed over HTTP, a
+  vanished `.git`); the provider coalesces per project so "run all" asks once.
+  Run-all variants and `markAllQaDone` return the targeted ids for the strip.
+- Retry policy: Run retries every transient failure (the backend dedupes a
+  queued run) and treats a 400/409 after a possibly-applied attempt as its own
+  run. Resume retries only recovery 503 / proxy ECONNREFUSED: a lost
+  acknowledgement toasts "check the task terminal", because the spawn queue's
+  dedupe key expires on settlement while the task stays In Progress — an
+  automatic replay could allocate a second agent and replace the first one's
+  tab.
+- Bulk strips are keyed on `activeFolder`: a switch drops every record
+  (during render) and clears every lane timer — else A's ids, absent from B's
+  list, read as spawned and flash "Started N tasks" on B. Resume completes via
+  `noteBulkSpawned`, bridged from the spawn handler through
+  `setBulkSpawnNotifier` (the handler runs before the task list, the strips
+  after); a safety timeout ends a strip that never completes.
+
+Merge, resolvers and one terminal per task:
+
+- `mergeTaskAction` on a conflict-flagged task with a live `kind: 'merge'` tab
+  (`findLiveResolverTab`: has `serverId`, not exited/dead/restore-failed)
+  focuses it and POSTs nothing — a second `/merge` spawns a second resolver
+  into the same worktree. Only while `task.conflict`: a resolver that gave up
+  leaves an idle session, and Merge must retry. A per-task in-flight ref makes a
+  double-click one request; it retries only definitely-unaccepted failures.
+- A conflict response without `serverId` means the backend's resolver
+  pre-spawn failed: toast, never open the tab (a serverless `/ws/terminal`
+  bypasses the spawn chokepoint — MCP scope, system prompt, registry).
+- Every "replace this task's tab" close (`useTaskSpawnHandler`,
+  `useMergeRunSync` on `conflict`, `mergeTaskAction`) calls
+  `closeTerminalsForTask` with the just-delivered pty (`terminalId` +
+  `serverId`) as `keep`: the registry's `upsert` usually mounts the fresh tab
+  before the event arrives, and a plain per-task close DELETEs the agent that
+  just started (killed queued runs, Resumes and merge-run resolvers). The close
+  itself keeps one terminal per task per browser tab — a Resume re-spawns with
+  a fresh serverId and cleanup never closes an in_progress tab.
+- `useMergeRunSync` re-hydrates `/api/merge-runs/active` on every folder
+  switch; a live WS event beats a late HTTP snapshot; each per-task error
+  toasts once (bounded key sets); the error label fetches one task by id,
+  never the whole board.
+- `useTaskTerminalCleanup`: qa/done/deleted close every terminal of the task,
+  resolvers included; ready_to_merge closes only the non-merge agent tab;
+  in_progress is never closed. Closing and failed tabs are skipped (a failure
+  waits for explicit retry); closes batch per task so one held DELETE can't
+  delay another task's confirmation.
+- `useTaskTerminalReattach` is a one-shot per project (fallback for a run
+  admitted while no browser tab was open): it claims the one-shot only after a
+  successful `/api/terminals` parse, retries with bounded backoff, skips tasks
+  that already have a tab, and is keyed on the SET of reattachable tasks —
+  keying on the task array restarted it every frame and polled forever. Its
+  unregistered tab yields to the registry's record (`mergeRegistryTabs`).
+
+Push, QA and settings-backed toggles:
+
+- Push and QA pollers tear down (close terminal, forget the run) only on a
+  real 404 or `done`; a thrown fetch is the `'error'` sentinel and is retried —
+  collapsing it into "gone" kills the pty mid `git push` / strands a QA PASS
+  verdict.
+- `startPush` / `startQaRun` carry in-flight refs (Push disables only once the
+  run is tracked and the backend doesn't dedupe it); a push start resolving
+  after a project switch isn't tracked. One QA session per task: ▶ focuses the
+  running session's tab; a run whose tab was closed no longer blocks.
+- QA-run terminals carry NO `taskId` — cleanup closes every terminal tagged
+  with a qa task's id and would kill them on spawn.
+- `useQaPlaywright` / `usePostMergeHookForm` load with `loadUserSettingsWithRetry`
+  (`fetchUserSettingsStrict`, retried until success or cancel): the lenient
+  fetch maps a mid-restart 502 to `{}`, and a toggle then PATCHed defaults over
+  the saved state. Controls stay disabled (row chip "Loading…") and saves no-op
+  until `loaded`.
+- Toggle/harness saves go through `saveOptimistic`: on failure revert to the
+  last confirmed value, read at failure time, unless a later save or project
+  switch superseded it (`isCurrent`, incl. A → B → A); a failed prompt save
+  keeps the typed text. `qaPlaywright` is PATCHed whole, built from the LOADED
+  value (the server merge is shallow), so flipping `enabled` keeps a saved
+  `headless: false`.
+- `usePostMergePromptDraft` debounces prompt saves (250 ms);
+  `usePostMergeHookRun` lets live events supersede a late GET and restarts its
+  subscription (resetting run state and spawned-run ids) when `activeFolder`
+  or `addTerminal` changes.

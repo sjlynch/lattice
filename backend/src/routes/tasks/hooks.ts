@@ -5,8 +5,8 @@
 // into the single router consumed by `routes/tasks.ts`. The resolver-finished
 // branch of `/complete` and the entirety of `/merged` share the same
 // "re-sync with main, finalize, requeue on conflict" flow (`finalizeResolvedTask`
-// in `../finalizeResolved.ts`); the post-merge hook gating shared by
-// `/complete`, `/merged`, and `/stash-resolved` lives in `./postMergeHookHelper.ts`.
+// in `./finalizeResolved.ts`); the post-merge hook gating shared by
+// `/complete`, `/merged`, and `/stash-resolved` lives in `./hooks/postMergeHookHelper.ts`.
 
 import { Router } from 'express';
 import { handleTaskComplete } from './hooks/complete.js';

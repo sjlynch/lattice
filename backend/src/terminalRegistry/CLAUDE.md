@@ -1,266 +1,185 @@
 # backend/src/terminalRegistry
 
-The durable terminal-tab registry: what lets the sidebar's tabs — and the
-harness conversation inside each — come back after a backend restart, a closed
-browser, a `Ctrl+C` of the dev server, or a reboot.
+The durable terminal-tab registry: what brings the sidebar's tabs — and the
+harness conversation inside each — back after a backend restart, a closed
+browser, a `Ctrl+C` of the dev server, or a reboot. Facade: `../terminalRegistry.ts`.
+Not here: the ptys themselves (`../terminal/`), the spawn chokepoint that
+creates records (`../terminalServerClient/`), the frontend reconciliation
+(`frontend/src/terminal/terminalRegistrySync.ts`).
 
-Before this, the tab list lived only in the browser's `sessionStorage`, the
-backend never learned which harness conversation a pty was running, and a
-normal `Ctrl+C` (`POST /shutdown`) killed every pty with nothing to relaunch
-from.
+## Map
 
-## The model
+Model and store:
 
-- `types.ts` — `TerminalRecord`: one per tab the backend ever created a pty
-  for. Carries the tab's decorations (`label`, `order`, `kind`, `taskId`,
-  `startupId`), its `owner` (who decides when it disappears / whether restore
-  may relaunch it), the ORIGINAL `launch` (command + harness + Pi model +
-  `isQaRun` / `taskId` / `mcpScope`, before any Lattice injection), the pinned `agentSession`, the last pty
-  (`serverId` + `serverInstanceId`), `lastBusy`, and `ended`.
-- `store.ts` — `TerminalRegistryStore` (a `ProjectStateManager` subclass) over
-  `~/.lattice/per-project/<hash>/terminals.json` (versioned envelope, atomic
-  write, every field re-validated on read). Ended records are dropped once
-  `ended.at` is older than `ENDED_RETENTION_MS` (7 days; never a
-  `closePending` one), but ONLY when the file is loaded
-  (`deserializeTerminalRecords`, once per project per process) — nothing
-  prunes while the process runs, so they stay until the next boot. The
-  BACKEND is the sole creator of records (`proxyCreateSession` in
-  `terminalServerClient/createSession.ts` → `recordSpawnedTerminal` in
-  `terminalServerClient/recordSpawn.ts`); the
-  frontend only patches decorations. `end()` REMOVES a record for
-  `exit` / `closed` / `killed` / `owner-finished` and KEEPS it (with the
-  marker) for `cwd-missing` / `restore-failed` so the UI can show why.
-  Registered DELETE uses `requestClose()` first: durably marks `closed` with
-  `closePending`, retaining PTY identity and emitting only an upsert until
-  kill/404 confirms absence. Uncertain kills return retryable 503 and the
-  same tab id can retry; pending ownership never expires through retention.
-  Restore writes cannot clear intent; `recordRelaunch()` alone may hand a late
-  spawned PTY to its tombstone, which stays reclaimable if cleanup fails.
-  `endWhere()` is what the kill paths (`terminalProxy.ts` wrappers, the
-  `/api/terminals/:id` DELETE) and the exit watcher use.
-- `recordCodec.ts` — the untrusted-file codec: `deserializeTerminalRecord(s)` (per-field parsers, retention prune), re-exported from `store.ts`.
-- `startupSupersede.ts` — `endSupersededStartupRecords`: when
-  `recordSpawnedTerminal` creates a new `startup` record, every older record of
-  the same `startupId` whose pty is definitely dead (no `serverId`, or a
-  different executor instance) is ended `owner-finished`. Restore is otherwise
-  the only thing that ends a dead startup record, and it doesn't run under
-  `restoreTerminalsOnOpen: 'never'` / a declined `ask` — the exit watcher skips
-  a replaced executor's records — so each restart used to leave another dead
-  "session lost" startup tab. Same-instance records are left to the exit
-  watcher (their pty may be alive).
-- `labels.ts` — `shortLabel` (mirrors the frontend's `taskboard/lanes.ts`
-  `shortLabel`: trim, cap at 18 chars with `…`), plus `taskTerminalLabel` /
-  `mergeTerminalLabel`, so a backend-minted record carries the label the UI
-  would have generated and a restored tab reads identically to the original.
-  Keep it in lockstep with the frontend copy.
-- `index.ts` — the barrel: re-exports the store, session identity,
-  `buildRestoreCommand` / `RESTORE_NUDGE`, `restoreProjectTerminals`, the
-  watch, Codex discovery, `detectInterruption` and the label helpers. Some
-  callers (and the tests) import the individual modules directly; every
-  currently exported name must keep working from both paths.
+- `types.ts` — `TerminalRecord`, `TerminalOwner` (each owner documented), events.
+- `store.ts` — `TerminalRegistryStore` over `per-project/<hash>/terminals.json`;
+  `endWhere` serves the kill paths (`terminalProxy.ts`, tab DELETE) + exit watcher.
+- `recordCodec.ts` — untrusted-file codec (a record missing anything
+  load-bearing is dropped, not repaired) + retention prune.
+- `labels.ts` — tab labels over `../shared/terminalLabels.ts` (shared with the
+  frontend, so a restored tab reads like the original).
+- `startupSupersede.ts` — `endSupersededStartupRecords` (below).
 
-## Session identity
+Session identity:
 
-- `sessionIdentity.ts` — `assignHarnessSessionId`: pins the conversation id
-  at launch. Claude `--session-id <uuid>`, Pi `--session-id lattice-<uuid>`
-  (create-or-resume). Never stacks on a command that already names a session
-  (`--resume`, `-c`, …). `agentSessionFromCommand` is the reverse: the id a
-  live pty's spawned command carries (`--session-id` / `--resume` / Codex
-  `resume <id>`), used when restore ADOPTS an orphan pty onto a record — the
-  record's old id belonged to the dead pty, so it takes the adopted one's.
-  Codex has no such flag (openai/codex#46672) —
-- `codexDiscovery.ts` — learns a Codex thread id after the fact from
-  `~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl` line 1
-  (`session_meta.payload.{id,cwd,timestamp}`): cwd match + started after our
-  spawn + not claimed by another record, earliest first; `ambiguous` when two
-  Codex tabs share a cwd in the window. Codex writes the rollout on the FIRST
-  TURN, not at launch (measured 2m42s for a tab typed into late), so discovery
-  polls until the id is known or the record ends — 2 s for 2 min, 15 s to
-  30 min, then 1/min, 24 h backstop — and restore makes one last attempt right
-  before relaunching an id-less Codex tab (else `resume --last`, the newest
-  thread in the folder, maybe another tab's). A fresh pick must have STARTED
-  within `CODEX_FRESH_START_WINDOW_MS` (2 min) of the tab's launch —
-  `session_meta.timestamp` is the process start — so an idle tab can't claim
-  the thread of a Codex tab opened later in the same folder.
-  "Started after our spawn" is the record's `createdAt`, never the relaunch
-  time: a `codex resume --last` relaunch reopens the ORIGINAL rollout, whose
-  `session_meta` timestamp is the thread's creation. The cheap stat pre-filter
-  keys on the file's mtime ≥ `restoredAt ?? createdAt` instead (the resumed
-  file is being written now), and a relaunched record picks the NEWEST such
-  file by mtime — `--last` reopened the most recently written thread, so the
-  earliest-created candidate would be the wrong conversation. The day-directory
-  window MUST still follow `createdAt` (a rollout lives in the day-dir of the
-  day its thread started; resume appends to that old file). What keeps the
-  polling cheap instead: the readdir + stat listing is taken once per
-  `(root, days)` per 1.5 s and shared by every in-flight discovery
-  (`listRolloutFilesShared`), and a parsed `session_meta` (line 1 never
-  changes) is cached in a FIFO capped at `META_CACHE_MAX` = 4,096 files, so
-  later ticks stat but re-read only an evicted file. Listings are replaced,
-  never evicted, so the key alone bounds that map: `days` grows with record
-  age, clamped to `MIN_SCAN_DAYS`..`MAX_SCAN_DAYS` (2..120), i.e. ≤ 119
-  listings per root — add no other key dimension, or it is unbounded. Ten restored Codex tabs used to cost ~600k stats over two minutes.
-  Orphan adoption overrides these defaults with persisted `codexDiscovery`
-  bounds from the adopted PTY's `createdAt`: a fresh command gets that process's
-  start window; `resume --last` scans the bounded history by recent writes,
-  since its thread may predate the tab. A later relaunch retains that creation
-  floor and advances the write bound. An in-flight scan must discard evidence
-  if the record changed PTYs / discovery provenance while it read the files.
-- `codexRolloutScan.ts` — owns `session_meta` parsing, bounded rollout reads,
-  day-directory scanning and the shared listing / metadata caches. Depends
-  only on `harnessPaths.ts` and `sessionFiles.ts`, never the registry store or
-  discovery coordinator. `codexDiscovery.ts` keeps candidate selection,
-  registry mutation and polling, and re-exports the scan/parser/cache-reset
-  functions and `CodexRolloutMeta` so existing imports keep working.
-  The metadata reader grows in 8 KB chunks through the first newline, up to
-  256 KB: current Codex metadata includes base instructions and routinely
-  exceeds one chunk. A truncated JSON row cannot pin a conversation.
-- `codexTaskActivity.ts` — display-only graph fallback for live task/merge Codex
-  sessions using the hosted JavaScript runner, whose nested shell/patch calls
-  can bypass CLI hooks. The existing 3-second registry watch tails only the
-  pinned session's rollout (bounded to 256 KB per read), extracts literal
-  `tools.exec_command` / `tools.apply_patch` arguments through
-  `../codexCodeActivity.ts`, and reuses the task activity decoder's existence
-  checks and worktree-to-project mapping. Partial rows wait for a newline;
-  unchanged files emit nothing. Close, ambiguous identity, completed tasks,
-  and replacement PTYs suppress activity; replay before a relaunch's timestamp
-  is ignored. Native tool calls keep using hooks. This reader never changes
-  task state or controls a PTY.
-- `harnessPaths.ts` — where each harness keeps transcripts (verified on
-  Windows): Claude `~/.claude/projects/<cwd, non-alnum → '-'>/<id>.jsonl`, Pi
-  `~/.pi/agent/sessions/--<cwd, [/\:] → '-'>--/<ts>_<id>.jsonl`, Codex rollouts.
-- `sessionFiles.ts` — the IO over those paths (`readTail`, Claude status /
-  conversation scan, Pi/Codex file finders, `listCodexDayDirs`), shared by
-  `interruption.ts` (which re-exports it) and `codexRolloutScan.ts`.
+- `sessionIdentity.ts` — `assignHarnessSessionId` pins the conversation at
+  launch (Claude `--session-id <uuid>`, Pi `--session-id lattice-<uuid>`);
+  `agentSessionFromCommand` reads it back off a live pty's command.
+- `codexDiscovery.ts` — learns a Codex thread id after the fact (no pre-set
+  flag): candidate pick, registry write, polling.
+- `codexRolloutScan.ts` — rollout parsing, bounded reads, shared caches; depends
+  only on `harnessPaths.ts` + `sessionFiles.ts`, never the store/coordinator.
+- `codexTaskActivity.ts` — display-only graph beams for task/merge Codex
+  sessions on the hosted JS runner (its nested calls bypass CLI hooks).
+- `harnessPaths.ts` / `sessionFiles.ts` — where each harness keeps transcripts
+  and the IO over them (incl. `findClaudeConversationId`).
 
-## Relaunch
+Restore and relaunch:
 
-- `commandParse.ts` — a small shell-ish tokenizer / re-emitter for the launch
-  commands Lattice builds, with a per-harness table of value-taking flags so
-  the trailing prompt can be told from a flag value.
-- `restoreCommand.ts` — `buildRestoreCommand`: original flags kept, session
-  flags stripped, prompt dropped. Claude: transcript exists → `--resume <id>`,
-  else (died before its first turn) `--session-id <id>` with the original
-  prompt. Pi: `--session-id <id>`. Codex: `resume <id>` or `resume --last`.
-  Plain shell → no command; a non-harness command reruns verbatim. The
-  `RESTORE_NUDGE` prompt tells a relaunched agent to check git and continue.
-  The Codex title config, harness system-prompt files and the task-worktree
-  `--strict-mcp-config --mcp-config=…` flags are NOT here — the spawn
-  chokepoint re-injects them like on any launch (the latter from the persisted
-  `launch.mcpScope`). **A relaunch never
-  overwrites the record's `launch`** (else the next restore would try to
-  resume a resume).
-- `interruption.ts` — also `findClaudeConversationId`: the pinned Claude id
-  names the PROCESS, not necessarily the conversation. Interactive transcripts
-  stamp each line with `sessionId` (conversation = file name) and `session_id`
-  (the process); after an in-tab `/resume` the process appends to the OTHER
-  conversation's file and its own may never exist, so a relaunch from the
-  pinned id alone opened a blank Claude (tab "claude! 2", 2026-09-24). The
-  detector scans the cwd's transcripts modified since the tab's CREATION
-  (not its last relaunch — the switch may be several fresh relaunches old),
-  newest first, for the last line whose `session_id` is the pinned id, and
-  returns that conversation as the verdict's `agentSession`
-  (`source: 'transcript-scan'`); the relaunch resumes it and records it (a
-  `--resume Y` process runs as Y, so it keeps working next time).
-  "Was the agent mid-turn when it died?" Two evidence
-  sources: the transcript tail (claude dangling `tool_use` / trailing user
-  prompt → open, the `[Request interrupted by user…]` marker → idle; pi
-  `stopReason`; codex `task_started` without `task_complete`) and a
-  busy-at-death record (Claude's own `~/.claude/sessions/<pid>.json`
-  `status`, else Lattice's persisted `lastBusy`). `decideInterruption`:
-  nudge only on open + non-idle; any idle evidence vetoes; unknown never
-  nudges. Gates the user-tab nudge (`restoreNudgeUserTabs`).
-- `restore.ts` — `restoreProjectTerminals(project, deps?, {retryFailed?})`,
-  single-flighted per project **including while its relaunch thunks are still
-  running** (a second pass answers `already-running`; the lock release is
-  identity-checked so an old pass's guard timer can't drop a newer pass's
-  lock; the thunk also skips a record that regained a pty meanwhile), safe to
-  re-run. Candidates are the non-ended records — plus, ONLY when
-  `retryFailed` is set (the sidebar's explicit "Restore tabs" click sends
-  `?retry=1`), the ended-but-retryable ones (`cwd-missing` / `restore-failed`).
-  The on-open pass never retries those: it used to re-report the same drop on
-  every reload and reset the retention clock. Per candidate: pty live →
-  adopt; unclaimed live AGENT pty in the same cwd + harness → adopt (plain
-  shells and startup commands never adopt — with no harness to match on they
-  would claim any pty in the folder; a retried record adopts too, so a relaunch
-  whose pty landed but whose bookkeeping failed is never spawned beside).
-  Adoption clears `ended` / `relaunching` before emitting `restored`, including
-  when the record already names its live PTY. An orphan replaces the dead
-  PTY's identity even when unknown, clears its busy evidence, and restarts
-  discovery using the adopted process's provenance; pty
-  gone while the executor INSTANCE is unchanged → it exited → end; otherwise
-  relaunch if the owner allows (`user` — cwd must exist; `task` — still
-  `in_progress` with its worktree; `merge` — NEVER relaunched: a dead resolver
-  is ended silently because the merge-run recovery / a re-clicked merge spawn
-  their own, and a relaunch racing them puts two Claudes on one conflict —
-  a live resolver is adopted like anything else; `startup` — never: the dead
-  record is ended silently and `useStartupTerminals` re-seeds a fresh one;
-  one-shot runs (including `security-review`) — never, ended as
-  `owner-finished`). Security review recovery owns report collection; a terminal
-  restore must not launch a second review. Relaunches clear the dead
-  `serverId` (and any `ended` marker) first — every client renders the tab as
-  "restoring", no pane attaches to a dead id — go through the spawn queue at
-  `batch` priority, and land as `restored` / `restore-failed` events. An
-  unreachable executor changes nothing. Re-ending a record for the same reason
-  keeps its original `ended.at`. The single-flight is held until the pass's
-  relaunches settle, but never longer than `RELAUNCH_LOCK_MAX_HOLD_MS`
-  (10 min). Step 2's orphan adoption is `tryAdoptOrphan`.
-- `restoreRelaunch.ts` — the relaunch half, split out of `restore.ts` (which
-  still owns the per-record decision and the exports `restoreProjectTerminals`,
-  `RestoreDeps`, `RestoreOptions`, `isRetryableEnd`; this module imports only
-  the `RestoreDeps` TYPE back, so there is no runtime cycle).
-  `enqueueRelaunch` queues the `terminal-restore` thunk (re-checks the record
-  — closed / re-backed meanwhile ⇒ nothing to spawn; one last Codex discovery;
-  `planRelaunch` → `buildRestoreCommand` → `createSession` with
-  `existingId`; kills a pty whose tab closed mid-spawn; a CAP error throws
-  `SpawnCapacityError` so the queue retries). `planRelaunch` = the nudge
-  decision + Claude transcript-exists + a re-learned conversation, from one
-  `detectInterruption` read. Both failure paths (a spawn error, a rejected
-  thunk) go through `markRelaunchFailed`: clear `relaunching` → end
-  `restore-failed` at the FIRST failure's `at` → `emitRestoreFailed`; the
-  rejected-thunk path is best-effort (each registry write's error swallowed).
-  `scheduleDiscoveryIfUnknown` keeps an id-less adopted Codex tab polling.
-- `watch.ts` — `startTerminalRegistryWatch` (boot): every 3 s diff loaded
-  records against `/sessions` + `/health.instanceId` (pty missing, same
-  instance ⇒ `exit`) and stamp `lastBusy` transitions from the
-  terminal-activity signal (kept always-on for this). The session list is read
-  LIVE (`proxyListSessionsOrNull`), deliberately NOT the activity poller's
-  shared ≤750 ms snapshot (`proxyListSessionsShared`): a snapshot taken before
-  a pty was spawned reports it missing, and this read's verdict is "ended —
-  exit", which deletes the record. A tab created inside that window lost its
-  record within a tick when the watch briefly used the snapshot. Even a live
-  read has that window (the GET is in flight, or the caller awaits other work
-  before judging), so the view carries `listedAt` and `isNewerThanLiveView`
-  exempts any record written at/after it (`updatedAt`) from the verdict for
-  that pass: the watch defers its "exit" to the next tick (re-reading the
-  record first, since `loadedRecords()` is a pre-await snapshot), and restore
-  treats such a record as live — adopt, never relaunch beside it. `noteBusy`
-  likewise only stamps `lastBusy` onto a record still on the pty its snapshot
-  named.
+- `restore.ts` — `restoreProjectTerminals`: per-record decision (matrix in its
+  header), `checkOwner`, `tryAdoptOrphan`.
+- `restoreRelaunch.ts` — `enqueueRelaunch` (spawn-queue thunk), `planRelaunch`,
+  `markRelaunchFailed`; imports only the `RestoreDeps` TYPE back (no cycle).
+- `restoreCommand.ts` — `buildRestoreCommand` + `RESTORE_NUDGE` (matrix in header).
+- `commandParse.ts` — tokenizer with per-harness value-taking flags.
+- `interruption.ts` — `detectInterruption` / `decideInterruption` (evidence
+  rules in header); re-exports `sessionFiles.ts`.
+- `watch.ts` — every 3 s: exit tracking, Codex task activity; its
+  terminal-activity subscription (keeps that poller always on) stamps `lastBusy`.
 
 ## Surfaces
 
-`routes/terminalTabs.ts` (`GET`/`PATCH`/`DELETE /api/terminal-tabs[/:id]`,
-`POST /api/terminal-tabs/restore`) and `ws/endpoints/terminalTabs.ts`
-(`/ws/terminal-tabs`: `hello`, `upsert`, `ended`, `removed`, `restored`,
-`restore-failed`, `restore-summary`). Settings (`userSettings/types.ts`):
-`restoreTerminalsOnOpen` (`always` | `ask` | `never`), `restoreNudgeAgents`
-(default on), `restoreNudgeUserTabs` (default off). `Task.agentSession` is
-copied from the spawn so `routes/tasks/resumeTask.ts` can do a TRUE resume of
-the worktree conversation when the harness matches.
+`routes/terminalTabs.ts` (`/api/terminal-tabs`), `ws/endpoints/terminalTabs.ts`
+(`/ws/terminal-tabs`, `TerminalRegistryEvent`). Settings: `restoreTerminalsOnOpen`
+(`always` | `ask` | `never`), `restoreNudgeAgents` (default on),
+`restoreNudgeUserTabs` (default off). `Task.agentSession` is copied from the
+spawn so `routes/tasks/resumeTask.ts` can truly resume a matching harness.
 
 ## Invariants
 
-- The registry must never touch a pty of another executor instance, and
-  "can't list sessions" is never "no sessions".
-- Records are keyed by a backend-minted id that the frontend adopts as the
-  tab id; every spawn site returns it (`terminalId`) alongside `serverId`.
-- The startup-terminal stale-drop (`frontend/.../useStartupTerminals.ts`) must
-  skip registered tabs — closing a dead-pty tab there DELETEs the record and
-  leaves nothing to restore (the bug the first e2e run found).
-- Tests: `__tests__/terminalRestoreCommand.test.ts`,
-  `terminalInterruption.test.ts`, `terminalRegistryStore.test.ts`,
-  `terminalRestore.test.ts` (the decision matrix with injected deps),
-  `terminalRestoreTranscripts.test.ts` (the same flow over real on-disk
-  Claude / Pi / Codex files: re-learning, adopt, Codex discovery),
-  `terminalRegistryWatchRace.test.ts` (live-view vs concurrent-spawn races),
-  `terminalStartupSupersede.test.ts` (a re-seeded startup ends its dead predecessor).
+Ownership and identity:
+
+- The BACKEND is the sole creator of records (`recordSpawnedTerminal`,
+  `../terminalServerClient/recordSpawn.ts`); the frontend only patches
+  decorations. The backend-minted id is the tab id; every spawn site returns it
+  (`terminalId`) alongside `serverId`.
+- Never touch a pty of another executor instance; "can't list sessions" is
+  never "no sessions" (an unreachable executor changes nothing).
+- Never stack a session flag on a command that already names a session
+  (`--resume`, `-c`, …).
+- `launch` is the command BEFORE Lattice injection, and a relaunch never
+  overwrites it (else the next restore resumes a resume). Codex title config,
+  system-prompt files and task-worktree `--strict-mcp-config --mcp-config=…`
+  (from `launch.mcpScope`) are re-injected by the spawn chokepoint — never
+  bake them into `buildRestoreCommand`.
+- Exported names stay importable from both the facade and their module
+  (callers and tests use both).
+
+Ending, closing, retention:
+
+- `end()` REMOVES a record for `exit` / `closed` / `killed` / `owner-finished`
+  and KEEPS it with its marker for `cwd-missing` / `restore-failed` (the UI
+  shows why; the user can retry). Re-ending for the same reason keeps the
+  original `ended.at`, so retention counts from the first failure.
+- Ended records are pruned (`ENDED_RETENTION_MS`, 7 days) only when the file is
+  loaded — once per project per process — and never a `closePending` one.
+- Registered DELETE calls `requestClose()` BEFORE any kill IO: durably marks
+  `closed` + `closePending`, keeps the pty identity, emits only an upsert until
+  kill/404 confirms absence. An uncertain kill returns a retryable 503 (same tab
+  id). Only a confirmed `closed` end discards it; restore/discovery writes
+  can't clear the intent; only `recordRelaunch()` (real spawn bookkeeping) may
+  hand a late pty to the tombstone, which stays reclaimable.
+
+Restore:
+
+- Single-flighted per project **including while its relaunch thunks run**
+  (second pass → `already-running`), the lock release identity-checked so an
+  old pass's guard timer can't drop a newer lock, held at most
+  `RELAUNCH_LOCK_MAX_HOLD_MS` (10 min). Safe to re-run.
+- The on-open pass never retries `cwd-missing` / `restore-failed` (it
+  re-reported the same drop every reload and reset retention); only the
+  explicit "Restore tabs" (`?retry=1` → `retryFailed`) does.
+- Relaunch only `user` (cwd exists) and `task` (still `in_progress` with its
+  worktree) owners. `merge` NEVER — the merge-run recovery / a re-clicked merge
+  spawns its own resolver, and a racing relaunch puts two Claudes on one
+  conflict. `startup` never (`useStartupTerminals` re-seeds). One-shot runs
+  (push / QA / post-merge / workflow step / prompt customization / security
+  review) are never resurrected — ended `owner-finished`; their own recovery
+  owns them (a restore must not launch a second security review). Any owner's
+  still-live pty is adopted.
+- Orphan adoption takes only an unclaimed AGENT pty with the same cwd +
+  harness (shells / startup commands would claim any pty in the folder), never
+  one live on another record (even one excluded from the pass); retried records
+  adopt too, so nothing spawns beside a live pty. Adoption clears `ended` /
+  `relaunching` before `restored`; an orphan replaces `agentSession` with its
+  command's (even unknown), clears `lastBusy`, restarts Codex discovery.
+- A relaunch clears the dead `serverId` first (every client shows "restoring";
+  no pane attaches to a dead id), queues at `batch` priority, re-checks the
+  record before spawning, kills a pty whose tab closed mid-spawn, throws
+  `SpawnCapacityError` on CAP so the queue retries, and ends `restore-failed`
+  at the FIRST failure's `at`.
+
+Watch:
+
+- Read sessions LIVE (`proxyListSessionsOrNull`), never the activity poller's
+  shared snapshot (`proxyListSessionsShared`): a snapshot predating a spawn
+  reports it missing, and the verdict "ended — exit" deletes the record. Even a
+  live read has that window, so a record written at/after the view's
+  `listedAt` (`isNewerThanLiveView`) is exempt: the watch defers its exit to the
+  next tick; restore treats it as live (adopt, never relaunch beside it).
+- Missing pty + same instance ⇒ exited ⇒ end; different instance ⇒ leave for
+  restore. `noteBusy` stamps only a record still on the pty its snapshot named.
+
+Startup tabs:
+
+- `endSupersededStartupRecords`: a new `startup` record ends older records of
+  the same `startupId` only when their pty is definitely dead (no `serverId`,
+  or another executor instance) — else each restart under `never` / a declined
+  `ask` left another dead tab. Same-instance ones are left to the exit watcher
+  (ending a live one orphans a process with no tab to kill it).
+- The frontend startup stale-drop
+  (`frontend/src/components/sidebar/hooks/startupSeedPlan.ts`) must skip
+  registered tabs — closing a dead-pty tab there DELETEs the record and leaves
+  nothing to restore.
+
+Codex discovery:
+
+- Codex writes its rollout on the FIRST TURN, so discovery polls until the id
+  is known or the record ends (backoff, 24 h backstop), and restore tries once
+  more before relaunching an id-less tab (else `resume --last` — the folder's
+  newest thread, maybe another tab's).
+- Fresh pick = earliest unclaimed thread that STARTED within
+  `CODEX_FRESH_START_WINDOW_MS` of launch (an idle tab mustn't claim a later
+  tab's thread); after a `resume --last` relaunch, the NEWEST by mtime.
+- Creation floor = record `createdAt`, never the relaunch time (resume appends
+  to the ORIGINAL rollout, in its original day-dir); only the mtime pre-filter
+  keys on `restoredAt ?? createdAt`. Adopted orphans persist their own
+  `codexDiscovery` bounds. A scan discards its evidence if the record changed
+  pty / provenance while it read.
+- The listing cache is keyed by `(root, days)` only (`days` clamped 2..120;
+  entries replaced, never evicted) — another key dimension makes it unbounded.
+  The meta cache is a capped FIFO. A truncated first line (metadata can exceed
+  8 KB; read up to 256 KB) never pins a conversation.
+
+Claude conversation and nudge:
+
+- The pinned Claude id names the PROCESS, not necessarily the conversation:
+  after an in-tab `/resume` its lines land in the OTHER conversation's
+  transcript. `findClaudeConversationId` scans the cwd's transcripts modified
+  since the tab's CREATION (not its last relaunch), newest first, for the last
+  line whose `session_id` is the pinned id; the relaunch resumes and records
+  that conversation (`source: 'transcript-scan'`).
+- `decideInterruption`: nudge only on open + non-idle; any idle evidence
+  vetoes; unknown never nudges. Task/merge tabs nudge unless
+  `restoreNudgeAgents` is off; user tabs only with `restoreNudgeUserTabs`.
+- `codexTaskActivity.ts` never changes task state or controls a pty; close,
+  ambiguous identity, completed tasks and replacement ptys suppress it, and
+  replay before a relaunch's timestamp is ignored.
+
+## Pointers
+
+- Tests: grep `terminalRestore`, `terminalRegistry`, `terminalTabs`,
+  `terminalStartup`, `codex` in `backend/src/__tests__/`
+  (`terminalRestoreTranscripts` uses real on-disk Claude / Pi / Codex files).
+- Related: `../terminal/CLAUDE.md`, `../terminalServerClient/CLAUDE.md`,
+  `../spawnQueue/CLAUDE.md`, `frontend/src/terminal/CLAUDE.md`.

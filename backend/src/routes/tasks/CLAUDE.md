@@ -1,285 +1,182 @@
 # backend/src/routes/tasks
 
-The task router, split by concern. `routes/tasks.ts` composes five
-sub-routers (worktreeModified → activity → crud → run → hooks; the first two
-register before crud so `GET /api/tasks/worktree-modified` isn't captured by
-crud's `/api/tasks/:id`).
+The task router, split by concern. `../tasks.ts` composes five sub-routers in
+this order: worktreeModified → activity → crud → run → hooks. Per-route table:
+[ROUTES.md](../ROUTES.md). Storage, worktrees and the spawn queue live in
+`../../taskCache/`, `../../worktree/`, `../../spawnQueue/`.
 
-## Graph-overlay routes (`activity.ts` + `worktreeModified.ts`)
+## Map
 
-Both are read-only against the disposable worktree (plain `exec`, never
-`projectGit`):
+**Graph overlays** — read-only against the disposable worktree (plain `exec`,
+never `projectGit`):
 
-- `activity.ts` — `POST /api/tasks/:id/activity` (the Claude PreToolUse/
-  PostToolUse hook → `notifyTaskActivity` → `task-activity` WS, for the focus
-  beam). Owns the worktree→project path mapping and the exported `isManaged`
-  filter, which `routes/agentActivity.ts` and `worktreeModifiedParsers.ts` both
-  import.
-- `worktreeModified.ts` — `GET /api/tasks/worktree-modified` (every file changed
-  by an in_progress / ready_to_merge task, for the `W` highlight). Only wires the
-  route; the git diff/status polling, per-project base-branch cache, and
-  short-TTL result cache live in focused sibling modules (`worktreeModifiedService.ts`,
-  `worktreeModifiedGit.ts`, `worktreeModifiedCache.ts`,
-  `worktreeModifiedConstants.ts`, `worktreeModifiedParsers.ts`). Preserves the response
-  shape, TTL, and git timeout behavior. Loads are single-flighted per project
-  and probe at most 8 worktrees at once (two git processes each).
+- `activity.ts` — `POST /:id/activity` (Claude Pre/PostToolUse hook →
+  `task-activity` WS focus beam). Owns the worktree→project path mapping and
+  the exported `isManaged` filter that `../agentActivity.ts` and
+  `worktreeModifiedParsers.ts` import — keep one copy.
+- `worktreeModified.ts` — `GET /api/tasks/worktree-modified` (files changed by
+  in_progress / ready_to_merge tasks, for `W`). Route wiring only; work lives
+  in `worktreeModified{Service,Git,Cache,Constants,Parsers}.ts`. Keep the
+  response shape, TTL and git timeout; loads are single-flighted per project
+  and probe ≤ 8 worktrees at once (two git processes each).
 
-## CRUD (`crud.ts` builds the router; handlers split by concern)
+**CRUD** — `crud.ts` wires routes (and the shared `textOrMarkdownBody`
+parser) to handlers re-exported from `crudHandlers.ts`, a compatibility
+barrel: `crud.ts` and tests import that path, so keep it stable.
 
-`crud.ts` wires routes to handlers re-exported from `crudHandlers.ts`, which
-is a **compatibility barrel** — it keeps the original import path stable
-(`crud.ts` and `__tests__/projectScoping.test.ts` both import from it) while
-the implementations live in focused modules:
-
-- `crudList.ts` — `partitionByProject` + thin handlers for list / summary /
-  search / projects / get. `partitionByProject` is the foreign-task integrity
-  filter every project-scoped read runs; everything else here is an HTTP
-  adapter over the two pure modules below.
+- `crudList.ts` — list / summary / search / projects / get adapters, plus
+  `partitionByProject`, the foreign-task integrity filter every
+  project-scoped read runs.
 - `listQuery.ts` — the pure progressive-disclosure pipeline behind
-  `GET /api/tasks` and `/summary`. Holds `buildListOutcome` (the
-  `LIST_RESPONSE_CEILING_BYTES` (256 KB) check that turns an oversized list
-  into a 413 carrying the summary) and re-exports the stages, which live in
-  flat siblings (deps: types ← parse/select/sizing ← envelope/summary ← outcome):
-  - `listQueryTypes.ts` — shared constants (`ACTIVE_STATUSES`, limits, clip
-    default) + `ParseResult` / `ListQuery` / `ListEnvelopeMeta`.
-  - `listQueryParse.ts` — `status` CSV/`all` (ACTIVE-lanes default), `ids`,
-    `fields`, `clip`, `since` (incl. `30d`/`12h`/`45m`), `limit`, `confirm_large`.
-  - `listQuerySelect.ts` — `lastActivityAt`, filter + newest-first sort + page.
-  - `listQuerySizing.ts` — `bytes`/`approxTokens`, compact projection, clipping.
-  - `listQueryEnvelope.ts` — the teaching `hint` + self-pricing envelope.
-  - `listQuerySummary.ts` — per-lane summary costing.
+  `GET /api/tasks` and `/summary`; `buildListOutcome` turns a response over
+  `LIST_RESPONSE_CEILING_BYTES` (256 KB) into a 413 carrying the summary.
+  Stages in `listQuery{Types,Parse,Select,Sizing,Envelope,Summary}.ts`, deps
+  one way: types ← parse/select/sizing ← envelope/summary ← outcome.
+- `taskSearch.ts` — `GET /api/tasks/search`: AND-of-terms substring, title×3
+  scoring. Defaults to EVERY lane, unlike the list (history is where the
+  matches are).
+- `crudCreate.ts` — create / batch-create (JSON array, `{tasks}`, markdown).
+- `crudUpdate.ts` — patch / bulk-update / upsert / append-summary, over
+  `crudUpdate{Body,Validation,Upsert}.ts` (markdown-or-JSON bodies, upfront
+  validation, `classifyUpsertTarget`).
+- `crudTransition.ts` — bulk transition (by `ids` or `fromStatus`) + reorder.
+- `crudDelete.ts` — delete + cancel-queued-run. `markdownBatch.ts` — the
+  markdown task grammar + `serializeTasksAsMarkdown`.
 
-  **The defaults are the point** — the endpoint used to return every task, full
-  text, uncapped (~320k tokens on a mature board), which is what every agent
-  hit. `format=markdown` shares the whole pipeline except clipping: that doc
-  round-trips through `/upsert`, which REPLACES descriptions, so a clipped
-  round-trip would destroy task text.
-- `taskSearch.ts` — the pure search behind `GET /api/tasks/search`: AND-of-terms
-  substring match, title×3 scoring, the `…`-ellipsed snippet window, and its
-  envelope. Defaults to EVERY lane (unlike the list) because history is where
-  the interesting matches are. Registered before `/api/tasks/:id`, or `search`
-  is captured as an id.
-- `crudCreate.ts` — create / batch-create (JSON array, `{tasks}`, or markdown).
-- `crudUpdate.ts` — thin patch / bulk-update / upsert / append-summary route
-  handlers. The markdown-or-JSON body ergonomics (heredoc-friendly) are split
-  into focused helpers: `crudUpdateBody.ts` (body normalization + block→patch),
-  `crudUpdateValidation.ts` (bulk/upsert upfront validation), and
-  `crudUpdateUpsert.ts` (project-scoped upsert application +
-  `classifyUpsertTarget`).
-- `crudTransition.ts` — bulk status transition (by `ids` or `fromStatus`
-  lane) + per-lane reorder.
-- `crudDelete.ts` — delete + cancel-queued-run; both clear spawn-queue state
-  so a removed/cancelled task can't later spawn a worktree. Delete removes the
-  worktree (uncommitted edits archived as always) but passes
-  `keepBranchIfUnmerged`, so a `lattice/*` branch with commits not on HEAD —
-  the only copy of that work — survives; the response then adds
-  `keptBranch: {name, unmergedCommits, hint}` (`keptBranchPayload`), otherwise
-  it stays `{ok: true}`. The MCP `delete_task` tool leads its result with the
-  hint. Delete takes the **per-task `mergeLocks` lock** (after the project-pin
-  check, before any side effect) and holds it across worktree teardown +
-  record removal, so it can't pull a worktree out from under a live
-  `git merge` or erase the record mid-finalize (which used to land the deleted
-  work on main plus a "qa state could not be saved" run error). A held lock is
-  waited for up to `TASK_DELETE_LOCK_WAIT_MS` (5 s, `mergeLocks.acquireBriefly`,
-  shared with `/merge-aborted`), then answered **409** `{error, merging: true}`
-  — the board toasts it. Deps seam `createTaskDeleteHandler({cleanupWorktree,
-  lockWaitMs})` for the regression test.
-- `crudTypes.ts` — shared `TaskIdRequest` type.
+**Run / merge** — `run.ts` composes runRoute → resumeRoute → mergeRoute.
 
-Keep the markdown/`text/plain` body handling intact — those routes use the
-shared `textOrMarkdownBody` parser in `crud.ts`. Grammar (`markdownBatch.ts`):
-a metadata-only heading (`# {id=t_1, status=done}`) is a valid heading with an
-EMPTY title, which means "keep the title" on an update (PATCH / an id-bearing
-upsert block) and is a 400 on a create. A markdown PATCH parses in
-`singleTask` mode — only the first `#` heading is the title; later level-1
-headings are description text rather than silently dropped extra tasks.
-`serializeTasksAsMarkdown` backslash-escapes description lines that would read
-as structure (`# ` headings, a fence that never closes) and the parser strips
-one backslash outside fences, so GET `?format=markdown` → POST `/upsert` is a
-no-op; a `limit`-capped listing carries `truncated=N/M` in its frontmatter.
+- `runRoute.ts` / `resumeRoute.ts` — `/:id/run` (pin + `isFreshlyRunnable`)
+  and `/:id/resume`, both → `{accepted, queued}`.
+- `startTask.ts` — `startTaskById` (worktree → pty → in_progress flip), shared
+  with the workflow Start step; `startWithdrawal.ts` — withdrawal checks,
+  teardown (`discardOrphanedSpawn`), CAP-parked checkouts.
+- `resumeTask.ts` — the resume spawn. `colorSlot.ts` — stable palette slot,
+  reserved until the flip lands.
+- `harnessFactory.ts` — `selectHarnessCommand`: harness → run/resume command +
+  pty `createSession` (injectable `proxyCreateSession` boundary).
+- `mergeRoute.ts` — `POST /:id/merge`: 409 while a merge run / manual merge /
+  post-merge hook is active. `manualMergeService.ts` (`runManualMerge`:
+  project `run.lock`, fresh vs. already-conflicted, hook gate),
+  `mergeResponses.ts`, `manualMerge{Guards,Locks,Types}.ts`.
+- `_shared.ts` — `requireTaskStatus` (400 on the wrong lane), `logTaskRouteError`.
+- `requestUtils.ts` — project resolution + pins (`?project=`, else a JSON
+  body's `project`; non-absolute → 400), status checks, `normalizeBody`.
+  `projectValidation.ts` — create needs an absolute path to a git repo.
 
-## Run / merge routes (`run.ts` composes run → resume → merge)
+**Queued spawns** — `queuedSpawn.ts`, a compatibility barrel (routes,
+`recovery/queuedRunResume.ts`, the workflow Start step and tests import it),
+over `queuedSpawnAdmission.ts` (dedupe keys, persisted run-queue policy +
+`CLEARED_RUN_QUEUE_STATE`, `TaskStartWithdrawnError`), `queuedSpawnFailure.ts`
+(`runSpawnThunk`) and `queuedSpawnEnqueue.ts` (enqueue + cancel).
 
-- `runRoute.ts` — `POST /:id/run`: pin + `isFreshlyRunnable`, `enqueueTaskRun` → `{accepted, queued}`.
-- `startTask.ts` — `startTaskById` (worktree → pty → in_progress flip), shared with the workflow Start step.
-- `startWithdrawal.ts` — `startTaskById`'s withdrawal checks, withdrawn-start teardown (`discardOrphanedSpawn`) and CAP-parked checkouts.
-- `colorSlot.ts` — `assignColorSlot` / `reserveColorSlot`: stable palette slot, reserved until the flip lands.
-- `harnessFactory.ts` — `selectHarnessCommand`: harness → run/resume command + pty `createSession`. Returned non-CAP executor errors reject with the original diagnostic (including uncertain outcomes, which must not be retried). The injectable `proxyCreateSession` boundary covers returned errors, not just thrown spawn stubs.
-- `mergeRoute.ts` — `POST /:id/merge`: 409 while a merge run / manual merge / post-merge hook is active.
-- `manualMergeService.ts` — `runManualMerge`: project `run.lock`, fresh vs. already-conflicted, hook gate. Already-conflicted and still mid-merge: a live resolver pty in the worktree (`findExistingResolverSession`) is handed back (`respondLiveResolver`, `existingResolver: true`) instead of spawning a second one; an unreachable terminal-server falls through to the spawn.
-- `mergeResponses.ts` — outcome → `{merged:true}`, a queued resolver pty, re-written `MERGE_INSTRUCTIONS.md`, or the already-running resolver (`respondLiveResolver`, instructions left untouched).
-- `manualMergeGuards.ts` / `manualMergeLocks.ts` — per-project in-flight set; per-task `mergeLocks` wrapper.
-- `manualMergeTypes.ts` — `MergeReadyTask` (a task with `branch` + `worktreePath`).
-- `_shared.ts` — `requireTaskStatus` (400 on the wrong lane) + `logTaskRouteError`.
-- `requestUtils.ts` — `respondJson`, project resolution/400s, project pins (`?project=`, else a JSON body's `project`; non-absolute → 400), status checks, `normalizeBody`.
-- `projectValidation.ts` — `validateProjectForCreate`: creating needs an absolute path to a git repo.
+**Hooks** — `hooks.ts` + `hooks/` + `finalizeResolved.ts`: `/complete`,
+`/merged`, `/merge-aborted`, `/stash-resolved`. See
+[hooks/CLAUDE.md](hooks/CLAUDE.md).
 
-## Queued spawns (`queuedSpawn.ts` barrel; split by concern)
+## Invariants
 
-`runRoute.ts` / `resumeRoute.ts` / `crudDelete.ts` / `recovery/queuedRunResume.ts`
-and the `queuedSpawn.test.ts` suite import the queued-spawn surface from
-`queuedSpawn.ts`, a **compatibility barrel** keeping that path stable while the
-implementation lives in focused modules. Each queued thunk does the FULL spawn
-(worktree + pty) and delivers its terminal over the `task-spawned` WS event; a
-non-CAP failure emits `task-spawn-failed` instead. **Keep the crash-safe retry
-semantics intact** — the attempt counter is bumped disk-first BEFORE the spawn
-(`updateTaskCrashSafe`) so a process-crashing spawn still counts, a CAP re-queue
-undoes that bump, and any other failure clears the run-queue state:
+Routing and contract:
 
-- `queuedSpawnAdmission.ts` — admission state: the `task-run:`/`task-resume:`
-  dedupe keys, the persisted run-queue policy a run carries across a restart
-  (and its `CLEARED_RUN_QUEUE_STATE` inverse), and the injectable
-  `SpawnFailureDeps` failure-path I/O.
-- `queuedSpawnFailure.ts` — the shared thunk body (`runSpawnThunk`): crash-safe
-  at-admission attempt counting, CAP retry undo, and terminal-failure reporting
-  (`reportSpawnFailure` → `task-spawn-failed`).
-- `resumeTask.ts` — the resume spawn itself. **Harness default**: a body with
-  no (valid) `harness` resumes under the harness the task was actually run
-  with (`Task.harness`, recorded at spawn — `resolveResumeHarness`), and a Pi
-  resume reuses the task's recorded `piModel` when none is given; only a task
-  with no recorded harness falls back to Claude. An explicit harness in the
-  body still wins, and the harness/model a resume actually spawned is written
-  back onto the task so the switch sticks. (It used to default every
-  body-less resume to Claude, silently moving Pi/Codex tasks onto Claude.)
-  **Conversation resume policy**: `buildTaskResumeCommand` receives that same
-  resolved Pi model and current project `codexYolo` setting. It replaces the
-  old model/permission flags before the command bypasses the fresh builder in
-  `selectHarnessCommand`, keeping the conversation and unrelated flags. This
-  is specific to explicit task Resume; ordinary `buildRestoreCommand` tab
-  restoration still preserves its original launch flags. Covered through the
-  real command override and registry recording in `taskResumePolicy.test.ts`.
-  **Withdrawal**: observes the queue's AbortSignal and re-reads task status,
-  worktree/branch identity and start time after preparation and at allocation
-  settlement. Conversation/harness metadata is committed only after a final
-  eligibility check under `updateTaskWith`. A withdrawn late allocation is
-  killed by its own serverId through `terminalProxy` (also ends its registry
-  tab); resume cleanup never discards the existing checkout or older PTYs.
-  Intentional withdrawal uses `TaskStartWithdrawnError`, with no success event
-  or failure toast. `ResumeTaskDeps` keeps the producer testable with deferred
-  preparation/allocation and real task-store checks.
-- `queuedSpawnEnqueue.ts` — the run/resume enqueue wrappers (`enqueueTaskRun` /
-  `enqueueTaskResume`) plus cancellation (`cancelQueuedTaskSpawns` /
-  `dequeueTaskRun`). Cancellation also reaches a run the queue already
-  admitted: its request signal is aborted (`cancel-queued-run` then answers
-  `inFlight: true`).
-- `startTask.ts` — the run spawn itself. **A cancel / delete / lane change
-  made while a start is in flight wins**: `startTaskById` re-checks after the
-  checkout, before a CAP re-queue, and at the final `in_progress` flip — that
-  one a compare-and-set under the task lock (`updateTaskWith`). A withdrawn
-  start tears down its worktree + pty (keeping a checkout another start of the
-  task already claimed) and throws `TaskStartWithdrawnError`
-  (`queuedSpawnAdmission.ts`; `runSpawnThunk` neither toasts it nor touches the
-  run-queue state) or, for a deleted task, a plain Error. A CAP-rejected
-  pass parks a teardown on the request signal, so a cancel before the retry
-  still reclaims its checkout. The palette slot is picked inside that same
-  flip: the stored `colorIndex` is kept only while no other active task or
-  reservation holds it (`colorSlot.ts` `reserveColorSlot(…, preferred)`).
-  **At most one start per task at a time, whatever the entry point (do not
-  regress)**: a task stays `open` until the flip, so the workflow Start step's
-  direct start and a `/run` admitted during its minutes-long checkout both
-  passed `isFreshlyRunnable` — the second setup's reconcile killed the first
-  agent and stranded the task In Progress with no pty. An in-process
-  per-task chain (`startsInFlight`, `isTaskStartInFlight`) makes a concurrent
-  second start wait for the first, then withdraw (`checkWithdrawal`) if the
-  task was claimed, or run as an ordinary retry if the first failed. Covered
-  by `__tests__/startTaskConcurrent.test.ts`.
-  Only a successful terminal allocation may flip a task to In Progress:
-  CAP always defers, regardless of the legacy `throwOnCapacity` option.
-  Other allocation errors leave the prepared checkout intact and propagate
-  without retry or cleanup; an uncertain outcome may have a live agent.
-  An explicit retry follows setup's existing reconciliation policy.
-  `__tests__/taskTerminalAllocation.test.ts` covers the returned-error boundary
-  through run/resume, queued reporting and workflow Start; resume races and
-  registry settlement live in `__tests__/taskResumeWithdrawal.test.ts`.
+- Static paths (`/summary`, `/search`, `/transition`, `/worktree-modified`, …)
+  register before `/api/tasks/:id`, or the segment is captured as an id.
+- Paths, methods, status codes, response shapes and idempotency are public
+  contract (Stop hooks, resolver curls, the MCP server) — don't change them
+  when refactoring.
+- `/run` and `/resume` **enqueue**: `accepted` means admitted, not started; the
+  pty arrives on `task-spawned` (a non-CAP failure on `task-spawn-failed`). A
+  client must not re-POST.
 
-## Worktree lifecycle hooks (`hooks/`)
+List / markdown:
 
-Idempotent Stop-hook / resolver callbacks. `hooks.ts`'s
-`buildTaskHookRouter` assembles the router; one handler module per route:
+- **The list defaults are the point** (active lanes, compact, newest 100,
+  self-pricing envelope, 413 ceiling): an unbounded list was ~320k tokens on a
+  mature board. Don't loosen them.
+- `format=markdown` shares the pipeline except clipping: that doc round-trips
+  through `/upsert`, which REPLACES descriptions, so clipping would destroy
+  task text. A `limit`-capped listing carries `truncated=N/M` in frontmatter.
+- Keep the markdown / `text/plain` body handling. Grammar: a metadata-only
+  heading (`# {id=t_1, status=done}`) has an EMPTY title — "keep the title" on
+  PATCH / an id-bearing upsert block, a 400 on create. A markdown PATCH parses
+  in `singleTask` mode (later `#` headings are description, not dropped
+  tasks). `serializeTasksAsMarkdown` backslash-escapes structure-like lines and
+  the parser strips one backslash outside fences, so GET `?format=markdown` →
+  POST `/upsert` is a no-op.
 
-- `hooks/complete.ts` — `/complete`. First `rejectStaleReplay`: an outbox
-  replay whose session moved on since `replayQueuedAt` is refused **409**
-  `stale-replay` (final — see `../../callbackOutbox/CLAUDE.md`). Then two
-  sub-branches: resolver-finished (ready_to_merge + conflict →
-  `finalizeResolvedTask`, rendered by `respondToResolverFinalize`, which waits
-  out an outside-run post-merge hook on a clean finalize) and the
-  in_progress → ready_to_merge flip, decided by the exported pure
-  `decideInProgressComplete` (a real zero-commit count → `awaitingCommit`; a
-  git error flips anyway — the Stop hook fires once). After responding,
-  `scheduleWorktreePtyKill` kills the idle pty `PTY_KILL_DELAY_MS` (1 s) later
-  — the calling curl runs inside it and must read the response — then
-  `notifySessionsFreed`.
-- `hooks/merged.ts` — `/merged`. Resolver success → `finalizeResolvedTask`,
-  but **only while `task.conflict` is still set** (same gate `/complete`'s
-  resolver branch uses). A late `/merged` from a resolver abandoned by
-  `/merge-aborted` (the Cancel button cleared the flag) is a harmless no-op
-  rather than a silent finalize + main fast-forward.
-- `hooks/mergeAborted.ts` — `/merge-aborted`. Honours the project pin
-  (`requireTaskInRequestedProject`: a task from another board is a 404 and
-  nothing is aborted); a missing/empty project is unpinned, so the resolver
-  agent's give-up curl keeps working. Delegates the abort-mid-merge +
-  clear-conflict-flags (what makes a Cancel authoritative — see `/merged`'s guard
-  above) + kill-orphaned-resolver-pty to the shared
-  `mergeRuns/abandonedResolver.ts` `recoverAbandonedResolverTask`, **then**
-  `signalConflictWaiter(task.id)` to release any merge-run worker parked on this
-  task's conflict waiter immediately. Without the signal the run isn't stuck
-  forever: both park sites (`mergeRuns/flaggedConflict.ts`,
-  `mergeRuns/resolverSpawn/park.ts`) use the bounded `awaitResolverWaiter`
-  (`mergeRuns/waiterLiveness.ts`). It treats a resolver as dead within about
-  75 s of its pty disappearing, and pauses the run after a 30-minute idle limit
-  with no resolver output. Until then the run holds the project run-lock, so
-  later merges get 409s; the signal releases it at once. The aborted task is
-  left at plain ready_to_merge to retry on the next merge-all (no auto-restart, unlike
-  /complete + /merged). Runs the recovery **under the per-task `mergeLocks`
-  lock** (`git merge --abort` mutates the worktree index), so a Cancel can't
-  race a live `git merge`. A held lock is WAITED for (up to
-  `MERGE_ABORT_LOCK_WAIT_MS`, 5 s — the run's conflict wait parks lock-free,
-  and a resolver's give-up curl is one-shot) and only then answered **409**.
-  Deps seam (`recover` + `signalConflictWaiter` + `lockWaitMs`) for the
-  parked-run regression test.
-- `hooks/stashResolved.ts` — `/stash-resolved`. Cleanup → qa, then
-  auto-restart the merge run for remaining work — but **only** when the task
-  is ready_to_merge AND `git merge-base --is-ancestor refs/heads/<branch> HEAD`
-  (via `projectGit`) positively says the branch is merged; any other outcome
-  (not an ancestor, missing ref, git error, `.git` gone) is an `{ok:true}`
-  no-op. Why: a stray or late curl from an old stash-resolver tab used to
-  `branch -D` unmerged commits and stamp a fake `mergedAt` that QA verdict
-  logic treats as a real merge. Cleanup still passes `keepBranchIfUnmerged` as
-  a backstop. Honours the `?project=` pin (404); deps seam mirrors
-  `mergeAborted.ts` (`__tests__/stashResolvedGuard.test.ts`).
-- `hooks/postMergeHookHelper.ts` — `awaitPostMergeHookOutsideRun`, shared by
-  complete / merged / stash-resolved. Skips the gate when a merge run is
-  active (the run owns its own end-of-run hook fire; double-firing deadlocks).
+Delete / cancel:
 
-The resolver-finished `/complete` branch and `/merged` share the
-"re-sync with main, finalize, requeue on conflict" flow in
-`routes/tasks/finalizeResolved.ts`; each route only renders the discriminated result
-into its own HTTP shape. `finalizeResolvedTask` takes the per-task
-`mergeLocks` lock around its git work, so it serializes against the merge-run
-worker (`mergeRuns/processTarget.ts` + `tryFinalizeAfterResolverFinished`,
-which take the same lock) and against a duplicate hook fire (two near-
-simultaneous `/complete` curls, or `/complete` racing `/merged`) — otherwise
-two `mergeWorktreeInRepo` runs race on `.git/index.lock` + `MERGE_HEAD` in the
-one worktree. A caller that loses the race gets the `already-finalizing` result
-(rendered as `{ok:true, finalizing:true}`); the callbacks are idempotent, so the
-lock holder finishes the work. Once it HAS the lock it re-reads the task
-(`deps.readTask`, default `getTask`) and returns the same no-op if `conflict`
-was cleared meanwhile — the route checked the flag before the lock, and a
-Cancel landing in that window used to be overridden by a FF into main. (The `finalizeQueues` promise queue only
-serializes the FF step, not this earlier in-worktree merge.)
+- Delete and cancel-queued-run both clear spawn-queue state, so a removed or
+  cancelled task can't later spawn a worktree. Cancel also aborts a run the
+  queue already admitted (answers `inFlight: true`).
+- Delete passes `keepBranchIfUnmerged`: a `lattice/*` branch with commits not
+  on HEAD (the only copy of that work) survives, and the response adds
+  `keptBranch: {name, unmergedCommits, hint}` (`keptBranchPayload`; the MCP
+  `delete_task` leads with the hint), else `{ok: true}`.
+- Delete takes the **per-task `mergeLocks` lock** after the pin check, before
+  any side effect, held across worktree teardown + record removal — else it
+  pulls a worktree from under a live `git merge` or erases the record
+  mid-finalize, landing deleted work on main. A held lock is waited for up to
+  `TASK_DELETE_LOCK_WAIT_MS` (5 s, `acquireBriefly`, as `/merge-aborted`), then
+  **409** `{error, merging: true}` (the board toasts it). Seam:
+  `createTaskDeleteHandler({cleanupWorktree, lockWaitMs})`.
 
-This back-off is correct ONLY because the lock holder is actively *doing* the
-git work. The merge-run worker therefore must NOT hold the lock while merely
-*parked* on a conflict waiter: it drops it before waiting
-(`mergeRuns/resolverSpawn.ts` `parkOnConflictResolver`). The resolver's
-Stop-hook `/complete` is the thing that finalizes + signals that waiter, and it
-needs the same per-task lock to do so — if the parked worker still held it,
-`/complete` would back off with `already-finalizing` and never signal, hanging
-the run forever (and leaving the resolver pty alive, since only the finalize's
-worktree cleanup tears it down).
+Queued spawn / start:
 
-## Stability
+- **Crash-safe retry accounting**: the attempt counter is bumped disk-first
+  (`updateTaskCrashSafe`) BEFORE the spawn, so a process-crashing spawn still
+  counts; a CAP re-queue undoes the bump; any other failure clears the
+  run-queue state. Each queued thunk does the FULL spawn (worktree + pty).
+- **A cancel / delete / lane change made during a start wins**:
+  `startTaskById` re-checks after the checkout, before a CAP re-queue, and at
+  the final `in_progress` flip — a compare-and-set under the task lock
+  (`updateTaskWith`). A withdrawn start tears down its worktree + pty (keeping
+  a checkout another start already claimed) and throws
+  `TaskStartWithdrawnError` (`runSpawnThunk` neither toasts it nor touches
+  run-queue state; a deleted task throws a plain Error). A CAP-rejected pass
+  parks a teardown on the request signal, so a cancel before the retry still
+  reclaims the checkout. The palette slot is picked inside that flip; a
+  stored `colorIndex` is kept only while no other active task or reservation
+  holds it.
+- **At most one start per task at a time, whatever the entry point**: the
+  task stays `open` until the flip, so a workflow Start step and a `/run`
+  admitted during its checkout both pass `isFreshlyRunnable`, and the second
+  setup's reconcile kills the first agent. The in-process `startsInFlight`
+  chain (`isTaskStartInFlight`) makes the second wait, then withdraw if the
+  task was claimed or run as a retry if the first failed
+  (`startTaskConcurrent.test.ts`).
+- **Only a successful terminal allocation flips a task to In Progress**. CAP
+  always defers (whatever the legacy `throwOnCapacity`). Any other allocation
+  error leaves the prepared checkout intact and propagates with no retry or
+  cleanup (an uncertain outcome may have a live agent; an explicit retry goes
+  through setup's reconciliation). `harnessFactory.ts` rejects with the
+  original diagnostic for returned errors, not just thrown ones
+  (`taskTerminalAllocation.test.ts`).
 
-Route paths, methods, status codes, response shapes, and idempotency are part
-of the public contract (worktree Stop hooks / resolver curls depend on them) —
-don't change them when refactoring these modules.
+Resume:
+
+- **Harness default**: a body with no valid `harness` resumes under the
+  harness the task ran with (`Task.harness` via `resolveResumeHarness`), and
+  a Pi resume reuses the recorded `piModel`; only a task with no recorded
+  harness falls back to Claude. An explicit body harness wins, and what the
+  resume spawned is written back. Don't reintroduce "default to Claude" — it
+  silently moved Pi/Codex tasks onto Claude.
+- **Conversation resume policy**: `buildTaskResumeCommand` keeps the
+  conversation and unrelated flags but replaces the old Pi `--model` / Codex
+  yolo flags with the resolved Pi model and current `codexYolo`. Explicit task
+  Resume only — keep it out of `buildRestoreCommand`, whose tab restoration
+  must preserve the original launch flags (`taskResumePolicy.test.ts`).
+- **Resume withdrawal**: re-checks status, worktree/branch identity and start
+  time after preparation and at allocation settlement (plus the queue's
+  AbortSignal); metadata is committed only after a final check under
+  `updateTaskWith`. A withdrawn late allocation is killed by its own serverId
+  via `terminalProxy`; resume cleanup never discards the existing checkout or
+  older ptys. Withdrawal is `TaskStartWithdrawnError` (no event, no toast).
+
+Merge: `/merge` on a task still mid-merge with a live resolver pty
+(`findExistingResolverSession`) hands that resolver back (`existingResolver:
+true`, `MERGE_INSTRUCTIONS.md` untouched) — never a second one; an
+unreachable terminal-server falls through to the spawn.
+
+## Tests
+
+Named after the module — grep it in `backend/src/__tests__/`; plus
+`taskResumeWithdrawal`, `resumeHarnessDefault`, `taskDeleteMergeLock`.

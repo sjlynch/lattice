@@ -1,5 +1,12 @@
 # Self-hosting soak
 
+Does a workflow survive its backend being hard-killed over and over
+mid-flight (what happens when Lattice merges into its own repo and every merge
+restarts the backend)? `node scripts/soak/selfHostSoak.mjs [--tasks 8]
+[--chaos 10-30] [--down 0-4] [--timeout 25] [--no-chaos] [--keep]`. Fully
+isolated from the live instance; no tokens, deterministic. Needs a current
+`backend/dist` (keep `npm run dev` running, or build first).
+
 - `selfHostSoak.mjs` is the executable entry point. It owns CLI parsing,
   the dist preflight, settings/task/workflow seeding, chaos scheduling,
   settling, report printing, and teardown order.
@@ -21,14 +28,16 @@
 CLI defaults: 8 tasks, chaos every 10–30 s, downtime 0–4 s, timeout 25 min,
 backend port 5484, terminal port 5485; `--no-chaos` and `--keep` are flags.
 The backend uses this checkout's existing `backend/dist/index.js`.
-The throwaway project starts on main; even tasks append to `shared.txt`,
-odd tasks to `own/task-N.txt`. Post-merge hooks are enabled and the workflow
-is Start → Merge → Run tests → Push.
+The throwaway project starts on main; even tasks append to `shared.txt` (so
+every later merge conflicts and runs the resolver flow), odd tasks to
+`own/task-N.txt`. Post-merge hooks are enabled and the workflow is
+Start → Merge → Run tests → Push.
 
 All generated state lives under `<os.tmpdir()>/lattice-soak-*`: `project/`,
 `home/`, `bin/`, and `tmp/`. Child HOME and USERPROFILE point at `home/`;
 TEMP/TMP/TMPDIR point at the sibling `tmp/` so restart recovery keeps the
-project. Strip inherited Claude session markers, preserve case-insensitive
+project (the backend prunes `projects.json` entries under its own temp dir as
+test junk). Strip inherited Claude session markers, preserve case-insensitive
 PATH-key lookup, and keep both the shim PATH prefix and
 `LATTICE_PTY_PATH_PREPEND` (Windows registry PATH otherwise outranks it).
 The shim is `claude.cmd` on Windows and an executable `claude` shell script

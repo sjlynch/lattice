@@ -10,7 +10,7 @@ instead of expecting detail here.
 
 ### Bootstrap & server
 
-- `index.ts` — entry: `server/bootGuards.ts` first (before touching `~/.lattice`), then `processGuards`, the `inheritedAgentEnv` scrub, then dynamic import of `server/startup.ts`.
+- `index.ts` — entry: `server/bootGuards.ts` first (before touching `~/.lattice`), then `processGuards`, the `inheritedAgentEnv` scrub, then `server/startup.ts`.
 - `inheritedAgentEnv.ts` — drops an outer Claude Code session's identity env at boot so sidebar Claudes don't think they're its children; user config vars are kept.
 - `server/` — config, Express app + route mounting, HTTP/WS wiring, startup ordering. See `server/CLAUDE.md`.
 - `routes/` — one `buildXRouter()` per domain, mounted from `server/app.ts`. See `routes/CLAUDE.md` for the route map.
@@ -29,7 +29,7 @@ instead of expecting detail here.
 - `projectPath.ts` — single source of truth for per-project paths under `~/.lattice/` (`canonicalProjectPath`, `projectHash`, `homeProjectDir`, …) + the `isRealAbsoluteProjectPath` route guard.
 - `projectIdentity.ts` — realpath identity + durable legacy-hash bindings behind `projectPath.ts`, so path aliases share one store. Submodules in `projectIdentity/` (see `projectIdentity/CLAUDE.md`); rationale in `PROJECT_IDENTITY.md`.
 - `projectStateManager.ts` / `projectState/` — generic per-project cached, debounced-persisted state store (tasks, workflows, merge runs, terminal registry). See `projectState/CLAUDE.md`.
-- `projectInit/` — "Set up Git": `git init` a non-repo folder into a usable project. See `projectInit/CLAUDE.md` (two invariants).
+- `projectInit.ts` / `projectInit/` — "Set up Git": `git init` a non-repo folder into a usable project. See `projectInit/CLAUDE.md` (two invariants).
 - `ids.ts` — task / workflow / terminal-session id generators.
 
 ### Tasks, merge & runs
@@ -43,7 +43,7 @@ instead of expecting detail here.
 - `projectRunLock.ts` / `projectRunLock/` — cross-process per-project `run.lock` (labels, lendability, `inspectProjectRunLock`). See `projectRunLock/CLAUDE.md`.
 - `diskPressureMerge.ts` — starts a merge run when task runs wait on disk, plus the once-a-minute low-disk monitor (opt-out `autoMergeOnLowDisk: false`).
 - `workflows.ts` / `workflows/` — workflow definitions (`<project>/.lattice/workflows.json`) + `{{var}}` interpolation. See `workflows/CLAUDE.md`.
-- `workflowRuns.ts` / `workflowRuns/` — workflow-run engine facade: step groups advance in order; adjacent `parallel: true` agent (planning) steps run together as one group (`execution.ts` `nextStepGroup`). See `workflowRuns/CLAUDE.md`.
+- `workflowRuns.ts` / `workflowRuns/` — workflow-run engine (step groups in order; adjacent `parallel: true` planning steps run as one group). See `workflowRuns/CLAUDE.md`.
 - `workflowPromptCustomizations.ts` / `workflowPromptCustomizations/` — spawn a harness to tailor a workflow step prompt. See its `CLAUDE.md`.
 - `homeScratch/` — shared home-scoped scratch contract (path guard, session setup, bounded cleanup, persistence) for push / QA / post-merge runs. **Path-guard / cleanup changes go here.** See its `CLAUDE.md`.
 - `pushRuns.ts` / `pushRuns/` — one-off push sessions: QA-lane Push (brief `push`) and workflow Push (brief `workflow-push`). See `pushRuns/CLAUDE.md`.
@@ -53,18 +53,18 @@ instead of expecting detail here.
 
 ### Agents & harness commands
 
-- `harnesses.ts` — re-exports the `AgentHarness` vocabulary (`claude`/`pi`/`codex`, defined in `shared/harnesses.ts`) + `agentHarnessForCommand`; reuse it instead of open-coding harness unions.
+- `harnesses.ts` — the `AgentHarness` vocabulary (from `shared/harnesses.ts`) + `agentHarnessForCommand`; never open-code a harness union.
 - `shared/` — code the FRONTEND imports too (harness vocab + Pi model pattern, search wildcard, `{{var}}` grammar, tab labels, wire types). Relative imports only. See `shared/CLAUDE.md`.
-- `harnessDetect.ts` — PATH probe for installed agent CLIs; memoizes only definitive results (a timed-out / failed probe is "unknown": reported unavailable, never cached, re-probed in the background and pushed via `onHarnessAvailabilityChange`). `resetHarnessCache()` re-probes; drives `/ws/harnesses`.
+- `harnessDetect.ts` — PATH probe for installed agent CLIs → `/ws/harnesses`; memoizes only definitive results (a timed-out probe is reported unavailable, never cached, and re-probed in the background).
 - `agentCommandBuilder.ts` — shared harness command syntax: permission-bypass flags, Pi `--approve` + validated `--model`, shell quoting.
 - `spawnQueue.ts` / `spawnQueue/` — admission controller in front of every agent spawn (`softCap` = `maxConcurrentAgents`; defers, never drops). See `spawnQueue/CLAUDE.md`.
-- `queuedCreateSession.ts` — spawn-queue-gated `proxyCreateSession` for sites that await their pty (resolvers, post-merge, push, QA, prompt customization).
+- `queuedCreateSession.ts` — spawn-queue-gated `proxyCreateSession` for sites that await their pty (resolvers, one-off runs).
 - `concurrencyLimit.ts` — tiny FIFO bounded-concurrency gate (e.g. the health watcher's file reads).
 - `instructionTemplates.ts` / `instructionTemplates/` — editable agent-brief templates with `{{token}}`s + per-project overrides. See its `CLAUDE.md`.
 - `harnessSystemPrompts.ts` / `harnessSystemPrompts/` — per-harness system-prompt Append/Replace + the always-on Lattice preamble, injected at the spawn chokepoint. See its `CLAUDE.md`.
-- `latticeApiDocs.ts` / `latticeApiDocs/` — generates `<project>/.lattice/LATTICE_API.md` (short index the preamble names, size-budgeted by test) + `LATTICE_API_RECIPES.md` from `*.template.md`. `latticeApiDocs/docPath.ts` only names the doc path, so the terminal-server's fingerprinted import graph skips the generator/templates — **never import `latticeApiDocs.ts` from terminal-server code** (every API tweak would mark the executor stale).
+- `latticeApiDocs.ts` / `latticeApiDocs/` — generates `<project>/.lattice/LATTICE_API.md` (short index, size-budgeted by test) + `LATTICE_API_RECIPES.md` from `*.template.md`. **Never import `latticeApiDocs.ts` from terminal-server code** (use `latticeApiDocs/docPath.ts`): every API tweak would mark the executor stale.
 - `claudeStopHook.ts` — renders `.claude/settings.local.json` Stop + activity hooks for worktrees and non-worktree sessions (via the callback script).
-- `codexStopHook.ts` — `.codex/hooks.json` Stop + activity hooks (if-absent write; only `ENOENT` is absent — any other read error leaves the file untouched); Codex's `Stop` fires once, so no quiescence gate.
+- `codexStopHook.ts` — `.codex/hooks.json` Stop + activity hooks (if-absent write: only `ENOENT` counts as absent, so a repo's own file is never clobbered).
 - `piExtension.ts` / `piExtension/` — Pi's `lattice-complete.ts` completion backstop (`session_shutdown` → callback). See `piExtension/CLAUDE.md`.
 - `callbackOutbox.ts` / `callbackOutbox/` — durable completion callbacks: `lattice-callback.cjs`, the outbox, replay after a restart. See its `CLAUDE.md`.
 - `claudeTrust.ts` / `claudeTrust/` — writes `~/.claude.json` folder trust + managed MCP entries (apply side only). See `claudeTrust/CLAUDE.md`.
@@ -82,8 +82,8 @@ instead of expecting detail here.
 - `agentActivity.ts` — `agent-activity` pub/sub (file beams) for those sessions, fed by `routes/agentActivity.ts`.
 - `agentActivityTokens.ts` — HMAC token minted into `/api/agent-activity/:token` hook URLs; secret persisted under `~/.lattice`.
 - `piActivity.ts` — generates Pi's `.pi/extensions/lattice-activity.ts`, posting Claude-shaped bodies from `tool_execution_start/end`.
-- `projectClaudeHooks.ts` — merge-installs activity hooks into the project's own `.claude/settings.local.json` (temp + rename; never overwrites an unparseable or unreadable file — only `ENOENT` is absent).
-- `projectCodexHooks.ts` — Codex analogue for user-opened Codex tabs: per-launch `--config hooks.*` overrides + `--dangerously-bypass-hook-trust` (`CODEX_HOOK_TRUST_BYPASS_FLAG`); nothing written to the repo or `~/.codex` (`wantsProjectCodexHooks`, `projectCodexHookConfigArgs`, `withCodexHookTrustBypass`).
+- `projectClaudeHooks.ts` — merge-installs activity hooks into the project's own `.claude/settings.local.json`; never overwrites an unparseable or unreadable file (only `ENOENT` is absent).
+- `projectCodexHooks.ts` — Codex analogue for user-opened Codex tabs: per-launch `--config hooks.*` overrides + `--dangerously-bypass-hook-trust`; nothing written to the repo or `~/.codex`.
 - `projectClaude/` — project-root Claude instrumentation behind `routes/projectClaude.ts`: hook reconcile, session presence lifecycle, activity fan-out. See `projectClaude/CLAUDE.md`.
 
 ### Terminal (detached PTY executor)
@@ -93,51 +93,51 @@ instead of expecting detail here.
 - `terminalConfig.ts` — executor tunables (scrollback replay / flush / on-disk log sizes).
 - `terminalProtocol.ts` — wire protocol version, capability flags, session-request age limits shared by both processes.
 - `terminalServerAuth.ts` — persisted bearer token guarding the executor's mutating HTTP routes (`x-lattice-terminal-token`).
-- `persistedSecretFile.ts` — load-or-create for `~/.lattice` secrets (terminal token, `agentTokenSecret`): regenerates only on ENOENT (exclusive `wx` create, re-read on EEXIST) or an unusable value; any other read error retries, then throws — **never overwrite a secret you couldn't read** (running executors / baked hook tokens still hold it).
+- `persistedSecretFile.ts` — load-or-create for `~/.lattice` secrets (terminal token, `agentTokenSecret`): regenerates only on ENOENT (exclusive `wx` create) or an unusable value — **never overwrite a secret you couldn't read** (running executors / baked hook tokens still hold it).
 - `terminalFingerprint.ts` — hash of the executor's source bytes; every file the executor imports must be in `FINGERPRINT_FILES`.
-- `terminalServerLifecycle.ts` — spawn / respawn / health probe of the executor (`BASE`, `ensureTerminalServer`).
+- `terminalServerLifecycle.ts` — spawn / respawn / health probe of the executor .
 - `terminalServerStatus.ts` — read-only `current|stale|absent|unavailable` for the navbar "update pending" chip; never triggers the upgrade itself.
 - `terminalServerClient.ts` / `terminalServerClient/` — backend HTTP client for the executor (probes, kills, the `POST /sessions` spawn chokepoint). See its `CLAUDE.md`.
 - `terminalProxy.ts` — public façade over lifecycle + client + `terminalWsRelay.ts`; its kill wrappers end terminal-registry records.
-- `terminalWsRelay.ts` — relays browser `/ws/terminal` to the executor (connect timeout, input notes, Codex title default).
+- `terminalWsRelay.ts` — relays browser `/ws/terminal` to the executor.
 - `terminalBanner.ts` — the dim scrollback banner naming `LATTICE_API.md`; tells the user, never reaches the agent.
-- `terminalRegistry/` — durable terminal-tab registry + restore-on-open. See `terminalRegistry/CLAUDE.md`.
+- `terminalRegistry.ts` / `terminalRegistry/` — durable terminal-tab registry + restore-on-open. See `terminalRegistry/CLAUDE.md`.
 - `terminalActivity.ts` — per-tab "agent still working" signal (`/ws/terminal-activity`): Codex status title, Claude/Pi sustained printable output.
 - `terminalActivityPoller.ts` — the shared **display-only** poll (generation fencing, 5 s staleness expiry); never affects pty/task/workflow liveness.
-- `terminalActivityRelay.ts` — title facts parsed from browser streams, only for old executors lacking `capabilities.nativeTerminalTitle`.
+- `terminalActivityRelay.ts` — browser-stream title facts, only for old executors lacking `capabilities.nativeTerminalTitle`.
 - `codexTerminalActivity.ts` — per-launch Codex `-c` defaults: status-only terminal title + `tui.terminal_resize_reflow_max_rows` (500).
-- `processTree.ts` — the one home for process-tree kills (don't add another): `killProcessTreeWindows` (`taskkill /F /T` after `pty.kill`, `terminal/kill.ts`) + shell-aware `killChildTree(child, {shell})` (`spawnWithTimeout.ts`).
+- `processTree.ts` — the one home for process-tree kills (don't add another): Windows `taskkill /F /T` after `pty.kill`, and shell-aware `killChildTree`.
 - `nodePtyCleanupFailure.ts` — recognizes the one ignorable Windows node-pty cleanup `TypeError` (by stack frame, not message alone).
 
 ### Git watchers, search & graph
 
 - `gitBranch.ts` — navbar branch label + read-only `.git/HEAD` watcher (`/ws/git-branch`); `rearmGitBranchWatcher` is called by `projectInit` after `git init`.
-- `gitStatus.ts` — read-only git-dir + working-tree watchers → status signature (`/ws/git-status`); the git-dir watcher prunes `objects`/`lfs`/`worktrees`/`logs` (`createGitMetaIgnored`; `logs` kept for a linked-worktree git dir, whose ref lives in the unwatched common dir); `computeStatusSignature` never rejects; `rearmGitStatusWatcher` likewise.
-- `gitWatcherRegistry.ts` — the per-project watcher registry behind both: one lazy watcher per canonical root shared by all subscribers, per-subscriber-isolated fan-out, the `rearm` path. **Slots live for the process lifetime** (no close on last unsubscribe — avoids churn on WS reconnect storms): each distinct canonical root opened keeps its HEAD watcher + `gitStatus.ts`'s two recursive `watchTree` handles, bounded by the number of distinct roots. Keep that design unless replacing it, and always key by `canonicalProjectPath` — every new path spelling would add a duplicate set of recursive watchers.
+- `gitStatus.ts` — read-only git-dir + working-tree watchers → status signature (`/ws/git-status`); the git-dir watcher prunes `objects`/`lfs`/`worktrees`/`logs` (`createGitMetaIgnored`); `computeStatusSignature` never rejects.
+- `gitWatcherRegistry.ts` — one lazy watcher set per canonical root shared by all subscribers (isolated fan-out, `rearm`). **Slots live for the process lifetime** (no close on last unsubscribe — avoids churn on WS reconnect storms), bounded by distinct roots; always key by `canonicalProjectPath` — a new path spelling adds a duplicate set of recursive watchers.
 - `gitDir.ts` — `resolveGitDir`: walks up like git and follows a worktree's / submodule's `.git` pointer file (`gitdir: <path>`), so watchers watch the real git dir.
 - `gitHistory.ts` / `gitHistory/` — the timeline scrubber's `git log`, ghost-node `deletedPaths`, status signature. See `gitHistory/CLAUDE.md`.
 - `watchTree.ts` — win32 recursive `fs.watch` (one handle) replacing chokidar's per-dir handles, which locked directories; `LATTICE_WATCH_MODE` overrides; symlinks not followed.
-- `search.ts` — file-contents search for `/api/search`; `regexSource` is the shared wildcard translation (`shared/searchPattern.ts`, also the frontend's filename pass); returns absolute paths (= graph node ids). Its JS fallback (`search/jsGrepWorker.ts`) greps in a worker thread with a wall-clock budget, so a ReDoS user regex can't freeze the event loop.
-- `ripgrep.ts` — optional memoized `rg` fast path for `search.ts` (`LATTICE_DISABLE_RG`, `LATTICE_RG_PATH`); cancel-poll interval shared with the JS fallback in `search/constants.ts`.
+- `search.ts` — file-contents search for `/api/search` (absolute paths = graph node ids; wildcard grammar in `shared/searchPattern.ts`). The JS fallback (`search/jsGrepWorker.ts`) greps in a worker with a wall-clock budget, so a ReDoS user regex can't freeze the event loop.
+- `ripgrep.ts` — optional memoized `rg` fast path for `search.ts` (`LATTICE_DISABLE_RG`, `LATTICE_RG_PATH`).
 - `scanner/` — project → `{nodes, links}` graph pipeline (no facade: import the phase module, e.g. `scanner/scan.ts`). See `scanner/CLAUDE.md`.
-- `health/` — tree-sitter per-file metrics, health score, cross-file dead code, file watcher. See `health/CLAUDE.md`.
+- `health.ts` / `health/` — tree-sitter per-file metrics, health score, cross-file dead code, file watcher. See `health/CLAUDE.md`.
 - `fsbrowse.ts` / `fsbrowse/` — folder-picker backend (roots, validation, listing, create-dir).
 
 ### Pi / MCP / tools
 
-- `piModels.ts` / `piModels/` — Pi model discovery, menu, models.json reconcile, endpoint probe / auto-discovery, thinking levels. See `piModels/CLAUDE.md`.
+- `piModels.ts` / `piModels/` — Pi model discovery/menu, models.json reconcile, endpoint probes. See `piModels/CLAUDE.md`.
 - `piProviderValidation.ts` — `PiProvider` types + validation of `globalSettings.piProviders` (re-exported from `globalSettings.ts`).
-- `spawnWithTimeout.ts` — spawn + capture output + kill-on-timeout (whole child tree via `processTree.ts` `killChildTree`) for bounded external CLI calls: Pi model listing/installs, Opengrep.
+- `spawnWithTimeout.ts` — spawn + capture + kill-the-whole-tree-on-timeout for bounded external CLI calls (Pi, Opengrep).
 - `piSubagents.ts` / `piSubagents/` — auto-installs `@tintinweb/pi-subagents` + cwd-exact shims (incl. the project root). See `piSubagents/CLAUDE.md`.
-- `piMcp.ts` / `piMcp/` — Pi MCP via `pi-mcp-adapter`; the backend writes cwd `.pi/mcp.json` + shim at spawn (`applyPiMcpForSpawn`). See `piMcp/CLAUDE.md`.
+- `piMcp.ts` / `piMcp/` — Pi MCP via `pi-mcp-adapter` (cwd `.pi/mcp.json` + shim written at spawn). See `piMcp/CLAUDE.md`.
 - `mcp/` — MCP control plane: catalog, per-harness resolvers, secrets, import; resolved in the backend, applied by the executor. See `mcp/CLAUDE.md`.
 - `latticeMcp/` — Lattice's own first-party stdio MCP server over the task-board API. See `latticeMcp/CLAUDE.md`.
-- `opengrep/` — Opengrep SAST as a user-installed pre-run tool; nothing third-party is committed or bundled. See `opengrep/CLAUDE.md`.
+- `opengrep.ts` / `opengrep/` — Opengrep SAST as a user-installed pre-run tool; nothing third-party is committed or bundled. See `opengrep/CLAUDE.md`.
 
 ### Crash & logging
 
 - `processGuards.ts` — swallows only the node-pty cleanup throw; anything else logs, writes a crash file and exits 1 (hard-exits if the console is stalled).
-- `crashLog.ts` — console ring, sync `~/.lattice/logs/crash-*.log`, Node diagnostic report, `live-*.log` mirror promoted to `*-nojs.log` next boot. Best-effort, never fatal. `crashLog/`: `format.ts` (pure), `liveMirror.ts` (live mirror + `-nojs` promotion), `retention.ts` (newest N per kind; `-nojs` has its own bucket).
+- `crashLog.ts` / `crashLog/` — console ring, sync `~/.lattice/logs/crash-*.log`, Node diagnostic report, `live-*.log` mirror promoted to `*-nojs.log` next boot (`liveMirror.ts`), newest-N retention per kind. Best-effort, never fatal.
 - `consoleSink.ts` — async, bounded (256 KB) console writes, so a stalled console (a Windows text selection) drops lines instead of freezing the process.
 - `memDiag.ts` / `memDiag/` — periodic `[mem]` console line + `~/.lattice/logs/mem-*.jsonl` for backend, terminal-server and browser tabs; `registerMemGauge` beside every long-lived collection; `/api/debug/*`. See `memDiag/CLAUDE.md`.
 
@@ -150,7 +150,7 @@ instead of expecting detail here.
 
 - **One active merge run per project** — in-process (`mergeRuns.ts`, second start → 409) *and* cross-process (`projectRunLock.ts`).
 - **Workflow runs survive a backend restart** — mirrored to `per-project/<hash>/workflow-runs.json`, re-adopted on boot (`recovery/workflowRunResume.ts`). Agent-step ptys survive in the executor, so the pending `/complete` still advances the run; control steps are re-dispatched. Keep `restoreWorkflowRun` idempotent and the mirror current on every run mutation.
-- **Push runs, QA runs and post-merge hooks survive a restart too** — mirrored to `per-project/<hash>/{push-runs,qa-runs,post-merge-hooks}.json` (`homeScratch/persistence.ts`); `recovery/oneOffRunResume.ts` re-adopts live-pty records **before listen** (callbacks land; a resumed merge run awaits the live hook; a re-dispatched workflow Push re-attaches instead of pushing twice). A dead one is settled as lost after a callback-outbox grace. Re-adopted Claude sessions get the longer `READOPTED_SETTLE_MS` quiescence window.
+- **Push runs, QA runs and post-merge hooks survive a restart too** — mirrored to `per-project/<hash>/{push-runs,qa-runs,post-merge-hooks}.json` (`homeScratch/persistence.ts`); `recovery/oneOffRunResume.ts` re-adopts live-pty records **before listen**, so callbacks land and a re-dispatched workflow Push re-attaches instead of pushing twice; a dead one settles as lost after a callback-outbox grace. Detail: `recovery/CLAUDE.md`.
 - **Merge runs survive a backend restart** — `scripts/dev.mjs` defers restarts while a `run.lock` is held, and boot's `resumeInterruptedMergeRuns` restarts any run whose lock is stale. So `startMergeRun` must tolerate a half-processed task set.
 - **Per-task merge lock** (`mergeLocks.ts`) — manual `/merge` can't race the run worker.
 - **Crash-safe ordering** — `updateTaskCrashSafe` writes disk before cache; used for `ready_to_merge → qa`.
@@ -158,24 +158,4 @@ instead of expecting detail here.
 - **All project-repo git goes through `projectGit`** — a raw `exec('git', …)` is allowed only in the modules `__tests__/rawGitAllowlist.test.ts` lists (worktree-side git, which needs the real `git merge` `projectGit` forbids; read-only probes of paths that may not be a repo root; Git Setup's `git init`). A new raw call fails that test.
 - **No `fs.rm({recursive})` on anything inside a project** — worktrees live outside the tree and teardown delegates to `git worktree remove`. One-off scratch cleanup is an intentional recursive delete, bounded to `per-project/<hash>/{push,qa,post-merge-hooks}/<id>/` with path + reparse-point guards.
 
-## Type-check
-
-`src/` is the source of truth; `dist/` is generated by `tsc` — don't edit it.
-`npx tsc --noEmit` from `backend/`. Tests: `npm test` (node:test via `tsx`,
-runs `src/__tests__/*.test.ts`).
-
-`tsc` only emits `.js` for `.ts`. Non-TS runtime assets under `src/` (currently
-`workflowRuns/create-task-template.cjs` and both
-`latticeApiDocs/LATTICE_API.template.md` +
-`latticeApiDocs/LATTICE_API_RECIPES.template.md`)
-are copied into `dist/` by `scripts/copy-assets.mjs`, run from **both**
-`npm run build` and `npm run dev` (`scripts/dev.mjs`, right after the initial
-`tsc`). New asset → add it to `copy-assets.mjs`'s list (one place, both paths).
-Missing the helper asset crashes backend boot with `ENOENT … dist/…` because
-`renderHelperScript.ts` reads it synchronously at module initialization.
-`latticeApiDocs.ts` loads templates lazily, trying the dist-adjacent path then
-the source-tree fallback; if neither yields a valid template, it warns once
-about disabled generation, caches `null`, and disables that file's generation
-for the process lifetime. Missing API-doc templates degrade docs without
-failing import; `refreshLatticeApiDocs` also catches generation failures so
-a spawn remains possible.
+Scripts, type-check, tests and non-TS runtime assets (`copy-assets.mjs`): `../CLAUDE.md`.

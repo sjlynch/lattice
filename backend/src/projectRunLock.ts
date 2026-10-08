@@ -8,11 +8,12 @@
 // FF, with destructive results.
 //
 // Mechanism: a lockfile at `~/.lattice/per-project/<hash>/run.lock`
-// holding `{pid, hostname, startedAt, label}`. Created with `wx` (atomic
-// fail-if-exists). On contention we read the existing file and, if the
-// owner PID is alive, refuse. If the owner is dead (server crashed mid-
-// run), we steal the lock — same behaviour as snapshot recovery: assume
-// a previous run died and the next one should proceed.
+// holding `{pid, hostname, startedAt, label, ownerId}`, published complete via
+// an exclusive hard link (never a direct `wx` write — a contender could read the
+// empty file as corrupt). On contention we read the existing file and, if the
+// owner PID is alive, refuse. If the owner is dead (server crashed mid-run),
+// the lock is retired and taken over — assume a previous run died and the next
+// one should proceed. Rules: projectRunLock/CLAUDE.md.
 
 export {
   ProjectRunLockedError,

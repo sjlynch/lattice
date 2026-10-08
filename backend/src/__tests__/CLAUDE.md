@@ -64,3 +64,10 @@ importing them by relative path.
 - `latticeApiDocs` — the generated `LATTICE_API.md` index (read whole on every Lattice question) must stay under 5 KB, even for a long project path.
 - `defaultPromptMigrations` — backend built-in step prompts must match the frontend `prompts/*.md` bytes.
 - `regExpTemplateEscapes` — no ``new RegExp(`…`)`` template in `backend/src`/`frontend/src` may use a single-backslash escape (`\.` is lost to `.` in a template literal).
+- `rawGitAllowlist` — only the listed modules launch `git` directly; all other project-repo git goes through `projectGit`.
+- `terminalFingerprint` — every module in the executor's import graph is in `FINGERPRINT_FILES`, and the executor never imports `latticeApiDocs` / `memDiag/browser` (fingerprint churn).
+- `sharedFolderBoundary` — everything reachable from `shared/` imports only relative paths (the frontend bundles it).
+- `deadExports` — an export of `backend/src`/`frontend/src` that nothing references fails; delete it rather than allowlisting.
+- `moduleLayout` — no `x/index.ts` facades (a domain's facade is the root `x.ts`).
+- `docBudget` — every `CLAUDE.md` in the repo stays under its byte budget (12 KB; 20 KB for the root and package indexes).
+- `docPaths` — every backtick-quoted file path in a `CLAUDE.md` exists (suffix match), or is a name the code writes at runtime. Move a file → fix the docs that name it.

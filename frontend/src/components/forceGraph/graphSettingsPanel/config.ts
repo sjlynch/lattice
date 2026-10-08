@@ -62,9 +62,9 @@ export const PHYSICS_ROWS: SliderRow[] = [
   },
 ];
 
-// The "Spread" tab — how open the layout settles and what shape it takes. These
-// engine-cooling/collision knobs default to neutral (no change to the
-// out-of-the-box settle); see the field docs in graphSettings.ts.
+// The "Spread" tab — how open the layout settles and what shape it takes. The
+// defaults are deliberately NOT d3's (slower alpha decay, a short warmup, tidy
+// layout on); see the field docs and defaults in graphSettings.ts.
 export const SPREAD_ROWS: SliderRow[] = [
   {
     key: 'alphaDecay',

@@ -13,14 +13,17 @@ setup (`../setupProject.ts`) runs only `ensureLatticeRepoExclude` →
   deliberately skip it, since editing a tracked file mid-run dirties main.
 - `repoExclude.ts` manages `.git/info/exclude` for repo-local excludes that
   should not be committed. **Always resolve the target with `git rev-parse
-  --git-common-dir`.** `info/exclude` is one of git's *common* files: it is read
-  only from the common gitdir, never from a linked worktree's own
-  `.git/worktrees/<name>/`. Writing to the latter is silently inert — that was a
-  real bug (`writeWorktreeExclude` in `../stopHook.ts` did it), and its
-  consequence was that every Lattice file stayed visible to `git add -A` inside
-  task worktrees, so agents committed `.codex/hooks.json` onto main and aborted
-  later merges. Because the file is shared, appends must be idempotent
-  (`appendMissingExcludeEntries`), never blind.
+  --git-common-dir`** (here and in `../stopHook.ts` `writeWorktreeExclude`).
+  `info/exclude` is one of git's *common* files: it is read only from the
+  common gitdir, never from a linked worktree's own `.git/worktrees/<name>/`.
+  Writing to the latter is silently inert — Lattice files then stay visible to
+  `git add -A` in task worktrees, agents commit `.codex/hooks.json` onto main,
+  and later merges abort. Because the file is shared, appends must be
+  idempotent (`appendMissingExcludeEntries`), never blind.
+  `ensureLatticeRepoExclude` writes the FULL managed set (scratch dirs +
+  `LATTICE_EXCLUDE_PATTERNS`) on merge-run preflight, manual merge, stash,
+  setup, project open and Git Setup, so an existing project self-heals without
+  a fresh worktree.
 - `untrack.ts` removes Lattice-owned files from the index with `projectGit`
   (`rm --cached` only), never recursive filesystem deletion.
 - `verify.ts` — `verifyEssentialExclusions` probes (`git check-ignore`) that

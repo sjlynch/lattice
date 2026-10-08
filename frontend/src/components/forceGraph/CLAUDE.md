@@ -1,433 +1,170 @@
 # forceGraph
 
-3D file-tree DAG view. `components/ForceGraphView.tsx` is a re-export shim; the
-coordinator is `forceGraph/ForceGraphView.tsx`. Hook detail in `hooks/CLAUDE.md`;
-label physics in `labelPhysics/CLAUDE.md`.
+3D file-tree DAG view (three.js / 3d-force-graph); `components/ForceGraphView.tsx`
+is a re-export shim. Deeper: [hooks/CLAUDE.md](hooks/CLAUDE.md) (effects,
+init/teardown), [labelPhysics/CLAUDE.md](labelPhysics/CLAUDE.md) (repulsion
+**and** label texture/registry rules), `graphSettingsPanel/CLAUDE.md` (settings
+→ scene effects). Not here: scan data (`src/hooks/CLAUDE.md`),
+`extensionStyles.ts`, `taskColors.ts`.
 
 ## Two named subsystems (shared vocabulary)
 
-- **Idle controller** (`idleController.ts`) — the render-on-demand gate: a
-  reference-counted `pauseAnimation`/`resumeAnimation` wrapper. The RAF loop
-  needs a held **reason** (`engine`, `interact`, `refresh`, `labelPhysics`,
-  `agents`, `halo`) and is gated off for a hidden tab or collapsed container.
-  A settled, un-interacted scene reaches 0 frames; when only the *slow-only*
-  `agents`/`labelPhysics`/`halo` reasons remain, it duty-cycles to ~30fps.
+- **Idle controller** (`idleController*.ts`) — render-on-demand gate, a
+  ref-counted `pauseAnimation`/`resumeAnimation` wrapper. The RAF loop runs only
+  while a **reason** is held (`engine`, `interact`, `refresh`, `labelPhysics`,
+  `agents`, `halo`), never for a hidden tab or collapsed container. Settled =
+  0 frames; only slow-only reasons (`agents`/`labelPhysics`/`halo`) → ~30fps.
 - **Agent Presence Layer (APL)** (`agentOverlay*.ts` + `hooks/useAgentOverlay`)
-  — where live agents (Claude, Codex, Pi) work: per agent a free-floating
-  **presence node**, fading **focus beams** to files it touches, a file
-  **label**, and a **satellite** per subagent (with its own file label).
-  `graphSettings.ts` defaults `showSubagentLabels` to `false`: it controls the
-  subagent type prefix (or bare type before a file exists), not satellite
-  presence or current-file labels. APL lives in `graph.scene()` (NOT
-  `graphData`), so an agent appearing/finishing never reheats the sim.
-  Worktree (`task-activity`) + non-worktree (`agent-activity`)
-  sessions alike — the latter orange, or white / blue for a terminal or workflow-step
-  Codex / Pi (`taskColors.sessionColor`). Activity for an agent whose node hasn't arrived
-  yet (its presence rides a different socket) is held in
-  `agentActivityBuffer.ts` and replayed when it does — dropping it left a
-  label-less dot.
+  — per live agent (Claude/Codex/Pi; `task-activity` and `agent-activity`) a
+  presence node, fading focus beams to touched files, a file label, and a
+  satellite per subagent. Lives in `graph.scene()`, NOT `graphData`, so agents
+  never reheat the sim. Activity that arrives before its agent's node (another
+  socket) is buffered in `agentActivityBuffer.ts` and replayed — dropping it
+  left a label-less dot. `showSubagentLabels` (default off) only toggles the
+  subagent type prefix.
 
 ## Module map
 
-**Coordinator & chrome (React)**
-- `ForceGraphView.tsx` — the exported component is a **retry shell** (WebGL
-  faults, below) around the coordinator. The coordinator owns the props,
-  `selected`/`hoverNode`, the shared refs (container, graph, pointer-drag/-outside,
-  ref mirrors) and the JSX, and calls its phases in a fixed order:
-  `hooks/useGraphSceneRuntime` (overlays → init → camera → data sync → tidy
-  layout → batched renderers → drag → agents → worktree rings), then
-  `hooks/useGraphInteraction` (search → context menu → box select → task
-  creation → halos → metrics-ignore refresh → Escape chord → tooltip dismiss),
-  then `useGraphViewChromeModel`. **Hook order and every dependency array are
-  load-bearing** — effect ordering follows call order — and refs are passed
-  through by identity, never copied.
-- `rendererStatus.ts` / `GraphRendererNotice.tsx` — classify initialization
-  errors (including WebGL construction failures) and show a notice for them or
-  `webglcontextlost`. A construction failure or context-loss event alone
-  establishes neither OOM nor a GC defect. Retry **remounts the coordinator
-  and its hooks**: re-running init alone would leave hooks wired to the old
-  graph instance. Every project switch remounts too: `App.tsx` keys
-  `<ForceGraphView>` by `activeFolder`, tearing down and rebuilding renderer,
-  scene and overlays (GPU release: teardown order in
-  [hooks/CLAUDE.md](hooks/CLAUDE.md)). `webglcontextrestored` clears the notice
-  and wakes rendering.
-  A browser restart may help, but is neither a guaranteed nor an exclusive
-  cure; see the existing
-  [browser memory troubleshooting and graph recovery advice](../../../README.md#browser-memory-troubleshooting).
-  Classification coverage: [rendererStatus.test.ts](../../__tests__/rendererStatus.test.ts).
-- `useGraphViewChromeModel.ts` — shapes the coordinator's state into HUD,
-  overlay-key, timeline, selection, context-menu, task-modal, toast, and settings
-  chrome props (including counts, timeline range handler, and active-pin state).
-- `GraphViewChrome.tsx` / `GraphViewOverlays.tsx` — render-only viewport wrapper
-  and overlay composition.
-- `GraphHud` / `GraphSelectionChip` / `GraphContextMenu` / `GraphTaskModal` /
-  `GraphSearchBar` / `GraphOverlayKey` / `GraphSettingsChrome` /
-  `GraphSettingsPanel` — render-only HUD/chip/popover/modal/search/overlay-key/
-  gear-FAB-settings-panel overlays.
-- `HealthTooltip` (+ `HealthTooltipSections`/`healthTooltipMetrics`/
-  `tooltipPosition`/`cursorTracker`/`healthScoreContributions`) — file-health hover
-  tooltip; writes its own `transform` so cursor moves don't re-render React.
-- `SecurityTooltip` — per-file severity counts, message/line previews and stale/
-  incomplete coverage hints; uses the same cursor placement helpers without
-  React renders per pointer move. `SecurityFindingsPanel` — persisted FloatingPanel
-  with search, category/severity/status filters, file/rule sorting, scan actions
-  and a virtualized list (`SecurityFindingList`, fixed 72px rows). The default
-  list respects the Settings severity floor; lower-severity raw evidence can be
-  included explicitly. `SecurityFindingDetail` owns snippets/references, editor
-  links, graph focus and reasoned local ignore/defer/reopen history.
-  `SecurityReviewControls` selects Claude/Codex/Pi and all/filtered/selected open
-  findings and launches an interactive harness conversation. Selecting findings
-  automatically chooses Selected open and the start button states the count.
-  Harness/scope/start-or-end controls stay in one compact row; `SettingsInfo`
-  explains the flow. Status distinguishes running and awaiting-decision, with
-  Open/Restore console returning to the conversation and closing the panel so
-  the console is visible. A stale scan shows an actionable update hint.
-  Recommendations remain in the harness conversation; no report tabs, action
-  selection or Apply UI. The brief waits for the user's choice before creating
-  agreed Open tasks, with no automatic fix, suppression, scan or task launch.
-  `securityFindings.ts` owns filtering/grouping/freshness/editor-link helpers.
-- `TimelineScrubber.tsx` (+ `timelineRange`/`useTimelineScrubberDrag`/`timelineDiff`/
-  `timelineReset`) — git timeline scrubber UI + range math. `timelineDiff`'s
-  `buildGhostGraphData` uses **`GitHistoryResult.deletedPaths`**, the backend's
-  `git ls-files`-derived missing history paths (`backend/src/gitHistory/deletedPaths.ts`),
-  normalized with `relForward`; paths still in the scan are skipped. Never infer
-  deletion from scan absence (`SOURCE_EXTS` filters it) or the latest `git log`
-  status (date order crosses branches). Ghosts link to the nearest existing
-  **ancestor directory**, falling back to the scan root. `hooks/useGitTimeline`
-  re-fetches on a new `subscribeGitStatus` signature; `reconcileTimelineRange`
-  preserves handle positions in the new tick space. Coverage:
-  [timelineDiff.test.ts](../../__tests__/timelineDiff.test.ts),
-  [timelineRange.test.ts](../../__tests__/timelineRange.test.ts).
-
-**Node sprites & recolor overlays**
-- `nodeObjectFactory.ts` — `buildNodeObject` applies `spriteDecision.ts` to the
-  node's THREE root, including sibling rings/labels/halos; passed to `nodeThreeObject`.
-- `spriteDecision.ts` — `decideSpriteState`: the pure ghost/health/loc/dead/base
-  decision tree (recolor precedence security > health > loc > dead > base) returning a
-  plain, THREE-free `SpriteDecision` (baseKind + hide-when-batched + which
-  ring/label/halo to attach). While a metric view (health/LOC/dead-code) is active
-  it suppresses the change-ring + label (they obscure the coloring); ghosts +
-  metrics-ignored files are hidden by `hooks/useGraphFilter.ts` instead.
-  This is rendering visibility, separate from scanner exclusions and the user's
-  ordinary hidden-extension controls.
-  `frontend/src/api/types/settings.ts` owns `DEFAULT_METRICS_IGNORED_EXTS` and
-  `effectiveMetricsIgnoredExts`; `frontend/src/hooks/useMetricsIgnoredExts.ts`
-  supplies the effective per-project list. Absent `metricsIgnoredExts` uses
-  defaults; explicit `[]` opts those files back into metric views.
-- `sprites` / `spriteShapes` / `spriteTextures` / `spritePicking` — per-(ext,
-  shape,color) `SpriteMaterial` cache, shape geometry, canvas→`CanvasTexture`
-  (sets `colorSpace = SRGBColorSpace`), sprite-quad pick bounds.
-- `spriteMaterialCache.ts` — `createSpriteMaterialCache` (`get`/`peek`/
-  `disposeAll`) behind every module-level sprite-material cache;
-  `disposeSharedGraphResources` disposes and empties them all, plus the halo
-  singletons' GPU side, once per graph teardown (see `hooks/CLAUDE.md` for the
-  order). Coverage:
-  [spriteMaterialCache.test.ts](../../__tests__/spriteMaterialCache.test.ts).
-  **Module-level caches survive remounts** (project switch, Retry,
-  error-boundary reset) and are bounded by key, not by graph:
-  - `sprites.materialFor`: one per `styleKey` (extensions, shapes and overlay
-    recolors).
-  - `claudeNodeSprite`'s `materialCache` / `satelliteMaterialCache` and
-    `worktreeRing`'s cache: one material + texture per color. Slots are reused,
-    but `taskColors.ts`'s id-hash fallback for slotless tasks can mean one
-    color per task id.
-  - `changeRingMaterials`: three ring kinds + one ghost. `haloResources`: two
-    singletons (below).
-  Removing a node, a ring or an agent (`AgentOverlay.destroy` included) never
-  drops an entry; graph teardown is their only release. Label-texture caches
-  (`labelsOverlay` / `metricOverlayFactory`) have their own owner, see
-  `labelTexture.ts`.
-- `locOverlay` / `healthOverlay` / `deadCodeOverlay` / `labelsOverlay` — overlay
-  configs + per-overlay registries. `deadCodeOverlay` is a pure recolor;
-  `labelsOverlay.applyNodeLabelState` is the per-node Alt name-label toggle.
-- `securityOverlay` — pure per-file OpenGrep recolor preserving language shapes;
-  path lookup normalizes Windows casing/separators. ERROR red, WARNING yellow,
-  INFO blue, completely visited files with no shown findings green, unscanned
-  incomplete or stale gray. `useSecurityOverlay` starts scans only from explicit
-  chip/panel scan actions; idle toggles restore saved results and background
-  reads check freshness without scans. Security keeps config files visible even
-  when their extensions are on the health/LOC metrics-ignore list.
-- `measuredLabelTexture.ts` — lazy shared measuring context + fresh rasterized
-  textures. `labelTexture.ts` owns cache keying, refcounts, free-entry eviction
-  and texture/paired-material/canvas teardown. A cache miss finishes drawing
-  before eviction/insertion. **Cache bounds:** `labelsOverlay.ts` (Alt names)
-  and `metricOverlayFactory.ts` (LOC + health, one shared cache) each keep a
-  module-level cache that survives graph remounts and project switches, capped
-  at `maxEntries: 256` AND `maxFreeBytes: LABEL_TEXTURE_FREE_BYTES_BUDGET`
-  (8 MB of canvas pixels, width×height×4 recorded at draw time) for FREE
-  entries only. Both caps evict the oldest free entry first; in-use entries
-  are never counted or evicted — so `labelsOverlay.MAX_NAME_LABELS` (300) caps
-  name labels IN USE (a select-all + Alt otherwise allocated a ~150–300 KB canvas
-  + GPU texture per node), and `labelSync` strips before it adds so the budget
-  frees first. The agent-label cache uses the same byte budget. Connector line
-  materials are a `createSpriteMaterialCache` (disposed at graph teardown; an
-  undisposed one pinned the dead renderer). Gauges: `graphMemGauges.ts`
-  (`gl.*`, `graph.*`) and the label-cache byte gauges.
-  Ownership coverage:
-  [labelTextureCache.test.ts](../../__tests__/labelTextureCache.test.ts).
-- `labelSpriteResources` / `floatingLabelSprite` / `metricOverlayFactory` —
-  module-owned shared sprite/connector caches. `labelSpriteResources` holds
-  label materials, colors, line materials and connector geometry templates +
-  `disposeLabelMaterial`; never dispose shared resources per node.
-  `floatingLabelSprite` supplies `makeFloatingLabelSprite`/`makeConnectorLine`/
-  `disposeLabelEntry`.
-- `labelSync.ts` — in-place Alt-overlay delta walker (no `graph.refresh()`).
-  `labelRepulsion` (facade) + `labelRepulsionFrames` (scene-frame-driven, holds
-  `labelPhysics` only while labels move) + `labelPhysics/` (pure physics, own doc).
-
-**Sibling-child ring/halo toggles ("the halo pattern")**
-- `haloResources.ts` — owns the lazy ring/glow `CanvasTexture` and
-  `SpriteMaterial` singletons. Every node borrows the same two materials and
-  their textures. Once created, the JS objects are retained for the module
-  lifetime. Their GPU side is not: three-forcegraph's `_deallocate` disposes
-  the materials and maps attached to nodes on every `refresh()` and
-  `_destructor`, and three re-uploads them on next use. The only explicit
-  dispose is the teardown-only `disposeHaloResources`, called by
-  `disposeSharedGraphResources` (`spriteMaterialCache.ts`) once per graph
-  teardown; it keeps the singletons. Removing a halo must not dispose them.
-- `halo.ts` — owns selection-glow settings, shared pulse/reset, and per-node
-  Group attachment. The Group contains a ring below the body and an additive
-  glow above it; removal only detaches the Group. Pulse/reset use
-  `peekRingMaterial`/`peekGlowMaterial`, which do not allocate, so calling either
-  before the first halo creates no canvases or GPU resources. The pulse updates
-  both shared materials in O(1) per frame regardless of selection size.
-- `selectionHaloSync` toggles changed ids without `graph.refresh()`;
-  `hooks/useSelectionHaloPulse` holds the slow-only `halo` idle reason only while
-  selected, then resets and wakes once. `hooks/useSelectionGlowSettings` pushes
-  settings to `halo.ts`: strength is read live; scale rebuilds selected halos.
-- `worktreeRing` + `worktreeRingSync` (`W`) — fetched path→color state lives in
-  `worktreeRingsRef` (`NodeObjectRefs`), so `buildNodeObject` can re-attach rings
-  on every full rebuild. `clearWorktreeRings` walks the current scene, never a
-  remembered id set that a rebuild would orphan. Coverage:
-  [worktreeRingRebuild.test.ts](../../__tests__/worktreeRingRebuild.test.ts).
-- `changeRing` + `changeRingSync` + `changeRing{Materials,Textures}` — timeline
-  rings with two-part `W` suppression. Like selection/worktree rings, these are
-  sibling children toggled per changed id, without `graph.refresh()`.
-  `changeRingSync` also carries **ghost visibility**, and because it skips the
-  digest it has to move the ghost's *link* by hand as well: the library's
-  per-link object (`__lineObj`) plus a `getInstancedLinks(graph).rebuild()` for
-  the batched buffer. Skipping either leaves the deleted-file line drawn into
-  empty space after the disc vanishes. Its one escape hatch: a ghost that should
-  show but has no `__threeObj` (an earlier `refresh()` ran while it was outside
-  the scrubber window, and the digest drops filtered-out nodes from the scene
-  entirely) falls back to `clearLabelsAndRefresh`, since there's nothing left to
-  toggle. The in-place hide goes through `setGhostRootShown`, which also
-  disables the subtree's layers: THREE's Raycaster ignores `.visible`, so a
-  hidden ghost otherwise stayed hoverable/draggable over empty space (and stole
-  hover from nodes behind it). Pinned by `src/__tests__/ghostLinkSync.test.ts`.
-- `mountedNodes.ts` — cache-free shared helpers every delta walker reuses
-  (`mountedNodes`/`mountedRoot`/`mountedNodesById`/`baseSizeFor`).
-
-**Agent Presence Layer**
-- `claudeNodeSprite.ts` — `makeClaudeNode` (presence disc+glow) /
-  `makeSatelliteNode` (subagent ring). Their per-color materials are
-  module-level and outlive `AgentOverlay.destroy`; graph teardown releases
-  them (see `spriteMaterialCache.ts` above).
-- `agentOverlay.ts` — thin façade over the APL (`setAgents`/`addActivity`/
-  `addSubagent*`/`tick`/`reapSatellites`/`setSizes`/`isActive`/`destroy`) delegating to siblings
-  `agentOverlay{Context,Constants,Types,PathIndex,Reconcile,Activity,Satellites,
-  Beams,BeamMath,Tick,Labels,LabelLayout,Placement}.ts` (pure math tested in
-  `src/__tests__`). `hooks/useAgentOverlay.ts` supplies `showSubagentLabels` to
-  `agentOverlay.ts`'s `setSizes`, which updates it each frame;
-  `agentOverlayLabels.ts` formats the text.
-  `AgentPathIndex.clear()` releases the indexed nodes array, path map and bounds
-  immediately when the last agent is removed, on empty reconciliation and on
-  destroy; inactive overlays may never receive another frame. A remaining sibling
-  keeps the index, and the next addition rebuilds it through `ensure`. Coverage:
-  [agentOverlayPathIndex.test.ts](../../__tests__/agentOverlayPathIndex.test.ts).
-  For the same reason, releases must not wait for `tick`: the loop is paused
-  for a hidden tab or 0×0 graph while agents keep working. `applyActivity`
-  disposes expired beams before creating one (`disposeExpiredBeams`), and the
-  hook's 30 s timer calls `reapSatellites` directly, then wakes the loop.
-  Coverage: [agentOverlayPausedLoop.test.ts](../../__tests__/agentOverlayPausedLoop.test.ts).
-  `agentLabelRects.ts` owns the dependency-free rectangle types and pure
-  `spreadLabelRects` packing (labels only slide along their node's side).
-  `agentOverlayLabelLayout.ts` is the scene adapter and compatibility re-export;
-  it projects/packs labels and manages displacement leaders. Layout snaps
-  without an idle reason; an orbit already renders on `interact`.
-
-**Idle / scene / motion drivers**
-- `idleController.ts` + `idleController{Reasons,Loop,Engine,Interact}.ts` — reason
-  ledger, pause/resume duty-cycle engine (deferred-pause microtask +
-  re-entrant-resume guard + ~30fps slow-frame throttle), `engine` reason (+
-  `isEngineHot()`), `interact` reason.
-- `sceneFrameDriver.ts` (`onFrame`) + `nodeMotionDriver.ts` (`onNodeMotion` /
-  `onNodeDragMove`) — single fan-outs over `scene.onBeforeRender` (only while
-  the loop runs) and engine-tick/drag callbacks. Cached iteration arrays are
-  rebuilt only on membership changes. Unsubscribe must remove membership and
-  replace the relevant cached array immediately, including the final listener:
-  a paused graph may never dispatch another frame. An in-flight dispatch keeps
-  its local snapshot unchanged; additions/removals affect subsequent dispatches,
-  never mutate the snapshot in place. Motion and drag have separate membership,
-  caches and dirty flags; drag listeners run before motion listeners. Leave
-  installed library callbacks callable with no listeners. Regression coverage:
-  [sceneFrameDriver.test.ts](../../__tests__/sceneFrameDriver.test.ts) and
-  [nodeMotionDriver.test.ts](../../__tests__/nodeMotionDriver.test.ts).
-- `motionSyncGate.ts` — the batched-render position-upload gate: node motion,
-  one trailing settle frame, or forced-dirty after a rebuild/re-enable.
-
-**Batched (instanced) renderers**
-- `instancedLinks.ts` / `instancedNodes.ts` — default-on controllers collapsing
-  per-link `Line`s / per-node `Group`s into one `LineSegments` / per-style
-  `InstancedMesh`es. Driven by `hooks/useBatchedLinks` / `hooks/useInstancedNodes`;
-  position uploads follow `motionSyncGate`. `instancedBatching.ts` shares
-  lifecycle helpers; `matrixBuffer.ts` supplies THREE-free column-major buffer
-  writers. Re-capture on every `graphData()` swap (`dataGeneration` invariant).
-  Both rebuild on metric-view toggles (`metricOverlayActive`) to re-read
-  `nodeVisibility` / `linkVisibility`, including metrics-ignored files.
-- `instancedLinks.ts` owns link capture, hydration re-capture, motion scheduling
-  and the graph's controller stamp. Pre-hydration string endpoints must be
-  re-captured by `onFrame` once hydrated so `linkVisibility` can filter them.
-  `instancedLinkResources.ts` owns graph-local geometry/material/`LineSegments`/
-  position storage. Growth must call `geometry.dispose()` while the old position
-  attribute is still installed, before replacement. `setEnabled(false)` restores
-  `linkThreeObject(null)` and detaches motion; `releaseResources` disposes the
-  helper's resources and clears the controller's captured `links` +
-  `needsRecapture`. Disabled rebuild/frame hooks allocate nothing; re-enable
-  rebuilds from current `graphData()`. Disable keeps the stamp for
-  `getInstancedLinks(graph)?.rebuild()` (`changeRingSync` ghost toggles);
-  `dispose()` detaches motion, uses the same release path and removes the stamp
-  only if still owned by this controller. Shared sprite/label materials retain
-  separate owners. Growth/disable/re-enable coverage:
-  [instancedLinks.test.ts](../../__tests__/instancedLinks.test.ts).
-- `instancedNodes.ts` owns style grouping, motion/visibility orchestration and
-  the shared quad. `instancedNodeResources.ts` owns billboard shader/material
-  construction and style-mesh allocation/disposal. Each style mesh owns its
-  `instanceMatrix` buffer and billboard material; growth replacement, style
-  removal and disable release both. Borrowed sprite-cache textures and the
-  controller's shared quad survive temporary disable; only final controller
-  disposal frees the quad. Re-enable rebuilds from current `graphData()`.
-  Recolor overlays hide batches and use per-node sprites; ghosts stay on the
-  per-node path. Ownership coverage:
-  [instancedNodes.test.ts](../../__tests__/instancedNodes.test.ts).
-
-**Settings, physics, misc**
-- `graphSettings.ts` — `GraphSettings`/`DEFAULT_SETTINGS`/`loadSettings`; perf
-  fields `chargeTheta`/`repulsionMode`/`linkWidth`/`batchedLinks`/`batchedNodes`/
-  `pixelRatio` (layout CPU `forceManyBody` and orbit CPU draw-calls+fill differ);
-  `showLinks` (Rendering tab "Show links" checkbox, default on — off returns
-  `false` from `useGraphFilter`'s `linkVisibility` and re-captures the batched
-  buffer; render-only, the links still drive the layout);
-  "Spread" tab fields `alphaDecay`/`warmupTicks`/`collideRadius` (defaults 0.014
-  vs d3's 0.0228 and 15 — a wider, pre-settled layout; only `collideRadius` is
-  off at 0) + `tidyLayoutOnLoad`/`tidySpread` (the radial untangle below — **on by
-  default**); "Rendering" tab selection-glow fields
-  `selectionGlowStrength`/`selectionGlowScale` (the pulsing bloom over selected
-  nodes — see `halo.ts` + `hooks/useSelectionGlowSettings`).
-- `localRepulsionForce.ts` — O(N) linked-cell `charge` for `repulsionMode==='local'`.
-  `layoutShapeForces.ts` — `forceCollideXZ`, the optional, off-by-default X/Z-plane
-  "Spread" force giving even, non-overlapping node spacing. Fades with `alpha`
-  (settle contract) and skips Y (pinned by the DAG). Registered by
-  `hooks/useGraphSettings`' `useLayoutShapeSettings` (with `alphaDecay`/`warmupTicks`)
-  only while `collideRadius > 0`.
-- `linkedCellGrid.ts` — the X/Z grid both forces and `labelPhysics/spatialGrid` share (packed cell keys, pooled buckets, a closure-free `visitNeighbors`/`nextNeighbor` cursor yielding each pair once as j > i in a fixed order); callers own cell rounding + pair math ([linkedCellGrid.test.ts](../../__tests__/linkedCellGrid.test.ts)).
-- `radialTidyLayout.ts` (`computeRadialTidyLayout`/`tidyRingStep`, pure/tested) +
-  `hooks/useRadialTidyLayout` — default-on untangler: seeds the containment tree
-  in separate angular wedges with an adaptive radius so the engine expands
-  outward to declump. Runs once per project on first data populate, guarded
-  against file-save rescans, and on demand via "Untangle now". **Apply + reheat
-  must be atomic** in one deferred macrotask; a frame between them lets the
-  already-hot engine scatter shallow nodes and re-tangle the seed.
-- `sceneSetup.ts` — camera/OrbitControls lock + resize observer + `applyRenderPixelRatio`.
-- `cameraState.ts` — pure persisted camera load/save/read for `hooks/useCameraPersistence`.
-- `depthMap` + `useNodeDepthCache` — Alt-label depth bands; `menu.ts` /
-  `renderOrders.ts` — right-click items / z-layer constants.
-- `searchMatcher.ts` — file/folder-name wildcard/regex matching; keep it aligned
-  with backend `search.ts` rules.
-
-## Hooks
-
-`hooks/` holds the coordinator's extracted effects (data sync, overlays, hold-key/
-pin lifecycle, search, drag/hover, batched-render controllers, settings
-render-vs-physics splits, the Escape chord), grouped for the coordinator by the
-two phase hooks `useGraphSceneRuntime` and `useGraphInteraction`. See
-`hooks/CLAUDE.md` → "Coordinator phases".
+- `ForceGraphView.tsx` — exported **retry shell** around the coordinator (props,
+  selection/hover, shared refs, JSX), which calls `hooks/useGraphSceneRuntime` →
+  `hooks/useGraphInteraction` → `useGraphViewChromeModel` (hooks/CLAUDE.md →
+  "Coordinator phases"). `GraphViewChrome`/`GraphViewOverlays`/`Graph*` are
+  render-only.
+- `rendererStatus.ts` / `GraphRendererNotice.tsx` — classify init errors and
+  `webglcontextlost`; `webglcontextrestored` clears the notice and wakes.
+  Neither proves OOM or a GC defect; user advice:
+  [browser memory troubleshooting](../../../README.md#browser-memory-troubleshooting).
+- `HealthTooltip` (+ `HealthTooltipSections`, `healthTooltipMetrics`,
+  `healthScoreContributions`, `tooltipPosition`, `cursorTracker`),
+  `SecurityTooltip` — write their own `transform`; pointer moves never re-render.
+- `Security{FindingsPanel,FindingList,FindingDetail,ReviewControls}.tsx` +
+  `securityFindings.ts` — findings panel (virtualized, fixed
+  `SECURITY_ROW_HEIGHT`; honors the Settings severity floor) + review launcher.
+  Recommendations stay in the harness conversation (no report/Apply UI); nothing
+  auto-fixes, suppresses, scans or launches tasks (review rules:
+  `backend/src/opengrep/CLAUDE.md` → "Triage and review").
+- `TimelineScrubber.tsx` + `timeline{Range,Diff,Reset}`,
+  `useTimelineScrubberDrag`, `CommitTooltip` — git timeline scrubber.
+- `nodeObjectFactory.ts` (`nodeThreeObject`) applies `spriteDecision.ts` (pure,
+  THREE-free; recolor precedence security > health > loc > dead > base; metric
+  views suppress change ring + label).
+- `sprites`/`spriteShapes`/`spriteTextures`/`spritePicking`; `canvasTexture.ts`
+  (every hand-painted texture); `spriteMaterialCache.ts`
+  (`createSpriteMaterialCache` + teardown's `disposeSharedGraphResources`).
+- `{loc,health,deadCode,security,labels}Overlay` + `metricOverlayFactory` —
+  overlay configs/registries; dead-code and security are pure recolors
+  (security's path lookup normalizes Windows casing/separators).
+- Labels: `measuredLabelTexture`, `labelTexture`, `labelSpriteResources`,
+  `floatingLabelSprite`, `labelSync` (in-place Alt delta), `labelRepulsion{,
+  Frames}` → labelPhysics/CLAUDE.md.
+- Sibling-child toggles (per changed id, no `graph.refresh()`): `haloResources`
+  + `halo` + `selectionHaloSync`; `worktreeRing{,Sync}` (`W`);
+  `changeRing{,Sync,Materials,Textures}` (timeline rings + ghosts);
+  `mountedNodes.ts` (helpers for every delta walker).
+- APL: `claudeNodeSprite.ts`, `agentOverlay.ts` façade over
+  `agentOverlay{Context,…,Placement}.ts`, `agentLabelRects.ts` (pure packing;
+  labels slide only along their node's side).
+- `idleController{,Reasons,Loop,Engine,Interact}.ts`; `sceneFrameDriver.ts`
+  (`onFrame`) + `nodeMotionDriver.ts`; `motionSyncGate.ts` (batched upload gate).
+- `instancedLinks`/`instancedNodes` (+ `*Resources`, `instancedBatching`,
+  `matrixBuffer`) — default-on batching into one `LineSegments` / per-style
+  `InstancedMesh`es.
+- `graphSettings.ts`; `localRepulsionForce.ts` (`repulsionMode==='local'`);
+  `layoutShapeForces.ts` (`forceCollideXZ`); `linkedCellGrid.ts` (shared X/Z
+  grid; closure-free cursor yields each pair once, j > i, in fixed order;
+  callers own rounding + pair math); `radialTidyLayout.ts`; `sceneSetup.ts`;
+  `cameraState.ts`; `depthMap`; `menu`; `renderOrders`; `graphMemGauges.ts`;
+  `searchMatcher.ts` (keep aligned with backend `search.ts`).
 
 ## Load-bearing invariants (do not violate)
 
-- **Render-on-demand.** Anything that animates must hold its idle reason *while*
-  it animates and release it when it settles — never "hold while enabled". The
-  APL holds `agents` **only while `tick()` reports motion** (distance-to-target
-  `REST_EPS`); a "hold while any agent exists" hold pins the loop at ~60fps.
-- **One-shot scene mutations must wake the loop.** While settled the loop is
-  *paused*, so a one-shot change only paints if it wakes — `kick()` for motion,
-  `wakeForRefresh()` for a set change (agent removal, selection halo, worktree
-  ring, Alt labels, and a canvas resize — `renderer.setSize` clears the buffer
-  without rendering, see `sceneSetup.createResizeObserver`). The motion gate
-  alone leaves a stopped node painted.
-- **Deferred pause via microtask.** The library reschedules its own RAF at frame
-  end and `onEngineStop` fires *inside* that cycle, so a synchronous
-  `pauseAnimation()` is overwritten and the loop never stops. All pauses route
-  through `queueMicrotask` (cancel runs between frames); resumes stay synchronous
-  + idempotent, guarded against re-entrancy in `idleControllerLoop`.
-- **Label-registry teardown (GPU-buffer-leak guard).** Label/connector resources
-  are module-owned + refcount-guarded: balance every `buildMeasuredLabelTexture`
-  with a `releaseLabelTexture`; eviction skips in-use (refcount>0) textures and
-  evicts free ones (O(1), via the cache's `free` set, oldest first) down to both
-  caps. Eviction/owner teardown also zeroes each owned label canvas's dimensions
-  to release native pixel storage without waiting for GC; free entries retained
-  for reuse and live/shared labels keep their pixels. Never zero or dispose an
-  in-use entry. **Release paths:**
-  - **Blanket:** `clearAllLabelRegistries` (`hooks/refresh.ts`; never
-    `.clear()` a registry). `'batched'` mode (`clearLabelsAndRefresh`, and
-    `useGraphDataSync`'s structural swap and `!data` reset) releases refcounts
-    *without evicting*: on-screen labels move to `free` in order and the rebuild
-    re-acquires them, with no new canvases. Misses and single releases don't
-    evict while the batch is open either. Then one deferred trim
-    (`LABEL_TRIM_DELAY_MS`) runs after the library's debounced digest has re-run
-    `nodeThreeObject`. A newer batched clear reschedules it, and a batch that
-    left nothing free schedules none. The default `'teardown'` mode is graph
-    teardown's `clearLabels`: it evicts EVERY free entry, so the module-level
-    caches hold no free canvases after the graph is destroyed.
-  - **Per entry:** single releases trim at once. These are the Alt delta
-    walker's label toggle and the repulsion loop's `onDetached`
-    (`releaseNameLabelEntry` / `releaseMetricLabelEntry` for labels whose node
-    root left the scene; see `labelPhysics/CLAUDE.md`).
-  The library's `_deallocate` disposes each replaced node object's geometry,
-  material and `material.map` on `refresh()` / `graphData()` / `_destructor`,
-  so a re-acquired texture is re-uploaded from its retained canvas. The
-  repulsion scratch list is reset when an overlay stops so it doesn't pin the
-  last frame's sprites. Each connector gets its own `clone()`d geometry — the
-  only thing `disposeLabelEntry` frees (a harmless repeat for library-replaced
-  objects); `AgentOverlay.destroy` frees the agent-label cache.
-- **`dataGeneration` re-capture.** Both batched controllers cache their node/link
-  arrays at `rebuild()`. A full `graph.graphData(...)` swap replaces every object
-  — including the git-history **ghost merge** that leaves `structuralData`
-  unchanged — so `useGraphDataSync` bumps `dataGeneration` on *every* swap (rebuild
-  effects depend on it), else the renderers freeze on stale objects.
-- **Node-motion driver needs all three signals** (`onEngineTick`/`onNodeDrag`/
-  `onNodeDragEnd`): once settled a drag can't re-tick the engine, so `onNodeDrag` is
-  the reliable "a node moved" signal for the batched sync — not `isEngineHot()`.
-- **Sprites use `colorSpace = SRGBColorSpace`** (sprite/ring/halo/label textures)
-  so canvas colors match the Legend exactly.
-- **Filtering goes through `nodeVisibility`/`linkVisibility`** (`hooks/
-  useGraphFilter`), never structural add/remove, to keep the d3 sim stable. Those
-  accessors are only ever consulted by the library's digest (a `refresh()` or a
-  `graphData()` swap), and a filtered-out node is *removed from the scene* with
-  its bind attr deleted — not merely hidden. So anything that flips visibility
-  BETWEEN digests (the timeline's ghost delta) must do all three itself: the node
-  object, the per-link `__lineObj`, and a batched-links re-capture.
-- **Structure-only consumers key off `useStructuralScan(data)`, not `data`**
-  (fresh ref per metric-only HealthUpdate). Only feed the structural ref to
-  consumers that never read metric fields — it carries stale metrics by design.
-- **Hover is gated off during a pointer drag** (`pointerDraggingRef`): the library
-  raycasts hover every frame, so a rotate would otherwise fire `onHover` + a
-  synchronous `flushSync`/tooltip mount per frame and stutter.
-- **Batched-node pick proxy.** With `batchedNodes` on, the per-node base sprite
-  stays mounted but `.visible = false` (three.js raycasts ignore `.visible`), so
-  it remains the pick target and the halo/ring/label children still anchor to it.
+**Render loop**
+- Hold an idle reason *while* animating, release on settle — never "while
+  enabled". APL holds `agents` only while `tick()` reports motion; holding it
+  while any agent existed pinned 60fps.
+- One-shot mutations must wake the paused loop: `kick()` for motion,
+  `wakeForRefresh()` for set changes (agent removal, halo, ring, labels, canvas
+  resize — `renderer.setSize` clears without rendering).
+- Pauses go through `queueMicrotask` (the library re-arms RAF at frame end and
+  `onEngineStop` fires inside it, overwriting a sync pause); resumes stay sync,
+  idempotent, re-entrancy-guarded.
+- Custom forces scale impulses by `alpha` and skip Y (DAG-pinned `fy`) so the
+  sim still settles to 0 frames.
+- Frame/motion drivers rebuild cached listener arrays only on membership
+  change; unsubscribe replaces it at once, even the last (a paused graph may
+  never dispatch again); in-flight dispatch keeps its snapshot; motion and drag
+  lists are separate, drag first; library callbacks stay callable when empty.
+- Node motion needs `onEngineTick` + `onNodeDrag` + `onNodeDragEnd`; dragging a
+  settled graph doesn't tick, so `onNodeDrag` (not `isEngineHot()`) signals it.
+- APL releases never wait for `tick` (paused while agents keep working):
+  `applyActivity` disposes expired beams first, the hook's 30 s timer calls
+  `reapSatellites` then wakes, `AgentPathIndex.clear()` runs when the last agent
+  leaves and on destroy. APL label layout snaps without an idle reason.
+
+**Scene & data**
+- Filter only via `nodeVisibility`/`linkVisibility` (`hooks/useGraphFilter`),
+  never structural add/remove (keeps the sim stable). The digest
+  (`refresh()`/`graphData()`) *removes* filtered nodes from the scene, so a
+  between-digest flip (`changeRingSync` ghosts) must update the node, its link's
+  `__lineObj` AND `getInstancedLinks(graph).rebuild()` or a line dangles; hide
+  via `setGhostRootShown` (disables layers — Raycaster ignores `.visible`); a
+  ghost with no `__threeObj` falls back to `clearLabelsAndRefresh`.
+- Every full `graphData()` swap (incl. the ghost merge, which keeps
+  `structuralData`) bumps `dataGeneration`; batched rebuilds depend on it.
+- Structure-only consumers key off `useStructuralScan(data)`, not `data`, and
+  never read metric fields from it.
+- Ghosts come from `GitHistoryResult.deletedPaths` — never infer deletion from
+  scan absence (`SOURCE_EXTS` filters) or latest `git log` status (date order
+  crosses branches); they link to the nearest existing ancestor dir.
+- H/Z/D views hide ghosts + metrics-ignored files (render-only, separate from
+  scanner exclusions/hidden exts); absent `metricsIgnoredExts` = defaults
+  (`api/types/settings.ts`), explicit `[]` opts back in. Security hides ghosts
+  but keeps metrics-ignored config files.
+- Hover is gated off mid-drag (`pointerDraggingRef`), else every rotate frame
+  `flushSync`s a tooltip.
+- With `batchedNodes` on, the per-node base sprite stays mounted at `.visible =
+  false` (raycasts ignore it) as pick target and child anchor. Recolor overlays
+  and ghosts use per-node sprites.
+- `worktreeRingsRef` lets `buildNodeObject` re-attach rings on rebuild;
+  `clearWorktreeRings` walks the current scene, never a remembered id set.
+- All canvas textures go through `canvasTexture.finishCanvasTexture`
+  (`SRGBColorSpace`) so colors match the Legend.
+
+**GPU & memory**
+- Retry remounts the coordinator and hooks (re-running init alone leaves hooks
+  on the old graph); `App.tsx` keys the view by `activeFolder`. Teardown order:
+  hooks/CLAUDE.md.
+- Module-level caches survive remounts, bounded by key: `sprites.materialFor`
+  (style), `claudeNodeSprite` + `worktreeRing` (color; id-hash fallback can mean
+  one per task), `changeRingMaterials`, `haloResources`, connector line
+  materials. Removing a node/ring/agent never drops an entry; only
+  `disposeSharedGraphResources` at teardown does (an undisposed cache pinned the
+  dead renderer).
+- Halo singletons (the library's `_deallocate` frees their GPU side per
+  `refresh()`; three re-uploads): only teardown's `disposeHaloResources` disposes;
+  removing a halo just detaches its Group; pulse/reset use `peek*Material`.
+- Labels: balance every texture build with a release, never `.clear()` a
+  registry (use `clearAllLabelRegistries`), never evict/zero/dispose an in-use
+  entry, keep `MAX_NAME_LABELS` + cache caps — detail labelPhysics/CLAUDE.md →
+  "Label resources".
+- `instancedLinkResources` growth calls `geometry.dispose()` while the old
+  attribute is installed. `setEnabled(false)` restores `linkThreeObject(null)`,
+  detaches motion, frees resources + captured links, keeps the controller stamp
+  (`dispose()` drops it only if still owned); disabled hooks allocate nothing.
+  Pre-hydration string endpoints re-capture in `onFrame`.
+- Each node style mesh owns its `instanceMatrix` + material (freed on growth,
+  removal, disable); borrowed sprite textures are never freed here; the shared
+  quad survives disable, freed only on dispose.
+- Register a mem gauge beside new long-lived GPU resources (`graphMemGauges.ts`).
 
 ## Camera
 
 `up = (0,1,0)`; polar clamped to `[0, 0.75π]`; OrbitControls (not Trackball);
-`dagMode = 'td'`. Configured in `sceneSetup.configureCameraControls`. The view
-(position + orbit target — `up` is locked so those two fully determine it) is
-persisted per project and restored across refresh/project switch by
-`hooks/useCameraPersistence` (load/save/read in `cameraState.ts`).
+`dagMode = 'td'` (`sceneSetup.configureCameraControls`). Position + orbit target
+persist per project (`hooks/useCameraPersistence`).
 
-## Commands
+## Tests
 
-Reference commands, with cwd `frontend/`: `npm run build` (build), `npm test`
-(tests), `npx tsc -b` (type-check). These are documentation references;
-Lattice task agents leave checks to the separate Run tests step. See
-[test conventions](../../__tests__/CLAUDE.md).
+Named after the module — grep `<module>` in `frontend/src/__tests__/`. Less
+obvious: `ghostLinkSync` (changeRingSync), `agentOverlayPausedLoop`. See
+[__tests__/CLAUDE.md](../../__tests__/CLAUDE.md).

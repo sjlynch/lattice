@@ -1,160 +1,55 @@
 # backend/src/recovery
 
-Boot-time crash recovery for project/task state. `../recovery.ts` is only the stable public shim; keep implementation here.
+Boot-time crash recovery plus two periodic sweeps. `../recovery.ts` is the facade and also holds the pre-listen chain (`recoverOrphanedTasks`), `startBootWorktreeSweep` and step 4. Not here: task-DB backup/restore (`../taskCache/CLAUDE.md`); call sites (`../server/startup.ts`).
 
 ## Boot order
 
+Other docs cite these step numbers — keep them stable.
+
 1. `restoreAllProjectsFromBackup` — repair task DB files before any task cache read.
 2. `recoverPendingSnapshots` — restore copy-based working-tree snapshots left by crashed merge/finalize work.
-3. `sweepOrphanedWorktrees` (`worktreeSweep.ts`) — remove only Lattice-managed worktrees that no active task owns. An orphan with uncommitted edits is first archived to `~/.lattice/snapshots/<hash>/…-discarded-worktree-<slug>-…/` (`worktree/discardArchive.ts`; never auto-restored by step 2); if the archive fails the orphan is left in place. **Runs after listen, not awaited** (`startBootWorktreeSweep`, started from `server/startup.ts`; `resumeQueuedTaskRuns` waits for it): a machine updated from an old version carried 1000+ orphans and the pre-listen sweep kept the UI on "Scanning…". Unmerged `lattice/*` branches are found with ONE `for-each-ref --no-merged=HEAD` (per-branch `rev-list` only if that fails; unreadable = unmerged). An orphan whose branch has unmerged commits keeps its **branch** (`keepBranchIfUnmerged` — the only copy of the work) but loses its **checkout** — unless its task is Open/Backlog (may be re-run), which keeps both. Two removals at a time; one summary line per project listing kept branches (`git branch --list "lattice/*" --no-merged`).
-   It then (detached — boot never waits) runs `sweepWorktreeResidue` (`worktreeResidueSweep.ts`) — see "Worktree residue sweep" below. The same sweep also runs periodically (`worktreeResidueSweepLoop.ts`, under "Periodic sweeps").
-3a. `resumeInterruptedOneOffRuns` (`oneOffRunResume.ts`) — **before listen**, so a callback (or the callback outbox's replay) never meets an unknown id.
-   - Push runs, QA e2e runs and post-merge hooks mirror their RUNNING records to `~/.lattice/per-project/<hash>/{push-runs,qa-runs,post-merge-hooks}.json` (`homeScratch/persistence.ts`); their agents survive a restart in the detached terminal-server.
-   - Why: with in-memory-only registries a restart used to 404 their `/done` / `/verdict` / `/complete`, idle the terminal forever, drop a QA pass's qa → done, and let a resumed merge run fire a second post-merge hook (or Phase C read "idle" beside the orphan).
-   - One terminal-server probe. Per record, a pty found at its scratch cwd — or an unprobeable server (`null`: can't tell ≠ gone) — is **re-adopted**: record restored, presence node re-registered.
-   - A re-adopted post-merge hook also gets back the one-running-per-project state (a resumed merge run / Phase C await it), `markAgentReadopted` on its quiescence state, and the merge's bounded wait re-armed.
-   - A pty that is gone is restored too but settled as **lost** after `LOST_SETTLE_GRACE_MS` (90 s) unless its callback lands first (the outbox replays a Stop that fired while the backend was down):
-     - push → `lost` + done (never attachable by a re-dispatched Push step, which fails rather than reporting success if its attached session is lost);
-     - QA → the recorded verdict applied as `/done` would (a confident PASS still promotes), then done;
-     - post-merge hook → ended `errored` (waiters released).
-   - A small liveness watch (every 30 s, unref'd, stops when empty, skips a pass on an unprobeable server) applies the same settlement to a re-adopted run whose pty later dies without calling back.
-   - Pure policy: `classifyOneOffRunResume`.
-   - Module ownership: `oneOffRunResume.ts` keeps the public exports, policy and typed boot sweep; `oneOffRunResume/contracts.ts` owns shared types and timing constants; `adapters.ts` owns push / QA / post-merge behavior and the readopted-hook wait; `watch.ts` owns the singleton registry, timer, tick and reset/debug helpers. The watch stores bound run operations; internal modules never import the facade.
-3b. `sweepOrphanedPushSessions` (`pushSessionSweep.ts`) / `sweepOrphanedQaSessions` (`qaSessionSweep.ts`) / `sweepOrphanedPostMergeHookSessions` (`postMergeHookSweep.ts`) — reclaim home-scoped push / QA-e2e / post-merge-hook scratch dirs whose `/done` cleanup lost its EBUSY race or never fired, or whose session did not survive the restart (3a already re-adopted every live one, so a dir with no live PTY is stale). All three use `homeScratch/sweep.ts`, preserve dirs with a live PTY cwd, and are bounded to `~/.lattice/per-project/<hash>/{push,qa,post-merge-hooks}/`.
-3c. `sweepStaleClaudeProjectEntries` (`claudeConfigSweep.ts`) — prune dead `projects[<cwd>]` entries from `~/.claude.json` whose key is a Lattice ephemeral worktree/scratch cwd (`~/.lattice/...` or a legacy `<repo>/.lattice/worktrees/...`) that no longer exists on disk. Each spawn pre-seeds one such entry (trust + managed MCP) and nothing else removes them, so the map grew unbounded; this is the analogue of the dir sweeps. Runs *after* them so entries for just-reclaimed dirs are caught too. GLOBAL (one shared file), serialized through `claudeTrust.ts`'s shared config mutex. A live session's cwd still exists, so it's left alone. (The long-lived terminal-server *also* runs this prune on a 5-min timer, since it outlives many main-backend boots and is what accumulates the entries.)
-3d. `sweepOrphanedClaudeConfigTempFiles` (`claudeConfigSweep.ts` → `claudeTrust.sweepOrphanedClaudeConfigTemps`) — delete orphaned `~/.claude.json.lattice-<pid>-<ts>.tmp` (and the analogous `mcpSecrets.json` temps) left when a writer was hard-killed between its temp write and the rename. Skips temps newer than 60s so a live terminal-server's in-flight write is never touched. The fixed atomic-write path now unlinks its temp on a failed rename, so this mostly reclaims legacy orphans (one real pile reached ~8MB). GLOBAL (one shared home dir).
-4. Branch repair (`index.ts`) — `ready_to_merge` tasks whose branch is gone are marked `qa` because finalize cleanup already ran. **Only on a confirmed absence**: the project's `.git` must exist and `checkBranchExists` must return exit-0-no-match; a git failure (it throws) or a missing `.git` leaves the task alone, per task (one task's failure never skips the rest). Before this, a transient refs error read as "deleted", the task was moved to `qa` with `branch`/`worktreePath` cleared, and the next boot's orphan sweep deleted the branch — with its unmerged commits — for good.
-4a. `resumeInterruptedWorkflowRuns` (`workflowRunResume.ts`) — called after HTTP listen and **before** the merge-run resume.
-   - Reads each project's `~/.lattice/per-project/<hash>/workflow-runs.json` mirror (`workflowRuns/persistence.ts`) and applies `classifyWorkflowRunResume` per run:
-     - an **agent** step whose pty is still alive in the detached terminal-server is re-adopted (record restored + pty re-attached via `adoptWorkflowStepSession` + presence node re-registered), so the agent's pending `/complete` advances the run as if nothing happened;
-     - a **control** step (start/merge/push) died with the process and is re-dispatched (they are re-runnable, same property `resumeInterruptedMergeRuns` relies on);
-     - a `pending` agent step (queued, or still in its pre-run scan — no terminal was ever requested) is **re-dispatched**, whatever the probe says, unless a session is positively alive;
-     - a step checkpointed `completing` **completes** (its advance finishes without replaying the prompt);
-     - a lost **Run tests** terminal **advances** (`advancePastLostTestStep` notes it on the step summary — Run tests never stops the workflow);
-     - any other agent step whose pty is gone is marked **errored** rather than left hanging.
-   - One terminal-server probe per sweep; `null` ("couldn't ask") re-adopts, so a wedged terminal-server can't mass-error healthy runs.
-   - Parallel groups register every surviving member before readiness, then
-     classify each member independently. Pending members redispatch with a
-     per-member retry budget; completing members finish teardown; completed
-     members never replay. A lost member fails the run and cancels its siblings.
-     Every member's held Stop re-arms its own gate. An all-completed checkpoint
-     finishes the group join without requiring a live terminal.
-   - A re-adopted step's quiescence state is marked `markAgentReadopted` (at registration, before callbacks are released): its live-subagent tracking died with the old process, so its Stop-hook gate needs `READOPTED_SETTLE_MS` (2 min) of silence instead of a few seconds — see `agentQuiescence.ts`; any other outcome drops the mark.
-   - A step whose Stop the dead process was still holding in its gate (`run.stopReceived` for the current step) has that gate re-armed here (`markAgentReadopted` in `agentQuiescence.ts`). The quiet window counts from **boot** if the gate was busy at its last checkpoint (`stopReceived.busy` — downtime is not silence), otherwise from the later of the Stop (`stopReceived.at`) and `stopReceived.activeAt` — the hook already got its 200 and the idle agent will never Stop again (3a does the same for a post-merge hook's `stopReceivedAt`).
-   - A re-dispatched **Push** step re-attaches to its still-live push session (3a re-adopted it) rather than spawning a second push.
-   - Ordering is load-bearing: a resumed workflow owns its project's merge pipeline through its own Merge step, so step 5 skips any project with an active workflow run.
-   - The sweep settles per run once its dispatch decision is applied — a re-dispatched (or `complete`-advanced) agent step counts as dispatched when it reaches its pre-run (`waitForStepPreRunBegin`, `workflowRuns/stepTools.ts`), so an Opengrep scan of several minutes carries on detached instead of holding the merge-run resume, owed post-merge hooks and outbox replay behind it.
-5. `resumeInterruptedMergeRuns` (`mergeRunResume.ts`) — called after HTTP listen so spawned resolvers can call the API. Skipped for a project that has an active workflow run (see 4a). Resumes on a stale (dead-PID) run lock whose label is `merge-run` **or** a workflow Merge/Push control step (`workflow-merge:*` / `workflow-push:*` — see `isResumableInterruptedRunLock`), gated on `ready_to_merge` tasks actually remaining. The workflow labels are the important case: a workflow's Merge step holds the per-project lock while it drains In-Progress + merges Ready-to-Merge, and a backend restart/crash in that window kills the in-process control step **and** skips the lock-releasing `finally`. The workflow run record itself is now re-adopted by 4a (which re-dispatches that control step, and this step then skips the project); this label match remains the fallback for a run whose mirror is gone or paused, so the completed-but-unmerged tasks are never stranded. A manual `/merge` (`manual-merge`) and a workflow `Start` lock are deliberately not resumed here.
-5a. `fireOwedPostMergeHooks` (`owedPostMergeHooks.ts`) — after 4a + 5: a project whose last merge landed but whose post-merge hook never fired before the backend died (`postMergeHooks/owed.ts` marker) gets it now, unless an active merge run (its teardown fires it) or workflow run (its Merge step's Phase C does) owns the project.
-6. `resumeQueuedTaskRuns` (`queuedRunResume.ts`) — also called after HTTP listen. Re-enqueues task runs that were waiting in the in-memory spawn queue when the backend stopped (found via the persisted `Task.runQueued` flag). Runs *after* `sweepOrphanedWorktrees` so a worktree half-created by an interrupted run is reconciled by the re-run, not reclaimed as an orphan.
+3. `sweepOrphanedWorktrees` (`worktreeSweep.ts`) — **after listen, not awaited** (pre-listen, 1000+ legacy orphans kept the UI on "Scanning…"); step 6 waits for it. Removes only Lattice-managed worktrees no active task owns, two at a time:
+   - uncommitted edits are archived first (`worktree/discardArchive.ts`; never auto-restored by step 2); if archiving fails the orphan stays;
+   - unmerged `lattice/*` branches come from ONE `for-each-ref --no-merged=HEAD` (per-branch `rev-list` only if that fails; unreadable = unmerged). An orphan with unmerged commits keeps its **branch** (`keepBranchIfUnmerged` — the only copy of the work) but loses its checkout; an Open/Backlog task (may be re-run) keeps both;
+   - then, detached, `sweepWorktreeResidue` (below).
+3a. `resumeInterruptedOneOffRuns` (`oneOffRunResume.ts`) — **before listen**, so a callback (or outbox replay) never meets an unknown id: re-adopts push / QA / post-merge-hook runs whose pty survived. See [oneOffRunResume/CLAUDE.md](oneOffRunResume/CLAUDE.md).
+3b. `sweepOrphaned{Push,Qa,PostMergeHook}Sessions` (`pushSessionSweep.ts` etc.) — reclaim scratch dirs whose `/done` cleanup lost its EBUSY race, never fired, or whose session died, via `homeScratch/sweep.ts`: live-PTY cwds kept, bounded to `~/.lattice/per-project/<hash>/{push,qa,post-merge-hooks}/`. After 3a, so a dir with no live PTY is truly stale.
+3c. `sweepStaleClaudeProjectEntries` (`claudeConfigSweep.ts`) — prune `~/.claude.json` `projects[<cwd>]` entries for a vanished Lattice worktree/scratch cwd (each spawn pre-seeds one; nothing else removes them). After 3b, so just-reclaimed dirs count. GLOBAL, under `claudeTrust.ts`'s config mutex; the long-lived terminal-server also prunes every 5 min.
+3d. `sweepOrphanedClaudeConfigTempFiles` → `claudeTrust.sweepOrphanedClaudeConfigTemps` — delete `~/.claude.json.lattice-<pid>-<ts>.tmp` (and `mcpSecrets.json`) temps of a hard-killed writer; skips temps < 60 s old so a live terminal-server's in-flight write is never touched.
+4. Branch repair (`recoverTaskIfBranchWasDeleted`) — a `ready_to_merge` task whose branch is gone moves to `qa` (finalize cleanup already ran; `mergedAt` re-stamped so an older QA verdict can't promote it). **Only on a confirmed absence** (`.git` exists, `checkBranchExists` exit-0-no-match); a git failure or missing `.git` leaves the task alone, per task (a transient refs error read as "deleted" lost unmerged commits).
+4a. `resumeInterruptedWorkflowRuns` (`workflowRunResume.ts`) — after listen, **before** step 5. Applies `classifyWorkflowRunResume` (phases, parallel groups, Stop re-arm: [workflowRuns/CLAUDE.md](../workflowRuns/CLAUDE.md) "Surviving a restart") to each run in `per-project/<hash>/workflow-runs.json`: live agent step → re-adopted (`adoptWorkflowStepSession` + presence node) so its pending `/complete` advances the run; control step → re-dispatched (re-runnable, as step 5 relies on), a Push re-attaching to its live push session (3a) instead of pushing twice; `pending` → re-dispatched unless a session is positively alive; `completing` → completes without replaying the prompt; lost Run tests → advances (`advancePastLostTestStep`); other lost agent step → errored, never left hanging.
+   - One probe per sweep; `null` ("couldn't ask") re-adopts, so a wedged terminal-server can't mass-error healthy runs.
+   - Register every persisted run (and surviving parallel member) of a project before the first redispatch checkpoints its file, or that write drops unloaded siblings. Members are classified independently, each with its own retry budget; a lost member fails the run and cancels its siblings.
+   - `markAgentReadopted` at registration, before callbacks are released (live-subagent tracking died, so the Stop gate needs `READOPTED_SETTLE_MS` of silence); other outcomes drop the mark. A Stop the dead process held (`run.stopReceived`) is re-armed — the idle agent won't Stop again.
+   - Settles per run once its dispatch is applied (a re-dispatched step counts at `waitForStepPreRunBegin`), so a minutes-long Opengrep pre-run doesn't hold steps 5 / 5a and outbox replay.
+5. `resumeInterruptedMergeRuns` (`mergeRunResume.ts`) — after listen (resolvers call the API). Skipped for a project with an active merge run or **active workflow run** (its Merge step owns the pipeline; a second run would double-process tasks). Resumes on a stale (dead-PID) run lock — or the interrupted-run marker step 2 leaves when it retires one (`projectRunLock/interruptedRun.ts`) — labelled `merge-run` or `workflow-merge:*` / `workflow-push:*` (`isResumableInterruptedRunLock`; fallback when a workflow's mirror is gone; a paused retry budget blocks it), only while `ready_to_merge` tasks remain (else the stale lock is retired; `clearStaleLockOrThrow` re-checks liveness). `manual-merge` and workflow `Start` locks are deliberately not resumed. `startMergeRun` is awaited up to run registration so 5a sees the run (else an owed hook raced it and fired twice).
+5a. `fireOwedPostMergeHooks` (`owedPostMergeHooks.ts`) — after 4a + 5: fire a hook a pre-restart merge still owes (`postMergeHooks/owed.ts`) unless an active merge or workflow run, a held or stale-resumable run.lock, or an uncleared interrupted-run marker owns the project (that merge fires it; a hook now would edit main under its snapshot).
+6. `resumeQueuedTaskRuns` (`queuedRunResume.ts`) — after step 3: re-enqueues spawn-queued runs (`Task.runQueued`), so a half-created worktree is reconciled by the re-run, not reclaimed.
 
 ## Worktree residue sweep
 
-`sweepWorktreeResidue` (`worktreeResidueSweep.ts`, `.git` marker classification in `worktreeResidueGitMarker.ts`):
+`worktreeResidueSweep.ts` reclaims what a part-failed `git worktree remove --force` leaves on Windows (a locked file, e.g. a running `esbuild.exe`, stopped it after git dropped the registration and `.git`). It may delete only direct children of a known project's `~/.lattice/worktrees/<hash>/` that are: unregistered; unowned by an active/queued task; without a live pty; without a `.git` marker, or with only a `.git` FILE naming a `<commonDir>/worktrees/<id>` of this repo that is gone while the common dir is intact; not a reparse point; older than 10 min. Same carve-out as `worktree/reconcile.ts`'s `fs.rm`, re-checking `.git` + registration right before each guarded delete. A locked dir backs off in memory (30 min doubling, ≤ 8 h); `notifyDiskSpaceFreed()` after any attempt. Never touches unknown projects' hash dirs or legacy `<repo>/.lattice/worktrees`.
 
-- **What it reclaims.** A `git worktree remove --force` that fails part-way on Windows (a locked file — pnpm hard links to a *running* `esbuild.exe` / `rollup.*.node`, or a dev server / vitest started from the worktree) still drops the registration and `.git`, leaving a directory (source dirs too, not just `node_modules`) neither cleanup nor the orphan sweep can see again.
-- **What it may delete** — only direct children of `~/.lattice/worktrees/<hash>/` of a known project that are all of:
-  - unregistered;
-  - unowned by an active/queued task;
-  - without a live pty;
-  - without a `.git` marker — or with only a `.git` FILE whose `gitdir:` names a `<commonDir>/worktrees/<id>` of this repo that no longer exists while the common dir is intact (git's remove stopped at a locked entry sorting before `.git`, e.g. under `.claude/`, after dropping the admin dir);
-  - not a reparse point;
-  - older than 10 min.
-- It is the same "verified unregistered home-scoped stray" carve-out `worktree/reconcile.ts` has for its `fs.rm`, including its re-check of `.git` + registration immediately before each delete.
-- Guarded removal (reparse checks first); each removed dir's top-level entries are logged.
-- A locked dir backs off in memory (30 min, doubling, capped at 8 h).
-- One summary line per project, only when the counts change; `notifyDiskSpaceFreed()` after any attempt.
-- Unknown projects' hash dirs and legacy `<repo>/.lattice/worktrees` are never touched.
-- `worktreeResidueGitMarker.ts` — read-only: `classifyGitMarker` (`none` / `orphaned` / `keep`), `commonGitDirVia`, and the lstat probes. Its `entryExists` reads any non-ENOENT error as "present" (keep the dir), unlike `worktree/reconcile.ts`'s same-named function, which rethrows — do not merge them.
+`worktreeResidueGitMarker.ts`'s `entryExists` reads any non-ENOENT error as "present" (keep the dir); `worktree/reconcile.ts`'s same-named function rethrows — do not merge them.
 
-## Shared helpers
+`worktreeResidueSweepLoop.ts` — passes every 30 min and on a disk wait (`requestWorktreeResidueSweep` from `diskPressureMerge.ts`, ≤ 1 per 2 min). Single-flight plus a per-project guard against the boot pass; skips a project with no `.git` or zero task records, and the whole pass when the terminal-server is unreachable.
 
-- `liveSessions.ts` — the shared "is a PTY live for this cwd?" check: `collectLiveSessionCwds` (null when the terminal-server is unreachable — "can't tell", not "none"), `hasLiveSessionAtOrUnder`, and `normalizeCwd` (case-insensitive on Windows).
-- `projectIteration.ts` — home of `forEachKnownProjectSafely` (see Safety invariants).
-- `concurrency.ts` — `forEachWithConcurrency`, the bounded fan-out behind it.
+## Other files
 
-## Periodic sweeps (not boot-time)
-
-`inProgressSweep.ts` is a stable facade (re-exported from `index.ts`) over the
-`inProgressSweep/` subfolder. Unlike the boot sweeps above, it runs on a timer
-(`startInProgressSweepLoop` / `stopInProgressSweepLoop`, default
-`IN_PROGRESS_SWEEP_INTERVAL_MS = 60s`), complementing boot recovery from the
-other end: an `in_progress` task whose PTY is dead **and** whose branch has a
-commit gets auto-completed (in_progress → ready_to_merge), since the Pi
-extension / explicit `/complete` curl are both best-effort and can be missed.
-
-Split by concern so the eligibility decision is auditable in isolation:
-
-- `config.ts` — the age gate (`MIN_AGE_MS`) + loop interval knobs.
-- `scheduler.ts` — timer lifecycle (module-scoped handle, `unref`'d) plus the
-  overlap guard: `runInProgressSweepTick` skips a tick while the previous pass
-  is still running (a pass is one git spawn per candidate, so a big board or a
-  wedged git could outlast the interval and stack passes).
-- `sweep.ts` — project/task scanning: snapshot live session cwds once, collect
-  every known project's `in_progress` tasks, probe them with bounded fan-out
-  (`../concurrency.ts`, 8 wide, per-task error isolation), and translate each
-  verdict into logging + skip-accounting + the mutation. Owns the `SweepResult`
-  shape. A `no-commits` verdict (pty dead, nothing to flip to) is cached per
-  `(taskId, branch)` for `NO_COMMITS_BACKOFF_MS` (10 min) and its warning is
-  logged once — that state cannot change until the user resumes the task, and
-  re-probing it every minute forever was a git spawn + a log line per stuck
-  task per pass.
-- `eligibility.ts` — `decideAutoComplete(...)` returns a discriminated
-  `EligibilityVerdict` (`skip` with a typed `SkipReason`, or `complete`). Read
-  only; no mutation. `too-young` / `session-live` skips are the expected-healthy
-  cases (silent, uncounted); the rest are surfaced.
-- `complete.ts` — the auto-complete mutation: re-read the task and bail
-  (`stale`, silent, retried next pass) if it changed since the pass snapshotted
-  it (`updatedAt`/status/worktree/branch — a Resume, lane move or real
-  `/complete` landing during the git probe must not be overwritten), read the
-  Pi shutdown sentinel for the diagnostic log, then `updateTaskCrashSafe` to
-  `ready_to_merge`.
-
-`worktreeResidueSweepLoop.ts` — the residue sweep's non-boot passes: every
-`WORKTREE_RESIDUE_SWEEP_INTERVAL_MS` (30 min, `startWorktreeResidueSweepLoop`,
-unref'd, started after listen in `server/startup.ts`) and on a disk wait
-(`requestWorktreeResidueSweep` from `diskPressureMerge.ts`'s
-`requestMergeToFreeDiskSpace`, coalesced to one pass per 2 min). Single-flight
-(a second request joins the running pass; a per-project guard inside
-`sweepWorktreeResidue` also keeps it off a project the boot pass is still on).
-Iterates `forEachKnownProjectSafely`, skips a project with no `.git` or zero
-task records, and skips the whole pass when the terminal-server is unreachable
-(the live-pty check can't be trusted). Logs with `[residue-sweep]`, not
-`[startup]`.
+- `inProgressSweep.ts` / `inProgressSweep/` — periodic (60 s) auto-complete of an `in_progress` task whose PTY is dead and whose branch has commits. See [inProgressSweep/CLAUDE.md](inProgressSweep/CLAUDE.md).
+- `retryBudget.ts` — durable replay journal (`per-project/<hash>/recovery-attempts.json`).
+- `liveSessions.ts` — `collectLiveSessionCwds` (`null` = terminal-server unreachable: "can't tell" ≠ "none"), `hasLiveSessionAtOrUnder`, `normalizeCwd` (case-insensitive on Windows).
+- `projectIteration.ts` — `forEachKnownProjectSafely`; `concurrency.ts` — `forEachWithConcurrency`.
 
 ## Safety invariants
 
-- `retryBudget.ts` durably charges each automatic workflow redispatch and boot
-  merge replay before side effects; three interrupted attempts at unchanged
-  checkpoints pause replay with a persisted reason and a run error event.
-  Session adoption and durable completion advancement are not replay attempts.
-  That includes a control-step re-run whose work is done and that only
-  waits on a session boot just re-adopted — a Merge step with In-Progress and
-  Ready-to-Merge empty waiting out a live post-merge hook, a Push step
-  re-attaching to its live push session (`workflowRunResume.ts`
-  `isWaitingOnLiveSession`): its checkpoint cannot move while that agent works,
-  and charging it paused a healthy run after three restarts.
-  Workflow step/task-lane progress and remaining merge-task IDs reset budgets.
-  Only an explicit user POST `/api/merge-runs` resets the merge allowance;
-  internal callbacks and worker auto-restarts must not replenish it.
-- A paused workflow's stale control lock must not bypass its budget through the
-  independent merge-resume fallback. The journal remains home-scoped; invalid
-  journals are preserved and prevent automatic replay (but never block an
-  explicit POST `/api/merge-runs`: its failed budget reset is logged and the
-  run proceeds, leaving the invalid file in place). GET
-  `/api/merge-runs/recovery?project=...` exposes the retained diagnostic.
+- Recovery is best-effort: log a failed phase/project and keep booting.
+- Iterate projects only via `forEachKnownProjectSafely` (one broken project can't block others). It and the per-task loops fan out 8 wide (`forEachWithConcurrency`; a serial walk delayed `listen` by seconds). Keep per-item try/catch inside the callback — the helper doesn't swallow errors.
+- Never run stale merge-run resume before the server is listening.
+- Retry budget: charge each automatic workflow redispatch and boot merge replay durably **before** side effects (a process-killing failure still costs its attempt); three interrupted attempts at an unchanged checkpoint pause replay (persisted reason + run error event). Not attempts: session adoption, durable completion advancement, a control-step re-run that only waits on a just-re-adopted session (`isWaitingOnLiveSession` — charging it paused healthy runs after three restarts). Step/task-lane progress and changed remaining merge-task IDs reset budgets; only an explicit user `POST /api/merge-runs` resets the merge allowance (never internal callbacks or auto-restarts).
+- A paused workflow's stale control lock must not bypass its budget via the step-5 fallback. An invalid journal is preserved and blocks automatic replay, never an explicit `POST /api/merge-runs` (reset failure logged, run proceeds); `GET /api/merge-runs/recovery?project=…` shows it.
+- No raw recursive deletes: worktree removal goes through `cleanupWorktreeForTask` / `git worktree remove`. The one exception is `worktreeResidueSweep.ts` — do not widen what it may delete.
+- Worktree reclamation needs a readable, nonempty task inventory and an authoritative terminal-session inventory: a corrupt task DB may load empty, so zero task records preserve every checkout. Preserve queued tasks' checkouts and live PTY cwds (descendants too); compare ownership paths case-insensitively on Windows.
+- Honor explicit git worktree locks; count only successful cleanup as reclaimed; use `worktree list --porcelain -z` for exact paths. Never globally prune missing registrations during the sweep (skipped active or user-managed checkouts may be offline); exact orphan removal handles its own registration, even for a manually deleted dir.
 
-- Keep recovery best-effort: log a failed phase/project and continue booting.
-- Project iteration must go through `forEachKnownProjectSafely` so one broken project cannot block others. It (and the per-task loops in `index.ts` / the in-progress sweep) fan out with `concurrency.ts`'s `forEachWithConcurrency` (8 wide) — items are independent, and a strictly serial walk of N projects × M tasks, one git spawn each, ran before `listen` and delayed the port by seconds. Keep per-item try/catch inside the callback; the helper does not swallow errors.
-- Do not add raw recursive deletes here; worktree removal goes through `cleanupWorktreeForTask` / `git worktree remove`. The one exception is `worktreeResidueSweep.ts` (unregistered direct children of a known project's home worktrees dir with no `.git` or only a dangling worktree `.git` file, re-checked right before the guarded `fs.rm`) — do not widen what it may delete.
-- Do not run stale merge-run resume before the server is listening.
-- Worktree reclamation requires a readable, nonempty task inventory and an
-  authoritative terminal-session inventory. A corrupt task DB may load as an
-  empty default, so zero task records must preserve every checkout. Preserve
-  queued task checkouts and live PTY cwds (including descendants), and compare
-  ownership paths case-insensitively on Windows.
-- Honor explicit Git worktree locks and count only successful cleanup as
-  reclaimed. Use `worktree list --porcelain -z` to preserve exact paths. Never
-  globally prune missing registrations during the sweep: skipped active or
-  user-managed checkouts may be temporarily offline. Exact orphan removal
-  handles its own registration, including a manually deleted directory.
+Tests: named after the module — grep it in `backend/src/__tests__/`.

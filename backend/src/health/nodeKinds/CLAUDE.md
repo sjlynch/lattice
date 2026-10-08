@@ -2,9 +2,9 @@
 
 Per-grammar tables translate tree-sitter node types into metric categories.
 
-- `index.ts` owns dispatch and caching; `base.ts` owns `NodeKinds`,
+- `../nodeKinds.ts` owns dispatch and caching; `base.ts` owns `NodeKinds`,
   `NodeKindSets`, and the set builder. Callers import from
-  `nodeKinds/index.js`. `nodeKindsFor` returns shared cached objects with
+  `health/nodeKinds.js`. `nodeKindsFor` returns shared cached objects with
   mutable Sets: consumers must treat them as read-only; mutation changes
   later analyses for that grammar.
 - New grammars need explicit handling in the `index.ts` dispatcher. Its

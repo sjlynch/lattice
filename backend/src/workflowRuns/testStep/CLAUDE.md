@@ -64,6 +64,13 @@ step's, unchanged (`../stepSpawner.ts` takes `opts.runTests`). Covered by
   backend's is stale → stealable).
 - **Start state is captured under the lock**: start HEAD + `USER_WIP.txt`, then
   `run.testStep = {stepIndex, startHead}` is checkpointed.
+- **The user's WIP is never touched; fixes commit by explicit path only.** The
+  brief (`run-tests` template) forbids editing / staging / committing any
+  `USER_WIP.txt` path and has the agent commit with
+  `git commit -m … -- <paths>` — never `git add -A` / `.`, `stash`, `reset`,
+  `checkout`, `restore`, `clean`, `push` or `--no-verify` — so nothing the
+  user staged is swept in. Keep that wording when editing the template; the
+  post-check (`summary.ts`) flags a step commit that touched a WIP path.
 - **Timeout** (`timeoutMinutes`, default 60) runs from the pty spawn — armed on
   the step's `step-spawned`, so spawn-queue / resource-governor wait doesn't
   count. `spawnedAt` is persisted so a re-adopting backend re-arms the

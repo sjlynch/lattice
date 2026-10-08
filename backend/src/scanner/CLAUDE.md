@@ -1,9 +1,8 @@
 # backend/src/scanner
 
 Pipeline that turns a project root into the `{nodes, links}` graph used by
-the 3D force-directed view and the health overlays. Split out of the old
-`backend/src/scanner.ts` (the original file is now a thin re-export facade
-so `../scanner.js` import paths keep working).
+the 3D force-directed view and the health overlays. No facade: import the phase
+module you need (`scanner/scan.ts` is the entry point).
 
 ## Phases
 

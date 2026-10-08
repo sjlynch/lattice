@@ -9,11 +9,6 @@ import {
   type JobAnalysis,
 } from './healthWorkerRunner.js';
 
-// Re-exported for back-compat: scanner.ts's facade and scannerFileMetrics.test.ts
-// import readForAnalysis from here.
-export { readForAnalysis };
-export type { ReadResult } from './readForAnalysis.js';
-
 export type FileMetric = {
   filePath: string;
   name: string;

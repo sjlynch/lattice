@@ -13,7 +13,7 @@
 // itself.
 //
 // So every git Lattice runs (worktree/exec.ts) and every agent session it
-// spawns (terminalServerClient/createSession.ts) gets `gc.auto=0` +
+// spawns (terminalServerClient/spawnBody.ts) gets `gc.auto=0` +
 // `maintenance.auto=false` through git's GIT_CONFIG_COUNT/KEY/VALUE
 // environment (git ≥ 2.31) — per process, nothing written to any config file.
 // Housekeeping instead runs ONCE, in the foreground and alone, after a merge

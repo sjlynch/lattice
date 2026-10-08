@@ -1,199 +1,65 @@
 # frontend/src/__tests__
 
-Frontend tests also use Node's built-in `node:test` runner with `tsx`.
-They are mostly pure TS/React-state tests, not a browser/Vite integration suite.
-Commands from `frontend/` (reference only): `npm test` (tests), `npx tsc -b`
-(type-check), `npm run build` (build).
+Frontend tests use Node's built-in `node:test` runner with `tsx` — mostly pure
+TS / React-state tests, not a browser or Vite integration suite. `npm test`
+from `frontend/` runs `node --import tsx --test src/__tests__/*.test.ts` (one
+level only; there is no HOME-isolation preload — no frontend test writes to
+disk). Run one file from `frontend/` with
+`node --import tsx --test src/__tests__/<name>.test.ts`. Type-check: `npx tsc -b`.
 
 ## Conventions
 
 - Import assertions from `node:assert/strict` and test APIs from `node:test`.
-- Keep DOM/window shims local and reusable; `domDoubles.ts` holds shared doubles.
-- Prefer testing extracted pure helpers/hooks adapters over mounting large UI
-  trees. When React rendering is needed, use the existing lightweight patterns
-  in nearby tests.
-- Avoid depending on the Vite dev server or real backend; stub API/WS boundaries.
+- No DOM under `node --test`: install globals through `domDoubles.ts`
+  (`installGlobal`, `installWindow`/`withWindow`, `installCanvasDocument`,
+  `stubClipboard`, `installManualTimers`, `FakeWebSocket`/`installFakeWebSocket`)
+  and restore them in `t.after`/`finally`, so co-resident suites don't bleed
+  global state. Don't hand-roll a second copy of a double that lives there.
+- Prefer extracted pure helpers / hook adapters over mounting large UI trees.
+  When rendering is needed, follow the nearby `react-test-renderer` + `act`
+  pattern (`IS_REACT_ACT_ENVIRONMENT` set via `installGlobal`).
+- Never depend on the Vite dev server or a real backend: stub `fetch` and WS at
+  the API boundary; hold HTTP responses deferred and drive timers manually
+  when the test is about ordering.
+- Memory-ownership tests assert deterministic release/disposal with controlled
+  doubles and disposal/reference instrumentation — never real GPU bytes or
+  forced-GC timing. They prove a release contract, not the absence of a leak.
+- Keep tests as flat `.test.ts` files here; shared code is `domDoubles.ts` and
+  `queueScheduler.fixture.ts` (builders + scenario harness for the split
+  `queueScheduler.*` suites).
+- Most files' header comment carries their regression story — read it before
+  weakening an assertion.
 
-## Suites
+## Finding a test
 
-Selected suites and the contracts they own (not exhaustive):
+Tests import the module under test by relative path, so grep its file name
+here: `rg -l "useMergeRunSync" frontend/src/__tests__` finds both the
+module-named suite and behaviour-named regressions
+(`mergeConflictKeepsFreshResolver`, `liveSnapshotOrdering`). Split suites use
+dotted suffixes (`queueScheduler.step.test.ts`). Name patterns worth knowing:
 
-- `securityTriageViewer.test.ts` — combined status/category/severity/search
-  matching, severity floor visibility and virtual list boundaries.
-- `securityReviewController.test.ts` — real review hook mutation ownership:
-  duplicate start prevention, concurrent cancellation, busy counting and
-  project epoch fences that discard late results.
+- `*ProjectSwitch*`, `*ProjectScope*`, `*FolderSwitch*`, `*ProjectPin*` — project
+  fences (a late result or by-id call must not land on another project).
+- `*LateFetch*`, `*StaleLoad*`, `*Lifetime*` — late-response / unmount races.
+- `*StartGuard*` — double-click / duplicate-session guards.
 
-- `securityOverlay.test.ts` — explicit scans, refresh reconnection/ETA, exact-id
-  cancellation, retained saved findings, scan-free toggling, project fences and
-  graph visibility. `securityFindings.test.ts` pins filtering without lost
-  coverage, grouping order, stale colors and encoded editor links.
-- `canvasDragTracking.test.ts` — stationary clicks retain the library's picked
-  node; actual drags suspend raycasts and release on cancel/unmount. Complements
-  `pointerLeaveTooltipDismiss.test.ts` for off-canvas hover suppression.
+## Cross-cutting guards (hard to find by name)
 
-- `terminalCloseRecovery.test.ts` / `terminalCleanupAtomic.test.ts` — registered
-  close confirmation, retained PTY ownership on failure, explicit retry, and
-  functional bulk removals. Render the provider with the real task-cleanup hook
-  to pin stable renders/one DELETE while pending, failed closes without automatic
-  retry, mixed registered/fallback cleanup, resolver eligibility, and late tabs.
-- `terminalRegistrySync.test.ts` / `useTerminalRegistrySync.test.ts` — pure
-  reconciliation and rendered provider/hook coverage for late registry HTTP
-  responses. Deferred lists/restores and a controlled WS stream pin newer pty
-  identities, failures, removals, remote/local additions, project-switch
-  cancellation, and the Sidebar's pane status/remount behavior. Restore summaries
-  still mark queued tabs pending when queue events were missed.
-  Direct mount-`Set` assertions pin bounded history across repeated removals and
-  exclude stale active IDs, preserving surviving tabs across panels/project
-  switches, pending/failed closes, and startup/fallback restore gates.
-- `sidebarResizeLifetime.test.ts` — real `useSidebarWidth` coverage for interrupted
-  drags: unmount/replacement cleanup releases listeners, RAF and pointer capture,
-  restores body styles, and rejects stale callbacks; unmount never writes settings.
-  Normal release/cancel persistence, width clamping/maximizing, viewport resize
-  and double-click reset remain covered.
-- `searchMatcher.test.ts` — `buildSearchRegExp` (`components/forceGraph/`):
-  wildcard→regex translation, metacharacter escaping, case-insensitive matching,
-  and the null-on-empty/invalid-regex guard. The translation itself is shared
-  with the backend content search (`backend/src/shared/searchPattern.ts`).
-- `harnesses.test.ts` — the harness-dropdown vocabulary in `harnesses.ts`, the
-  single encode/decode source of truth behind every selector (taskboard,
-  workflow steps + run overrides, post-merge hook, sidebar tray).
-  `isValidPiModel` is the shell-injection guard before a model id reaches
-  `pi --approve --model "<x>"`; it uses the backend's own pattern
-  (`backend/src/shared/harnesses.ts`) — the one deliberate divergence from
-  `normalizePiModel` (no trimming) is pinned. Also covers the
-  `encodeHarnessValue`/`decodeHarnessValue` round-trip (incl. `pi:` → bare pi
-  with NO `piModel` key), `availableHarnessChoices` /`buildHarnessOptions`
-  visibility gating (a selected-but-unavailable harness and a saved-but-
-  uncurated Pi model must never silently vanish), and the 28-char label
-  truncation that keeps the full `provider/model` in `title`.
-- `gitSetupDerive.test.ts` — the pure core of Git Setup
-  (`components/gitSetup/gitSetupDerive.ts`). `deriveGitChipState` has two
-  actionable cases: `none` + `initable=true` ("Set up Git") and `repo` +
-  `unborn=true` + `initable=true` ("finish setup"). A missing probe falls back
-  to the pre-feature branch chip, or nothing (never guesses "No Git").
-  `nested` renders an inert warning naming the ancestor repo — init must never
-  be offered there. Also pins `formatBytes` / `formatFileCount` (truncated
-  counts are floors) and `describeProbeBlocker`'s refusal copy.
-- `ghostLinkSync.test.ts` — `applyChangeRingDelta`'s ghost handling
-  (`components/forceGraph/changeRingSync.ts`). The delta deliberately skips the
-  library digest, so it owns ghost visibility across BOTH link renderers: pins
-  that scrubbing a deleted file out of the window hides the per-link `__lineObj`
-  and drops the segment from the batched `LineSegments` buffer (the "grey node
-  vanished but its line didn't" bug), that scrubbing back restores both, and that
-  a ghost with no mounted object falls back to a refresh only when it should be
-  showing.
-- `taskColors.test.ts` — `colorForIndex` / `taskColorIndex` / `taskColor`
-  (`taskColors.ts`): golden-angle hue walk, mod-3 saturation/lightness band
-  cycling, abs+trunc index normalisation, and the deterministic id-hash fallback
-  slot. Expected `hsl()` strings are computed from the module constants.
-- `copyVariableToken.test.ts` / `promptVariables.test.ts` — the workflow
-  variable grammar in `components/workflows/promptVariables.ts`, which must stay
-  mirrored to the backend interpolator (`backend/src/workflows/interpolate.ts`).
-  `copyVariableToken` covers the clipboard write; `promptVariables` pins the
-  editor-overlay grammar: `splitPromptSegments` resets the shared stateful `/g`
-  `VAR_TOKEN_RE.lastIndex` per call, captures the trimmed name for inner-
-  whitespace tokens (`{{ scope }}`), and keeps invalid token-looking text plain
-  (so the overlay never promises a substitution the backend won't perform);
-  `withUserInstructions` trims + appends `{{user_instructions}}` exactly once
-  (just the token for a blank prompt); `ensureUserInstructions` prepends the
-  built-in without duplicating or reordering an existing one.
-- `backendRestartResilience.test.ts` — React hook/adapter tests rendering the real
-  `useWorkflowRunActions` and `useTaskLifecycleActions` (Resume uses
-  `GitSetupProvider` + `TerminalsProvider`). Keep HTTP acknowledgements deferred
-  and timing/WS boundaries controlled (`installManualTimers`, `FakeWebSocket`);
-  this is not a real-backend browser suite. Pins safe retries of known-unaccepted
-  `503`/`ECONNREFUSED` requests; ambiguous workflow starts/resumes must not allocate
-  again after server-side completion, cancellation, or queue settlement. Later
-  deliberate Run/Resume actions remain allowed; allocation and terminal
-  replacement/deletion assertions guard these boundaries. Also owns workflow
-  terminal outcomes, queue stopping on uncertainty, recovering `hello`/vanished-run
-  reconciliation, and reconnect health.
-- `startupTerminalProjectSwitch.test.ts` — React-rendering coverage for startup
-  terminal spawns across project switches. Drives the real
-  `useUserSettings` + `useStartupTerminalSync` through a project switch with the
-  new project's settings fetch held open, alongside a stand-in for Sidebar's
-  spawn effect (keyed on `activeFolder`, launching each command with cwd = the
-  currently-active folder). Pins that no commit ever pairs one project's folder
-  with another's commands: before the fix, `useUserSettings` flipped to
-  "loading" from an effect — which runs *after* the render that changed
-  `activeFolder` — so for one commit consumers saw `loaded: true` beside the
-  previous project's settings, and the spawn effect fired with the new cwd and
-  the old commands (apply_digital's `npx next dev` running in interview_eci).
-  Asserts the leak is gone, that the new project still ends up running exactly
-  its own startup terminal once its settings land, and that clearing the project
-  empties the list.
-- `settingsSaveLifetime.test.ts` — rendered Settings controller and editable
-  tabs with App-like launch state and the real shared settings/startup/metrics
-  hooks. Deferred project and Pi-provider PATCHes pin that an accepted save
-  keeps persisting its captured data without publishing callbacks, closing,
-  or settling the busy/error state of a later project/dialog session. Includes
-  A → B → A, close/reopen, unmount, no-project global saves, a concurrent save
-  in B, and normal current-session success/error behavior.
-
-### Memory ownership regressions
-
-These suites assert deterministic ownership/disposal contracts with controlled
-doubles and disposal/reference instrumentation, without measuring real GPU bytes
-or relying on nondeterministic forced-GC timing. Passing them does not establish
-the cause of the cross-PC Chrome OOM report.
-
-- `sceneFrameDriver.test.ts` / `nodeMotionDriver.test.ts` — unsubscribe releases
-  cached frame/motion/drag callbacks immediately, including the last listener,
-  without another tick. Membership changes preserve the in-flight dispatch
-  snapshot and affect the next event.
-- `instancedNodes.test.ts` — disposal events pin exactly-once mesh/material
-  release on capacity growth, style filtering, disable and final teardown;
-  within-slack rebuilds reuse buffers. Borrowed sprite textures survive, and the
-  controller-owned shared quad is disposed only at final teardown. Re-enable
-  uses fresh position buffers from current nodes; disable/teardown release
-  motion callbacks immediately, without another tick.
-- `instancedLinks.test.ts` — disable removes the captured batch and disposes
-  owned geometry/material resources once; disabled hooks cannot recreate it.
-  Re-enable builds fresh position buffers from current graph objects, and buffer
-  growth disposes the old position attribute before replacement.
-- `agentOverlayPathIndex.test.ts` — final-agent removal and unused empty
-  reconciliation immediately release indexed nodes, the path map and cached
-  bounds; a remaining sibling preserves them. Clear/destroy are idempotent,
-  and clear permits rebuilding with the same node-array identity. New graph
-  generations supply lookup, bounds, parked placement and beam targets.
-- `forceGraphInitializationLifecycle.test.ts` — injected setup/teardown faults
-  pin acquired-resource rollback order, idempotent destruction, and ref/DOM
-  clearing. Cleanup continues after faults and preserves the original setup error.
-- `terminalWebgl.test.ts` — an injected fake add-on and terminal pin failure-path
-  add-on/listener cleanup, usable DOM fallback, and exactly-once disposal across
-  context loss and teardown.
-- `terminalReplayQueries.test.ts` — a pane's unparsed output queue past
-  `MAX_PENDING_OUTPUT_CHARS` drops its backlog, fires `onOverflow` once and keeps
-  flowing; an `attached` frame discards stale queued output and clears only after
-  the chunk xterm is still parsing (a deferred fake write callback).
-- `labelTextureCache.test.ts` — refcounts protect mounted/shared labels;
-  release-time eviction reclaims excess textures, paired materials and canvas
-  pixels without another cache miss. Owner teardown clears the cache and pixels.
-  A batched release + rebuild of 300 labels (cap 256) draws no new canvas and
-  one trim restores the cap. The free-bytes budget evicts the oldest free entry
-  first, and a teardown trim leaves no free entry; refcount > 0 is never disposed.
-- `labelGeometryLeak.test.ts` — production factories populate real LOC/health/name
-  registries; `clearAllLabelRegistries` empties them and disposes each owned
-  connector geometry exactly once, preserving shared line materials. Release-time
-  eviction reclaims excess textures, paired materials and canvas pixels without
-  another build; separate metric-owner clears balance references while a shared
-  sibling stays mounted. A `'batched'` clear keeps on-screen name labels for the
-  rebuild and trims once on its deferred timer; the default (teardown) clear
-  reclaims every free entry.
-- `graphDataSyncRefresh.test.ts` — real `useGraphDataSync` on a fake graph with
-  manual timers: ten metric-only batches under a held H view patch values at
-  once but refresh exactly once per `METRIC_REFRESH_COALESCE_MS` window; unmount,
-  a structural swap, a `!data` reset or a released view drop the pending refresh.
-- `labelRepulsion.test.ts` — stale cleanup preserves scene-connected labels and
-  state, removes ancestor-detached and directly unparented entries, and invokes
-  the owning-release callback once only for the ancestor-detached entry.
-- `repulsionScratchReset.test.ts` — an empty repulsion tick drops scratch
-  references to the previous labels, without waiting for another non-empty tick.
-- `graphSettingsForceOwnership.test.ts` — collision disable drops its cache;
-  both charge mode switches empty only the detached force. Structural swaps and
-  re-enable bind current nodes/settings/context, with existing reheat guards.
-- `wsReconnect.test.ts` — the final shared-channel unsubscribe releases its
-  last-message replay cache and teardown cancels reconnect/stability timers (d5bed1f1).
-- `terminalReplayQueries.test.ts` — replayed scrollback history never answers
-  terminal DA/color/status queries; only live output does (de5aa14b).
+- `sidebarPaneHiddenCss` — reads `styles/sidebar.css`: `.sidebar-pane.hidden`
+  must move hidden panes out of the clipped box with a transform
+  (visibility-only keeps xterm rendering; `display: none` breaks its fit).
+- `securityOverlay` — Security never POSTs a scan from an effect, a project
+  change or a graph update (scans only on an explicit click).
+- `backendRestartResilience` — the start/resume retry policy: replay only
+  failures the backend never acted on (task Resume, workflow start/resume,
+  queue stop on an uncertain acknowledgement), plus `retryTransient` itself.
+- `liveSnapshotOrdering` — a live WS event beats a late initial GET (merge
+  runs, post-merge hooks, the task list).
+- `taskByIdProjectPin` / `workflowByIdProjectPin` — by-id API calls send the
+  ACTIVE board's project as `?project=`.
+- `fetchTasksWholeBoard` — the board's `fetchTasks` opts out of every
+  agent-tuned `GET /api/tasks` default.
+- `terminalProjectScope` / `terminalActivePolicy` — backend-stamped paths
+  compare through `normalizeDirPath` / `sameProjectPath`, never `===`.
+- `escapeInnermost` / `focusTrapStack` — one Escape closes, and one focus trap
+  handles Tab for, only the innermost open layer.

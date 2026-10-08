@@ -89,7 +89,8 @@ close admission. Unknown/unhealthy listeners are never force-killed.
   (`id`/`cwd`/`cols`/`rows`/`initialCommand`/`projectPath`) and hand the socket to
   `attachTerminal`. Disallowed browser `Origin`s (CSWSH defence — this handler
   runs `initialCommand` on a fresh pty) and non-matching upgrade paths are
-  destroyed before the upgrade.
+  destroyed before the upgrade. A target `new URL()` rejects is refused, never
+  thrown on — a throw there exits the executor and every live pty with it.
 - `shutdown.ts` — `createTerminalShutdown()` (idempotent: kill every session, wait
   ~500 ms for `taskkill /T` to walk the tree, then `process.exit(0)`) +
   `wireTerminalShutdownSignals` (SIGTERM/SIGINT).

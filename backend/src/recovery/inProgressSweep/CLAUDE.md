@@ -1,7 +1,8 @@
 # In-progress recovery sweep
 
 Periodic recovery for `in_progress` tasks whose PTY is dead and whose branch
-has commits, covering missed completion callbacks. The stable public facade
+has commits, covering missed completion callbacks (Pi's extension and the
+explicit `/complete` curl are best-effort). The stable public facade
 is [../inProgressSweep.ts](../inProgressSweep.ts); preserve its exports.
 See the [parent recovery guide](../CLAUDE.md) for the boot pipeline.
 
@@ -19,8 +20,9 @@ See the [parent recovery guide](../CLAUDE.md) for the boot pipeline.
 ## Pass and eligibility
 
 - The first tick waits one full interval; starting the loop is idempotent and
-  the timer is unref'd. `runInProgressSweepTick` skips overlapping ticks and
-  releases its guard even if a pass throws.
+  the timer is unref'd. `runInProgressSweepTick` skips overlapping ticks (a
+  pass is one git spawn per candidate, so a big board or wedged git would
+  stack passes) and releases its guard even if a pass throws.
 - Reuse one authoritative live-session snapshot from
   [../liveSessions.ts](../liveSessions.ts) for the pass. `null` means the
   detached executor is unreachable or unprobeable: skip the whole pass and
@@ -38,7 +40,9 @@ See the [parent recovery guide](../CLAUDE.md) for the boot pipeline.
   (`NO_COMMITS_BACKOFF_MS`). During backoff it skips probing and warning;
   repeated no-commit probes keep the warning quiet. Other evaluated verdicts
   clear that entry, and each finished pass prunes keys to current candidate
-  task/branch pairs. The cache does not automatically resume tasks.
+  task/branch pairs. The cache does not automatically resume tasks. (That
+  state can't change until the user resumes the task; re-probing it every
+  minute cost a git spawn + a log line per stuck task per pass.)
 - `too-young` and `session-live` are silent, uncounted skips. Other eligibility
   skips are accounted for; no-commit skips remain counted during backoff.
 

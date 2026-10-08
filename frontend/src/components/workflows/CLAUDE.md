@@ -1,108 +1,166 @@
 # workflows
 
-Components behind the Workflows button. `Workflows.tsx` (parent dir) is a re-export shim.
+Components behind the Workflows button. `Workflows.tsx` (parent dir) is a
+re-export shim. State and actions live in [hooks/](hooks/CLAUDE.md) (panels
+import only `useWorkflowManager`); quick-add prompt bodies and their lockstep
+rules in [prompts/](prompts/CLAUDE.md). Backend run execution, step briefs and
+`{{var}}` substitution: `backend/src/workflowRuns/`, `backend/src/workflows/`.
 
 ## Modules
 
-- `WorkflowsLauncher.tsx` — top-level shell. Owns panel visibility and composes the saved-list, editor, queue, and runs sub-panels.
-- `WorkflowsSavedList.tsx` — saved workflow list, template picker, and the map over `WorkflowsSavedItem` rows.
-- `WorkflowsSavedItem.tsx` — one saved workflow row: select/edit, run/queue buttons, and the per-run harness+model override `<select>` (`serializeWorkflowRunOverride`/`parseWorkflowRunOverride`; the option list — "Default" + harness rows + "Pi — X" — is built once by `WorkflowsSavedList` via `workflowRunOverrideOptions`).
+Shell and panels:
+- `WorkflowsLauncher.tsx` — top-level shell: panel visibility, composes
+  saved-list / editor / queue / runs panels; owns the panel-close unsaved guard.
+- `WorkflowsSavedList.tsx` / `WorkflowsSavedItem.tsx` — saved list + template
+  picker; one row with select/edit, run/queue and the per-run harness+model
+  override `<select>` (options built once by the list).
 - `WorkflowEditorEmptyState.tsx` — empty editor quick-start pane.
-- `WorkflowEditorPanel.tsx` — populated editor body: the structural shell wiring the name input, run strip, variables, step rows, quick-add bar, and action footer. Renders `WorkflowVariablesPanel` above the steps and passes each step the set of defined variable names for prompt highlighting. The two large inline JSX clusters are extracted into `WorkflowQuickAddBar`/`WorkflowEditorActions` (below).
-- `WorkflowQuickAddBar.tsx` — the bottom "Quick add" chip bar: the Start/Merge/Run tests/Push step chips (Run tests adds a `kind: 'test'` step through the same `addControlStep`) plus one chip per project-tailored default prompt (`promptsWithProjectVariants(DEFAULT_PROMPTS, projectProfile)`, memoized per profile). Each click appends a step via `onAddControlStep`/`onAddDefaultPromptStep`. A `DefaultPrompt` may carry `tools` (the "Opengrep" chip: `['opengrep']`), which `makeAgentStep` copies onto the new step so it lands as an Opengrep step (read-only shield badge) — Lattice then scans the project before that step's agent starts.
-- `WorkflowEditorActions.tsx` — the editor action footer (Delete / Discard / Save-or-Create / Queue / Run-or-Stop) with the blocked-reason tooltips that name a disabled button's unblock condition. Fed only the booleans + handlers it needs.
-- `WorkflowVariablesPanel.tsx` — the collapsible "Variables" section at the top of the editor: the built-in `user_instructions` box (always present, can't be renamed/removed) plus user-added custom variables. An info popover explains `{{name}}` injection. Step prompts reference variables as `{{name}}`; the backend substitutes them at run time (`renderStepMarkdown` → `interpolateWorkflowVariables`). The panel is just the head + duplicate-name detection + the map; UI state and each row are extracted (below).
-- `useWorkflowVariablesPanelState.ts` — the panel's UI-only state hook: per-card collapse set (`isCollapsed`/`toggle`), the info-popover `showInfo` toggle, and the transient "Copied!" flag (`copiedId`/`copyToken`, with the ref-held reset timer). Token-copy only flips to "Copied!" once `copyVariableToken` actually lands.
-- `WorkflowVariableCard.tsx` — one variable row/card: name input (read-only for built-in `user_instructions`), `{{token}}` copy button, remove button (hidden for built-in), and the value textarea. `duplicate`/`collapsed`/`copied` are derived by the parent panel and passed in; name edits go through `sanitizeVariableNameInput`.
-- `promptVariables.ts` — shared frontend helpers mirroring the backend grammar: `USER_INSTRUCTIONS_VAR`, `VAR_TOKEN_RE`, name sanitization, `defaultVariables`/`ensureUserInstructions`, `withUserInstructions` (appends `{{user_instructions}}` to built-in template/quick-add prompts), and `splitPromptSegments` (drives the `{{var}}` highlight overlay in `StepRow`).
-- `QueuePanel.tsx` — queue controls (Start/Stop/Clear), status, and queued workflow list. The queue is sequential only: a project runs one workflow at a time.
-- `WorkflowRunsAside.tsx` — right rail wrapper with active/recent run cards.
-- `WorkflowRunChip.tsx` / `WorkflowRecentFailureChip.tsx` — compact active and recent-failure run rows rendered by the aside.
-- `hooks/` — the feature's private React hooks (saved-list / editor / run / queue state + intent-level actions), all composed by `useWorkflowManager` — the only one the panels import. See `hooks/CLAUDE.md`.
-- `StepRow.tsx` — thin dispatcher for one editor row: an `agent` step renders `AgentStepRow`, a `test` (Run tests) step renders `TestStepRow`, a `start`/`merge`/`push` control step renders `ControlStepRow`. `React.memo` keeps a keystroke in one step from re-rendering its siblings. Re-exports the drag/drop MIME `application/x-lattice-workflow-step` and `PROMPT_MIN_HEIGHT_PX` from `StepRowHooks`. The whole family takes an optional `runStatus` prop (`StepRunStatus`, from `stepRunStatus.ts`) so a live run turns the editor into an execution view, with the `#N` badge (`StepIndexBadge`) swapped for a per-status glyph. All seven values: `running` — spinner, accent left rail; `done` — check; `error` — alert glyph, red left rail; `queued` (queued or preparing, i.e. spawning or an active parallel member not yet spawned) — clock; `cancelled` (stopped by a cancelled run) — square, row dimmed; `skipped` — snowflake, which also covers frozen steps (the captured `skipped` phase is how a run records a step frozen at its start; legacy runs use the row's `frozen` flag); `pending` — the dimmed `#N`, row dimmed. The running row auto-scrolls into view (an agent row also when queued). A new status needs a glyph and title in `StepRowShared.tsx` plus its `run-*` rules in `styles/workflows/steps.css`.
-- `AgentStepRow.tsx` — the full agent-step shell: draggable container + grip + scroll-into-view-when-running, composing `AgentStepHeader` and `PromptHighlightTextarea`. Memoized.
-- `AgentStepHeader.tsx` — the agent step's top row (collapse toggle, status badge, title input, harness select, customize/remove actions) plus the `StepHarnessSelect` (per-step harness select that expands to "Pi — X" rows via `buildHarnessOptions` over `piMenu`, setting both `step.harness` and `step.piModel`). Memoized on the specific header fields (not the whole `step`) so prompt edits don't re-render it.
-- `PromptHighlightTextarea.tsx` — the agent step's prompt editor: the transparent textarea over the `{{variable}}`-highlighting overlay (`splitPromptSegments`). Owns its textarea ref + autosize; memoized on the prompt-only props so title/harness edits don't re-tokenize the prompt (the per-row hot path). Stays mounted across collapse, rendering nothing while collapsed.
-- `ControlStepRow.tsx` — the compact control-step row (start/merge/push): title + info tooltip via `CONTROL_STEP_META` (keyed by `ControlStepKind` = every kind but `agent`/`test`); no prompt or harness, but still reorders/removes. The Push hint says it pushes existing commits only (the workflow Push brief never stages or commits — unlike the Task Board cloud icon). Memoized.
-- `TestStepRow.tsx` — the Run tests (`test`) row: compact like a control row (no prompt; the backend brief `RUN_TESTS.md` is fixed) but it spawns an agent, so it keeps the `StepHarnessSelect` (exported from `AgentStepHeader`) and adds a `timeoutMinutes` number input (blank = 60; raw while typing, clamped to 5–720 on blur) and the hint "Usually right before Push…". When the project has a post-merge hook prompt (`hooks/usePostMergeHookConfigured`, one settings read per project) it adds a note that the two may run the tests twice. Not in any built-in template — the user adds it.
-- `StepRowShared.tsx` — bits shared across the row family: the `StepIndexBadge` (the `#N` badge / run-status glyph), the `StepFreezeButton` (the snowflake toggle, latching blue when `step.frozen`), the `StepOpengrepBadge` (a read-only green shield on an AGENT step whose `step.tools` includes `opengrep`, i.e. one seeded by the "Opengrep" chip/template — the backend runs an Opengrep scan before that step's harness spawns and drops `OPENGREP_FINDINGS.md` beside the brief; needs Opengrep installed in Settings → Tools, else the brief just says the scan could not run. Deliberately not a toggle: the scan belongs to the Opengrep step), and the `StepRowCallbacks` type (the id/index-parameterized handlers the parent hands down once each).
-- `StepRowHooks.ts` — colocated StepRow internals for drag/drop state, prompt textarea autosizing (`PROMPT_MIN_HEIGHT_PX`), and `useScrollRunningIntoView` (scrolls a row into view the moment it becomes the running step).
-- `stepRunStatus.ts` — pure row-status mapping. New runs resolve captured
-  member state by stable step ID, including queued/cancelled states, so editor
-  reordering and freeze edits do not change live statuses. Legacy records use
-  `currentStepIndex` and the row's frozen flag. Unit-tested in
-  `stepRunStatus.test.ts` and `workflowParallelSteps.test.ts`.
-- `parallelSteps.ts` — authored adjacency groups for the editor connector and
-  member-aware progress counts shared by the run strip, chips and saved list.
-- `WorkflowRunStrip.tsx` — progress / summary strip above the editor name input. Below it, one collapsed "Run tests summary · step N" disclosure per `run.stepSummaries` entry (the Run tests step's TEST_SUMMARY.md + Lattice's notes — skipped / timed out / could not start — + the commits it made), for the active run's finished steps and for a finished run (`runTestsSummaries`, unit-tested in `src/__tests__/runTestsStep.test.ts`). `CONTROL_KIND_LABEL` labels the Run tests pre-spawn progress ("checking whether anything was merged…", "waiting for the project to be free…").
-- `editorState.ts` — `EditorState` type + the `emptyEditor`/`fromTemplate`/`fromWorkflow` converters, `makeAgentStep`/`makeControlStep`/`localStepId` step factories (`makeAgentStep` takes an optional `id` so an add action can mint it outside the `setEditor` updater), `collapsibleStepIds` (the agent-step ids of a step list — control rows have no collapse toggle), and `nextEditorAfterSave` (reseeds from the server echo only when no edit landed mid-save, so an in-flight edit isn't silently overwritten; a superseded create adopts the created id only within the same editor lifetime, staying dirty, so the next save PATCHes instead of POSTing a duplicate). Editor keeps a `dirty` flag so unsaved changes show "Discard"/"Save", plus an in-memory `identity` symbol retained by edits and renewed by replacements/restores.
-- `unsavedSwitch.ts` — `guardUnsavedSwitch`, the gate before anything REPLACES the editor's contents: when `dirty`, asks Save / Discard / Cancel via the shared `ConfirmDialog` (`confirmUnsaved`); a failed save resolves `null` and aborts the switch (error already toasted). Mirrors `WorkflowsLauncher`'s panel-close guard. Callers: `hooks/useWorkflowManager`'s `selectWorkflow` (skipped when re-selecting the workflow already open) and `newBlank`/`newFromTemplate`. The optional `isCurrent` check rejects stale confirmations and saves before they can act on a replacement editor or project. **Any new action that swaps the editor's workflow must go through this gate**, or unsaved edits are silently lost. Unit-tested in `src/__tests__/workflowUnsavedSwitch.test.ts`; manager wiring and delayed mutation regressions are in `src/__tests__/workflowEditorLifetime.test.ts`.
-- `queueScheduler.ts` — the pure, React-free workflow-queue state machine (`reduceQueue`/`step`/`pendingStarts`): one-at-a-time dispatch, deferred 409 retries (`dispatchRejected` → `retryReady`), and bounded pre-finished-run records carrying terminal status (a completion WS beating the `/run` response). A queue-owned error/cancellation stops progression regardless of attachment order. Unit-tested (`src/__tests__/`); the React adapter is `hooks/useWorkflowQueue`.
-- `hooks/startOutcomeActions.ts` — pure halves of `hooks/useWorkflowQueue`: `queueActionsForStartOutcome` (a /run `StartOutcome` → ordered queue actions) and `classifyVanishedRuns` (runs gone from `activeRuns` → report now vs. resolve via `vanishedRunResolver`).
-- `workflowHarnessOverride.ts` — the run-override `<select>` model: `serializeWorkflowRunOverride`/`parseWorkflowRunOverride` (reusing the shared `pi:<provider/model>` encoding), `workflowRunOverrideOptions` (the "Default" + harness + "Pi — X" list, via `buildHarnessOptions`), and `workflowRunOverrideLabel`. A `WorkflowRunHarnessOverride` is never `interleave`; a Pi model is kept only when the harness is `pi`.
-- `workflowDraftStorage.ts` — localStorage load/save/clear for a never-saved editor draft, keyed `lattice.workflowEditorDraft.<project>`. Only restores a draft with real content and `workflowId === null` (saved workflows reload from the server).
-- `workflowDraftPersist.ts` — pure decision helpers (`reconcileDraftPersist`/`draftForFolder`) for the draft lifecycle; guards a draft authored under one project from being stamped onto another's storage key across a project switch. Consumed by `hooks/useEditorDraftLifecycle`.
-- `defaultPrompts.ts` + `prompts/*.md` — quick-add prompt metadata and raw markdown prompt assets. Keep existing raw prompt bytes stable when moving/editing prompt bodies. Every body must be **planner-only** (file tasks, never implement/commit), and rewording one also requires a `legacy`/`current` update in `backend/src/workflows/defaultPromptMigrations.ts` so saved workflows pick it up — see `prompts/CLAUDE.md`.
-- `projectPromptVariants.ts` — thin facade re-exporting `projectStackDetection.ts` + `promptTemplates.ts` so importers have one entry point. Project-stack heuristics and project-aware variants for the refactor / bug-catcher prompt templates only.
-- `projectStackDetection.ts` — stack detection/profiling: framework signals, the `PROJECT_STACKS` table, and `detectProjectPromptProfile` (which stacks a scan matches + the guidance that follows).
-- `promptTemplates.ts` — prompt-template matching + project-variant generation: `PROMPT_TEMPLATE_METADATA`, `inferPromptTemplateId`/`promptTemplateTitle`, and `promptWithProjectVariant`/`promptsWithProjectVariants`.
+- `WorkflowEditorPanel.tsx` — populated editor shell: name input, run strip,
+  variables, step rows, quick-add bar, action footer.
+- `WorkflowQuickAddBar.tsx` — Start / Merge / Run tests / Push chips plus one
+  chip per project-tailored default prompt; drag-and-drop in
+  `useQuickAddDragDrop.ts`.
+- `WorkflowEditorActions.tsx` — footer (Delete / Discard / Save-or-Create / Queue
+  / Run-or-Stop) with tooltips naming each disabled button's unblock condition.
+- `WorkflowVariablesPanel.tsx` + `WorkflowVariableCard.tsx` +
+  `useWorkflowVariablesPanelState.ts` — Variables section: built-in
+  `user_instructions` (can't be renamed/removed) + custom variables, duplicate
+  detection, `{{token}}` copy ("Copied!" only once `copyVariableToken`
+  resolves `true`).
+- `QueuePanel.tsx` — queue Start / Stop / Clear, status, entries.
+- `WorkflowRunsAside.tsx`, `WorkflowRunChip.tsx`,
+  `WorkflowRecentFailureChip.tsx` — right rail of active / recent-failure runs.
+- `WorkflowRunStrip.tsx` — progress strip above the name input, plus one
+  collapsed "Run tests summary · step N" disclosure per `run.stepSummaries`
+  entry (`runTestsSummaries`); `CONTROL_KIND_LABEL` labels pre-spawn progress.
 
-## Styles
+Step rows (all `React.memo`; optional `runStatus` turns the editor into an
+execution view):
+- `StepRow.tsx` — dispatcher: `agent` → `AgentStepRow`, `test` → `TestStepRow`,
+  `start`/`merge`/`push` → `ControlStepRow`. Re-exports the row drag MIME and
+  `PROMPT_MIN_HEIGHT_PX` from `StepRowHooks.ts` (drag state, autosize,
+  `useScrollRunningIntoView`).
+- `AgentStepRow.tsx` → `AgentStepHeader.tsx` (collapse, badge, title,
+  `StepHarnessSelect` — "Pi — X" rows via `buildHarnessOptions`, sets
+  `harness` + `piModel` — freeze / parallel / customize / remove; memoized on
+  its specific fields) + `PromptHighlightTextarea.tsx` (textarea over the
+  `{{var}}` overlay; memoized on prompt-only props — the per-row hot path; stays
+  mounted across collapse, rendering nothing).
+- `ControlStepRow.tsx` — compact start/merge/push row via `CONTROL_STEP_META`.
+- `TestStepRow.tsx` — Run tests row: no prompt (backend brief `RUN_TESTS.md` is
+  fixed), harness select, `timeoutMinutes`, post-merge-hook note.
+- `StepRowShared.tsx` — `StepIndexBadge` (`#N` / status glyph),
+  `StepFreezeButton`, `StepOpengrepBadge`, `StepRowCallbacks`.
+- `stepRunStatus.ts` — pure row-status mapping; `parallelSteps.ts` — authored
+  adjacency groups for the connector + member-aware progress counts shared by
+  strip, chips and saved list.
 
-Workflow CSS is split under `frontend/src/styles/workflows/`; `styles/workflows.css` is the ordered aggregator importing, in this order, `shell`, `list`, `templates`, `editor-shell`, `runs-shell`, `queue`, `runs`, `editor-empty`, `editor`, `variables`, `steps`, `actions`, and `chips`, each with a comment. The order is the cascade, so add a new partial at its intended spot and update this list.
+Editor model and helpers:
+- `editorState.ts` — `EditorState`, `emptyEditor` / `fromTemplate` /
+  `fromWorkflow`, step factories, `collapsibleStepIds` (agent ids only),
+  `nextEditorAfterSave`; editor carries `dirty` and an in-memory `identity`
+  symbol.
+- `unsavedSwitch.ts` — `guardUnsavedSwitch` (Save / Discard / Cancel via
+  `confirmUnsaved`; a failed save resolves `null` and aborts).
+- `workflowDraftStorage.ts` / `workflowDraftPersist.ts` — never-saved draft in
+  `lattice.workflowEditorDraft.<project>`; pure persist decisions for
+  `hooks/useEditorDraftLifecycle`.
+- `promptVariables.ts` — wraps the backend's variable grammar
+  (`backend/src/shared/workflowVariables.ts`): `VAR_TOKEN_RE`,
+  `USER_INSTRUCTIONS_VAR`, input sanitization, `withUserInstructions`,
+  `splitPromptSegments` (highlight overlay).
+- `queueScheduler.ts` — pure queue state machine (`reduceQueue` / `step` /
+  `pendingStarts`); React adapter `hooks/useWorkflowQueue`.
+- `workflowHarnessOverride.ts` — run-override `<select>` model over the shared
+  `pi:<provider/model>` encoding (`harnesses.ts`).
+- `defaultPrompts.ts`, `promptTemplates.ts`, `projectStackDetection.ts`,
+  `projectPromptVariants.ts` → [prompts/CLAUDE.md](prompts/CLAUDE.md).
+
+## Invariants
+
+- **Every action that replaces the editor's contents goes through
+  `guardUnsavedSwitch`** (manager's `selectWorkflow` — skipped on re-select —
+  `newBlank`, `newFromTemplate`), else unsaved edits are silently lost. Its
+  `isCurrent` check rejects stale confirmations/saves before they touch a
+  replacement editor or project.
+- `nextEditorAfterSave` reseeds from the server echo only when no edit landed
+  mid-save; a superseded create adopts the new id only within the same editor
+  lifetime and stays dirty, so the next save PATCHes instead of POSTing a
+  duplicate. Edits keep the editor `identity`; replacements/restores renew it.
+- Draft storage restores only a draft with real content and `workflowId ===
+  null` (saved workflows reload from the server), and never stamps one
+  project's draft onto another's key across a switch.
+- Variable grammar comes from `backend/src/shared/` — never hand-copy the regex
+  or name rules, or the highlight drifts from what the server substitutes.
+- A run override is never `interleave`; a Pi model is kept only when the harness
+  is `pi`. `null` = each step uses its stored harness/model.
+- `queueScheduler`: one workflow at a time per project; deferred 409 retries
+  (`dispatchRejected` → `retryReady`); bounded pre-finished-run records keep a
+  completion WS that beat the `/run` response, with its terminal status; a
+  queue-owned error/cancellation stops progression regardless of arrival order.
+- `stepRunStatus`: new runs resolve captured member state by **stable step id**
+  so reordering / freezing in the editor can't change live statuses; legacy
+  records use `currentStepIndex` + the row's `frozen` flag. Statuses: `running`
+  (auto-scrolls; an agent row also when `queued`), `done`, `error`, `queued` (queued / preparing / unspawned
+  parallel member), `cancelled`, `skipped` (also frozen-at-start), `pending`. A
+  new status needs a glyph + title in `StepRowShared.tsx` and `run-*` rules in
+  `styles/workflows/steps.css`.
+- Push hint: the workflow Push pushes existing commits only — its brief never
+  stages or commits (unlike the Task Board cloud icon).
+- Run tests: timeout blank = 60 min, clamped to the backend range on **blur**,
+  not per keystroke; it's in no built-in template (the user adds it).
+- `StepOpengrepBadge` is read-only on purpose — the scan belongs to the
+  Opengrep step; no per-step toggle. Needs Opengrep installed (Settings →
+  Tools), else the brief says the scan couldn't run.
 
 ## Run flow
 
-1. `runWorkflow(wf)` saves first if `editor.dirty`, then `apiStartWorkflow(wf.id, { harnessOverride, piModelOverride })`. A `null` harness override means each step uses its stored harness/model. A project runs **one workflow at a time**: the backend 409s a start while another run is active, so a ▶ Run click (editor or saved list) with a run already going — known from `activeRuns`, or learned from the 409 — adds the workflow to the queue instead and toasts "Queued behind <name>" (`hooks/useWorkflowManualRun`).
-2. Backend creates the run, materializes the first step's directory, and returns `{run}`. `useWorkflowRuns` stashes the run in `activeRuns`.
-3. Per step, the backend emits a `step-spawned` event on `/ws/workflow-runs` with `{stepIndex, cwd, command, serverId}`. `useWorkflowRuns` turns each one into an `addTerminal({...})` call so the step opens as a terminal tab in that step's working directory.
-4. Adjacent marked planning steps emit independent `step-spawned` events as
-   the spawn queue admits them. The next group starts after every member
-   finishes. Workflow steps use individual scratch directories, not task-board
-   worktrees. Only the first active member auto-scrolls to avoid competing scrolls.
+1. `runWorkflow` saves first if dirty, then `startWorkflow(id, { harnessOverride,
+   piModelOverride })`. One workflow runs per project: the backend 409s a second
+   start, so ▶ Run with a run active (known from `activeRuns` or the 409) queues
+   it and toasts "Queued behind <name>" (`hooks/useWorkflowManualRun`).
+2. Each `step-spawned` on `/ws/workflow-runs` becomes an unfocused
+   `addTerminal` in that step's scratch directory (not a task worktree).
+3. Adjacent parallel members spawn independently as the spawn queue admits
+   them; the next group starts when every member finishes. Only the first
+   active member auto-scrolls.
 
 ## Freezing steps
 
-Every step row (agent and control alike) carries a snowflake toggle that sets
-`WorkflowStep.frozen`. A frozen step keeps its place, title and prompt but is
-**skipped when the workflow runs** — the backend's `nextStepGroup`
-(`backend/src/workflowRuns/execution.ts`) walks past it at both run start and
-step advance, so `currentStepIndex` jumps over frozen rows while `totalSteps`
-still counts them. It's the one-click alternative to deleting a step and
-retyping its prompt later.
-
-UI consequences to keep in sync: the row has an icy gradient surface,
-crystalline edge texture and left rail, with lightly muted contents
-(`.workflows-step.frozen`, `--freeze*` tokens in `styles/tokens.css`), its badge
-becomes a snowflake during a run (`stepRunStatus` → `skipped`), the saved-list
-row shows an "N frozen" meta chip, and Run/Queue are disabled with an
-"Every step is frozen" reason when nothing runnable is left — the backend
-refuses an all-frozen run anyway, so the disable is just the earlier, nicer
-half of the same rule.
+The snowflake sets `WorkflowStep.frozen`: the step keeps its place and prompt
+but is **skipped at run time** — backend `nextStepGroup`
+(`backend/src/workflowRuns/execution.ts`) walks past it, so `currentStepIndex`
+jumps over frozen rows while `totalSteps` still counts them. Keep in sync: frost
+styling (`.workflows-step.frozen`, `--freeze*` tokens), snowflake badge during a
+run, the saved list's "N frozen" chip, and Run/Queue disabled with "Every step
+is frozen" (the backend refuses an all-frozen run anyway). Frost overlays are
+`pointer-events: none` so frozen rows stay editable and accept drops.
 
 ## Quick-add drag and drop
 
-Quick-add chips keep their click-to-append behavior and can also be dragged
-before, between or after steps. `useQuickAddDragDrop.ts` owns the separate
-`application/x-lattice-workflow-quick-add` copy payload and the list's insertion
-marker. It uses row midpoints to include the gaps and Add step area, recomputes
-the index on drop, and clears the marker on leave/drop/dragend. Prompt payloads
-carry only an id; the panel resolves the project-tailored prompt and calls the
-same add action as a click, with an optional insertion index. Row dragging
-still uses the existing move MIME and reorder action. Frost overlays use
-`pointer-events: none` so frozen rows remain editable and accept drops.
+Chips keep click-to-append and can also be dropped before/between/after steps.
+`useQuickAddDragDrop.ts` owns its own `application/x-lattice-workflow-quick-add`
+copy payload (row reorder keeps the separate step MIME): insertion index from
+row midpoints (covering gaps and the Add-step area), recomputed on drop, marker
+cleared on leave/drop/dragend. Payloads carry only an id; the panel resolves the
+project-tailored prompt and calls the **same add action as a click**, with an
+optional insertion index.
 
 ## Parallel reviews
 
-Agent headers have a branching toggle beside Freeze (`parallel: true`), with
-`aria-pressed` and an explanation that the workflow waits for the whole group.
-Start/Merge/Run tests/Push have no parallel toggle. Adjacent marked agent rows
-share a violet vertical connector and group label (`--workflow-parallel*` in
-`styles/tokens.css`, rules in `styles/workflows/steps.css`). Isolated marked
-steps retain their toggle but have no connector. Frozen marked rows remain in
-the authored group with a dimmed connector; frozen unmarked rows and action
-steps separate groups. Reordering/toggling derives the connector immediately.
+Agent rows only (not Start / Merge / Run tests / Push) have a branching toggle
+(`parallel: true`, `aria-pressed`). Adjacent marked rows share a connector and
+label (`--workflow-parallel*` tokens); an isolated marked row has none. Frozen
+marked rows stay in their group (dimmed connector); frozen unmarked rows and
+action steps split groups. Live progress counts completed runnable members, not
+the anchor index; a sibling's pre-run tool progress is retained until that
+member spawns or completes.
 
-Live progress counts completed runnable members rather than the anchor index.
-Parallel strips show running/queued/completed counts, and sibling pre-run tool
-progress is retained until that particular member spawns or completes.
+## Styles
+
+`styles/workflows.css` is the ordered aggregator of `styles/workflows/*`
+partials; the order is the cascade, so add a partial at its intended spot.
+
+Tests: named after the module in `frontend/src/__tests__/`; editor-lifetime
+regressions are in `workflowEditorLifetime.test.ts`, Run tests summaries in
+`runTestsStep.test.ts`.

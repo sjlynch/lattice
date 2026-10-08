@@ -2,351 +2,170 @@
 
 Opengrep (the LGPL-2.1 community fork of Semgrep CE — a local, offline SAST
 engine) as a Lattice **tool**: installed at the user's click, run as a child
-process, and its findings handed to agents as a size-bounded markdown
-**digest**. v1 surfaces it in two places: a workflow agent step with the
-`opengrep` tool ticked (the scan runs before the harness spawns and the digest
-lands beside `WORKFLOW_STEP.md`), and the `opengrep_scan` /
-`opengrep_findings` MCP tools + `/api/opengrep/*` routes for any session.
-The graph's Security chip also starts an explicit scan and colors files from
-its stored results. It never scans on graph load, file changes or a timer.
-QA-lane baseline diffs remain unimplemented.
+process, its findings handed to agents as a size-bounded markdown **digest**
+(never raw JSON). Facade: `../opengrep.ts`. Owned elsewhere: MCP tools
+(`../latticeMcp/CLAUDE.md`), routes (`../routes/ROUTES.md`), Settings → Tools
+(`frontend/src/components/settings/tools/CLAUDE.md`), the graph Security chip
+(`useSecurityOverlay`, `frontend/src/components/forceGraph/hooks/CLAUDE.md`).
 
 ## Licence boundary (read before adding anything here)
 
-Lattice is MIT. The engine is LGPL-2.1; the default rule pack is MIT; the
-optional broad pack is LGPL-2.1 + Commons Clause. Lattice's licence is
-unaffected because of two rules, both enforced:
+Lattice is MIT; the engine is LGPL-2.1; pack `qodana-mit` is MIT; pack
+`opengrep-archived` is LGPL-2.1 + Commons Clause. Two enforced rules keep
+Lattice's licence unaffected:
 
-1. **No third-party binary or rule file is ever committed to this repository
-   or bundled into a Lattice package.** The repo holds URLs, a pinned version,
-   pinned commits and SHA-256 digests (`versions.ts`) — nothing else. Every
-   download lands under `~/.lattice/opengrep/` on the user's machine, at the
-   user's explicit click. Pinned by `__tests__/opengrepNoVendoredAssets.test.ts`,
-   which walks `git ls-files`.
-2. **Opengrep runs only as a separate process** (`spawnWithTimeout`), talking
-   JSON over a file. It is never linked, loaded in-process or modified.
+1. **No third-party binary or rule file is ever committed or bundled into a
+   Lattice package.** The repo holds only URLs, a pinned version, pinned
+   commits and SHA-256 digests (`versions.ts`); every download lands under
+   `~/.lattice/opengrep/` at the user's explicit click. Pinned by
+   `__tests__/opengrepNoVendoredAssets.test.ts` (walks `git ls-files`).
+   Lattice-authored (MIT) rules may live in the repo; third-party ones may not.
+2. **Opengrep runs only as a separate process** (`spawnWithTimeout`, JSON over
+   a file) — never linked, loaded in-process or modified. Process separation
+   isn't a derivative work, and LGPL duties fall on the distributor (GitHub
+   releases). **Never ship an installer bundling `opengrep.exe`** (Lattice would
+   then owe LGPL licence text + a source pointer).
 
-Process separation is not a derivative work under the LGPL, and the LGPL's
-distribution obligations attach to whoever distributes the engine — GitHub's
-release page, not Lattice. The Commons Clause on the archived pack forbids
-*selling* a product whose value derives substantially from those rules; it
-constrains a hosted-Lattice-as-a-service offering's use of that pack, not the
-Lattice source. The pack is therefore USED as soon as it is installed
-(`defaultEnabled: true` — it is the only pack with real TypeScript/Node/Express
-coverage), while the DOWNLOAD stays an explicit click with the licence named
-on the Settings row and a confirmation that spells out the no-resale condition.
-Flipping the default changed nothing about Lattice's own licence; what must
-never change is the "nothing is fetched without a click, nothing is
-committed" pair. Lattice-authored rules (MIT) may live in the repo; third-party
-ones may not. What would change the answer: shipping an installer that bundles
-`opengrep.exe` (then Lattice distributes an LGPL work and must carry its
-licence text + a source pointer) — keep it a runtime download.
+The Commons Clause bars *selling* a product whose value derives substantially
+from those rules (a hosted-Lattice concern, not the source). So
+`opengrep-archived` is `defaultEnabled: true` once installed (the only real
+TypeScript/Node/Express coverage) while its DOWNLOAD stays a click with the
+licence named on the Settings row and a no-resale confirmation. Never change:
+nothing fetched without a click, nothing committed.
 
-## Modules
+## Map
 
-- `versions.ts` — the pins. `OPENGREP_VERSION` + per-asset `{sha256, bytes}`
-  in a block that ONLY `scripts/opengrep-pin.mjs` writes: the script downloads
-  every release asset, verifies each Sigstore `.sig`/`.cert` with
-  `cosign verify-blob` against `OPENGREP_SIGNING_IDENTITY` (Opengrep's GitHub
-  Actions release workflow), and refuses to write digests it could not verify.
-  A user installing from the pins inherits that check without needing cosign.
-  Also `OPENGREP_RULE_PACKS`: `qodana-mit` (MIT subset, default ON, prunes
-  `jetbrains/` + `rules/lgpl/`) and `opengrep-archived` (the Dec-2024 Semgrep
-  community snapshot — the only real TypeScript/React/Node/Express coverage,
-  LGPL-2.1 + Commons Clause, used once installed; the install click is the
-  informed step). Each pinned by full commit.
-- `paths.ts` — `~/.lattice/opengrep/{bin/<version>/, downloads/, rules/<packId>/,
-  state.json}`, `~/.lattice/per-project/<hash>/opengrep/` for scans, and the
-  optional read-only `<project>/.opengrep/rules/`. Home-scoped, never inside
-  a project tree.
-- `state.ts` — `state.json`: installed binary (version/asset/digest) + per-pack
-  (commit, rule counts, licence). Atomic + serialized. Display/scan reads are
-  lenient (unreadable → empty); `updateOpengrepState` reads STRICTLY and refuses
-  to write over an unreadable file (it would drop `binary` + the other packs).
-- `platform.ts` — `pickOpengrepAsset({platform, arch, musl})`: the release
-  asset for this machine, chosen automatically (Windows ARM64 → the x64 build
-  under emulation, with a note; Linux musl via `/etc/alpine-release` or
-  `/lib/ld-musl-*`). The user never picks.
-- `detect.ts` — `resolveOpengrep()`: a PATH install always wins over the
-  managed one (a package-manager copy is never overridden); each candidate is
-  probed by running `--version`, which doubles as the antivirus-quarantine
-  check. Memoized; a miss is re-probed on the next call.
-- `install.ts` — `startOpengrepInstall()`: stream the asset to `downloads/`
-  while hashing → byte count vs pin → digest vs pin → atomic rename into
-  `bin/<version>/` → `--version` once (a vanished file reads as "your
-  antivirus quarantined it") → state.json. Single-flight job snapshot for the
-  Settings card — the pending start is cached SYNCHRONOUSLY, before the
-  `chooseAsset` await (file I/O on Linux), so two quick POSTs share one
-  download instead of racing `rm(target)` / `rename` and failing the loser's
-  `--version` with a bogus "quarantined" message. The verified `.part` is
-  removed when the mkdir / rename that should consume it throws (Windows
-  EPERM/EBUSY), and every OTHER `downloads/*.part` (a transfer a restart killed)
-  is swept when the next install starts. **Never at boot** — the user clicks
-  Install.
-- `rules.ts` — `installRulePack(id)`: `fetchPackCommit` → `prunePackTree`
-  (the helpers below) → swap into place → state.json. Keeps the public facade,
-  job snapshots and per-pack single-flight installs; re-exports the helpers
-  and shared `RulePackError` so existing imports keep working. The swap moves the
-  previous install aside first and puts it BACK if the new tree cannot be
-  renamed in, so an update can never leave the user with no pack; stale
-  `.tmp-<id>-*` / `.old-<id>-*` siblings from a killed install are swept at the
-  start of the next install of THE SAME pack (never another pack's: installs of
-  different packs may overlap). The swap + state
-  write run under `withRulesMutation` (see `rulesGate.ts`), waiting for running
-  scans first. In-flight installs are tracked per pack (`isRulePackInstalling`;
-  the DELETE route answers 409 `installing`), and `removeRulePack` — itself a
-  gated mutation that refuses (busy) while a scan runs — cancels a
-  still-running install of that pack, which then discards its tree instead of
-  swapping it in: a removal is never silently undone.
-- `rulePackFetch.ts` — `fetchPackCommit`: `git init` + `fetch --depth 1 origin
-  <commit>` + `checkout FETCH_HEAD`, then verifies HEAD matches the pin and
-  removes `.git`. Content-addressed (tarball bytes are not stable); invoked
-  only by a requested install. Git has a 5-minute timeout per command and
-  `GIT_TERMINAL_PROMPT=0` / `GCM_INTERACTIVE=never` so credential prompts fail fast.
-- `rulePackTree.ts` — `prunePackTree`: keep only `*.yaml`/`*.yml` with a
-  top-level `rules:` key, excluding `*.test.yaml`, plus root LICENSE/README;
-  drop the pack's `prune` folders, dot dirs, tests and scripts, counting files
-  and rule ids. `sweepStalePackDirs` removes only the same pack's `.tmp`/`.old`
-  siblings with a numeric suffix guard, preserving overlapping sibling installs.
-- `rulePackError.ts` — dependency-free `RulePackError`, shared by the fetch
-  helper and lifecycle facade without an import cycle.
-- `rulesGate.ts` — reader/writer exclusion between engine runs and rule-pack
-  tree mutations. A scan holds a read slot (`acquireRulesRead`, abortable) from
-  resolving its packs until its record is stored; a mutation
-  (`withRulesMutation`) blocks NEW reads at once, then waits for running ones to
-  drain (`wait: true`, the install swap, bounded by `RULES_MUTATION_WAIT_MS`)
-  or refuses with `OpengrepRulesBusyError` (`wait: false`, removal). Writer-
-  preferring and serialized, so a scan arriving mid-swap waits a moment rather
-  than reading half a pack, and the swap cannot starve. The routes' request-time
-  `isAnyOpengrepScanRunning()` check stays as the fast path only — it could
-  never cover an install whose swap lands minutes after its request, or scans
-  started by the workflow hook / MCP.
-- `scan.ts` — `runOpengrepScan()`: `opengrep scan --json --quiet --jobs N
-  --timeout 30 --timeout-threshold 3 --max-target-bytes 1000000 --exclude …
-  -f <pack> … -o <raw.json> <project>` with **cwd = the rules root** and packs
-  as RELATIVE ids. That is load-bearing: Opengrep derives a finding's
-  `check_id` from the config path relative to its cwd, and the FINGERPRINT
-  hashes the check_id — running from anywhere else would make ids and
-  fingerprints differ per machine. Gitignore is still honoured (verified: the
-  engine finds the project root from the target). `targets` are resolved
-  against the project and CONFINED to it (`resolveScanTargets` →
-  `OpengrepBadTargetError` for `../…` / an absolute path elsewhere — the
-  caller is scoped to one project and the stored record must be too). One
-  scan per project (`OpengrepScanBusyError`; `isAnyOpengrepScanRunning` is
-  what the pack routes consult; the rules read slot is what actually excludes
-  a swap), `--jobs = max(1, cores-2)`, hard wall-clock
-  timeout (kill), last 10 scans kept as `<id>.json` (engine output),
-  `<id>.snapshot.json` (complete merged findings/coverage), `<id>.cache.json`
-  (input identities/reusable paths) and `<id>.meta.json` (record). Metadata is
-  atomically promoted last, so incomplete snapshots never enter history.
-  Default `mode: full` always runs the engine; explicit `incremental` reuses
-  compatible unchanged files and selects changed files with include filters
-  against the original targets/cwd, preserving engine exclusion semantics.
-  No changed inputs skips the engine. Missing/unsupported caches, engine/rule/
-  context changes, or unrepresentable include patterns fall back to a full scan
-  with `record.update.reason`; update metadata reports analyzed/reused coverage.
-  Cancellable: a request `signal` or `abortOpengrepScan(project)` kills the
-  engine, stores nothing, rejects with `OpengrepScanAbortedError` and frees
-  the slot at once. A cancelled workflow run aborts through the request
-  `signal` (`workflowRuns/stepTools.ts`); `abortOpengrepScan` has no
-  production caller beyond its `index.ts` re-export; a `process` `exit`
-  handler aborts every running scan so a backend restart never leaves an
-  orphaned engine writing an unrecorded `-o` file.
-  `startOpengrepScan` returns the scan id synchronously (the id is minted
-  before the scan runs and is the stored record's id) plus the record promise;
-  `runOpengrepScan` is that promise. `opengrepScanRunState(project, id)` says
-  whether an id is still running or failed (the last 20 failures are kept in
-  memory with their error) — what the poll route reads.
-  Rules under `<project>/.opengrep/rules/` and `extraRulePaths` are passed as
-  ABSOLUTE `-f` paths, so their check ids (and fingerprints) embed the local
-  path — stable on one machine, not across machines; only the packs get the
-  machine-stable relative ids. `scan.ts` keeps the single-flight, execution and
-  error classes, and re-exports the two modules below so every `./scan.js`
-  import keeps working. `runningOpengrepScan(project)` returns the current scan's
-  id and start time for read-only reconnection through the project status payload.
-  `cancelOpengrepScan(project, id)` aborts only a matching running id and waits
-  for the engine to settle, so a stale chip cannot cancel a newer scan.
-- `scanArgs.ts` — what a scan runs with: `resolveScanTargets` (+
-  `OpengrepBadTargetError`), `defaultScanJobs` (`RESERVED_CORES`),
-  `resolveRuleConfigs`, `buildScanArgs` (the `PER_FILE_*` / `MAX_TARGET_BYTES`
-  engine limits), `defaultExcludeGlobs`.
-- `scanRecords.ts` — the stored scans: `OpengrepScanRecord`,
-  `listOpengrepScans` / `readOpengrepScan` / `latestOpengrepScan` and the
-  prune to `MAX_SCANS_PER_PROJECT`, over one shared `readAllMetas(dir)`.
-  Reads complete snapshots before legacy raw output; incremental records require
-  their snapshot. Corrupt/missing cache metadata disables reuse without hiding
-  saved findings. Pruning removes all sidecars.
-- `scanCache.ts` — SHA-256 content identities for candidate regular files up to
-  the engine's 1 MB limit, enabled rule contents, engine identity, scan scope,
-  exclusions, ignore/config context and Opengrep environment. Never follows
-  symlinks/reparse points. Path casing is preserved in CLI includes (comparison
-  keys are case-insensitive on Windows). Reuse is validated for independent-file
-  Opengrep 1.30.0 only; git index/ignore changes invalidate target selection.
-  External git config/ignore includes, linked/parent git directories and linked rules
-  conservatively disable it. Partial/error paths, skipped rules, global failures
-  and files edited during analysis cannot be reused as clean. Retain zero-finding
-  coverage only from engine `paths.scanned`; unvisited files stay unknown. Merge
-  replaces changed findings and drops deleted/renamed paths. Severity/ignore
-  presentation settings re-filter saved findings without invalidating analysis.
-- `digest.ts` — pure. `parseOpengrepJson` (project-relative forward-slash
-  paths, severity normalization, `PartialParsing` errors split out) →
-  `buildDigest` (severity floor + `ignoreRuleIds` (full id or dot-suffix) +
-  `ignoreFingerprints` (full or short) applied FIRST, dedup by fingerprint,
-  group rule → file → occurrence, worst severity first then count) →
-  `renderDigestMarkdown` (hard byte budget with per-group file/occurrence
-  caps; a "Scan caveats" section for partially-parsed files and engine
-  errors, rendered FIRST and reserved from the budget so it can never push the
-  digest over). Groups render worst-severity-first; a group that does not fit
-  whole is re-rendered TRIMMED (3 files × 2 occurrences + its own "… N more
-  files" pointer) before being cut, so a single huge ERROR rule is never
-  dropped while small INFO groups stay. The "Budget reached" tail names what
-  was trimmed and what was left out, plus the drill-down hint. The
-  **short fingerprint** (first 16 hex + `_N`) is what the digest prints and
-  what the built-in template asks agents to put in tasks as `opengrep:<fp>`;
-  every matcher accepts the full or short form, case-insensitively, with or
-  without the `opengrep:` prefix. `digest.ts` itself holds the filter/build
-  step and re-exports the two modules below, so callers import only it.
-- `parseOutput.ts` — pure parse step: `parseOpengrepJson`, the finding/error
-  types (including normalized `scannedPaths` for coverage), and the
-  `shortFingerprint` / `fingerprintMatches` / `ruleMatches` matchers.
-  Native `extra.is_ignored` suppressions remain in the raw inventory, with
-  `nativeIgnored`; digests and graph colors exclude them.
-- `graph.ts` — complete filtered per-file findings and highest severity,
-  structured finding objects, counts/filter metadata and coverage caveats,
-  independent of markdown caps. Visited files with no shown findings can be
-  green; partial parsing, file errors, skipped rules and engine failures keep
-  coverage uncertain. Unvisited files never appear clean.
-  `allFindings` also preserves deduplicated findings below the severity floor
-  and ignored/deferred findings for the viewer. Only open shown findings color
-  the graph; changing presentation policy never destroys scan evidence.
-- `renderDigest.ts` — pure markdown step: `renderDigestMarkdown` (header →
-  budgeted sections → tail) with its budget knobs as named constants.
-- `settings.ts` — `globalSettings.opengrep.packs` (per-pack enable, machine-
-  global because packs are installed once per machine) and
-  `userSettings.opengrep` (`extraRulePaths`, `excludeGlobs`, `severityFloor`
-  default WARNING, `ignoreRuleIds`, `ignoreFingerprints`, `digestBudgetKb`
-  default 60). Sanitized on READ; `effectiveOpengrepConfig` is the merge.
-- `service.ts` — the facade: `getOpengrepStatus`, `scanProjectWithDigest`,
-  `startProjectScanWithDigest` (the id at once + the digest result as `done`;
-  its caller MUST observe `done`, or a failing scan is an unhandled rejection),
-  `digestOfStoredScan` (with `rule` / `file` / `severity` / budget overrides
-  for drill-down), `graphOfStoredScan` (read-only, exact stored scan id or latest).
-  Graph reads hash current inputs to report current/changed/unknown freshness
-  and per-file `stale`; legacy records remain readable with unknown freshness.
-  Routes, MCP tools and the workflow pre-run hook call only
-  this.
+- `versions.ts` — `OPENGREP_VERSION`, per-asset `{sha256, bytes}`,
+  `OPENGREP_RULE_PACKS` (full-commit pins). The digest block is written ONLY by
+  `scripts/opengrep-pin.mjs` (repo root), which Sigstore-verifies every asset
+  (`cosign verify-blob` vs `OPENGREP_SIGNING_IDENTITY`) and refuses
+  unverified digests — never hand-edit.
+- `paths.ts` — engine/packs/state under `~/.lattice/opengrep/`, scans under
+  `per-project/<hash>/opengrep/`, optional read-only `<project>/.opengrep/rules/`.
+- `state.ts` — `state.json`. Display/scan reads are lenient;
+  `updateOpengrepState` reads strictly and never writes over an unreadable
+  file (it would drop `binary` + the other packs).
+- `platform.ts` / `detect.ts` — the asset is picked automatically (never by the
+  user); `resolveOpengrep()` prefers a PATH install (never override a
+  package-manager copy); the `--version` probe doubles as the
+  antivirus-quarantine check.
+- `install.ts` — stream + hash → size vs pin → digest vs pin → atomic rename →
+  `--version` → state. Single-flight, with the pending start cached
+  SYNCHRONOUSLY before the `chooseAsset` await (else two POSTs race
+  `rm`/`rename` and report a bogus quarantine). Leftover `.part` files are
+  removed/swept. **Never at boot.**
+- `rules.ts` — pack install/remove facade (`fetchPackCommit` → `prunePackTree`
+  → swap → state, under `withRulesMutation`). The swap puts the old install
+  BACK if the new tree can't be renamed in. Per-pack single-flight (DELETE
+  mid-install → 409 `installing`); removal cancels that pack's running install,
+  which discards its tree — a removal is never silently undone.
+- `rulePackFetch.ts` — shallow fetch of the pinned commit, verify HEAD == pin,
+  drop `.git` (content-addressed: tarball bytes aren't stable). Git runs with a
+  timeout and credential prompts disabled, so it fails fast.
+- `rulePackTree.ts` — `prunePackTree` keeps only rule YAML (top-level `rules:`,
+  not `*.test.yaml`) + root LICENSE/README and drops the pack's `prune`
+  folders (`qodana-mit`: `jetbrains/`, `rules/lgpl/` — the licence boundary).
+  `sweepStalePackDirs` touches only THE SAME pack's `.tmp-`/`.old-` siblings:
+  installs of different packs may overlap. `rulePackError.ts` breaks a cycle.
+- `rulesGate.ts` — reader/writer exclusion: a scan holds a read slot from
+  resolving packs until its record is stored; `withRulesMutation` blocks NEW
+  reads, then waits (install swap, bounded) or throws `OpengrepRulesBusyError`
+  (removal). Writer-preferring. The routes' `isAnyOpengrepScanRunning()` is only
+  a fast path — the gate also covers late swaps and workflow/MCP scans.
+- `settings.ts` — machine-global `globalSettings.opengrep.packs` + per-project
+  `userSettings.opengrep` (floor, budget, ignores, excludes); sanitized on READ.
+- `scan.ts` — single-flight execution, error classes, run state (recent
+  failures for the poll route), cancel/abort (cancelled workflow runs abort via
+  the request `signal`). `scanArgs.ts`: targets, jobs, engine args.
+  `scanRecords.ts`: last 10 scans (`<id>.json` + `.snapshot`/`.cache`/`.meta`
+  sidecars). `scanCache.ts`: incremental-reuse identities.
+- `digest.ts` — `buildDigest`; re-exports `parseOutput.ts` (parse, matchers)
+  and `renderDigest.ts` (budgeted markdown). Import `digest.ts`.
+- `graph.ts` — complete per-file findings for the Security overlay (no caps).
+- `service.ts` — THE facade routes, MCP tools and the workflow hook call.
+- `triage.ts`, `review*.ts` — finding dispositions and interactive security-
+  review conversations (routes: `../routes/opengrepReview.ts`; scratch:
+  `../homeScratch/CLAUDE.md`).
 
-## Finding triage and agent review
+## Invariants
 
-- `triage.ts` — durable local dispositions and history in
-  `~/.lattice/per-project/<hash>/opengrep-triage.json`. Writes are serialized
-  and atomic; corrupt state is never replaced. Ignores require reasons;
-  deferred risks require an owner and future review date. Expired exceptions
-  read as open. Source suppressions and Settings ignores retain their distinct
-  scope and cannot be overridden by a local reopen. These are presentation
-  choices, never exclusions from scanner inputs or CI policy.
-- `reviewStore.ts` — strict, versioned `opengrep-review-sessions.json` in the
-  home project directory. Stores ONLY session metadata: harness, scan id, finding
-  count, terminal identity and running/awaiting-decision/closed/failed/cancelled
-  lifecycle. Keeps all active conversations and the newest 20 ended ones.
-  Legacy `opengrep-reviews.json` reports are left untouched and no longer consumed.
-- `reviewBrief.ts` — interactive conversation contract. Review supplied findings
-  read-only, explain evidence/confidence and blockers, propose a tailored menu
-  with a recommended option, then WAIT for an explicit reply. Only agreed tasks
-  are created through project-scoped MCP/documented HTTP, with duplicate searches,
-  exact finding markers, acceptance criteria and current-source verification.
-  Tasks enter Open without being run/merged; ignore decisions are separate.
-- `reviewSession.ts` — shared home-scratch spawn/guarded cleanup under
-  `security-reviews/sreview_<ts>_<hex>/`. Writes the findings snapshot and brief,
-  persists metadata before spawn, and installs all harness activity/turn hooks.
-  New sessions use terminal owner `user` so ordinary conversation recovery can
-  resume them. Codex uses `--sandbox workspace-write` with scratch as cwd and
-  network enabled for the local API; Claude/Pi follow the explicit initial
-  read-only brief. Stop (Pi: `agent_settled`) marks awaiting-decision, never
-  collects a report, kills the PTY, or deletes scratch. Cancellation aborts
-  pending admission and durably blocks terminal restore before guarded cleanup.
-- `review.ts` — current-scan admission, metadata listing and ending reviews.
-  Only one active conversation per project. Listing uses current terminal
-  identities/activity without hashing the whole project for report staleness.
-  Manual shared-ignore tasks remain independent of the conversation.
-- `reviewRecovery.ts` — presence recovery and a 30-second liveness watchdog.
-  Preserves conversations indefinitely while live or durably registered,
-  including executor replacement, queued relaunch and retryable restore failure.
-  Unreachable terminal servers are never evidence of death. An absent, unregistered
-  PTY gets a 90-second grace period before marking closed and guarded cleanup.
-  The shared orphan sweep also protects registered conversation cwd paths.
+**Triggering.** Never scan on graph load, file change, project switch or a
+timer — only on an explicit click/request. Nothing installs at boot.
+
+**Scans.**
+- Engine **cwd = the rules root, packs as RELATIVE ids**: `check_id` derives
+  from the config path relative to cwd and fingerprints hash it, so any other
+  cwd makes them machine-specific. Local rules go as absolute `-f` paths
+  (stable per machine only).
+- Targets are CONFINED to the project (`OpengrepBadTargetError` → 400).
+- One scan per project (409 `busy`); a hard wall-clock timeout kills it.
+- `.meta.json` is promoted LAST, so incomplete snapshots never enter history.
+- Cancel/abort kills the engine, stores nothing, frees the slot at once (409
+  `scan-cancelled`); cancel matches the exact id, so a stale chip can't cancel
+  a newer scan. A `process` `exit` handler aborts running scans — no orphaned
+  engine writing an unrecorded `-o` file after a restart.
+- `startProjectScanWithDigest` callers MUST observe `done` (else an unhandled
+  rejection).
+
+**Incremental reuse** — explicit `mode: incremental` only; default `full`
+always runs the engine. When unsure, rescan: any missing/unsupported cache,
+engine/rule/context change or unrepresentable include falls back to full with
+`record.update.reason`. Never follow symlinks/reparse points; keep path casing
+in CLI includes. Reuse is validated for Opengrep 1.30.0 only; git index/ignore
+changes, external git config, linked git dirs and linked rules disable it.
+Partial/error paths, skipped rules and files edited mid-analysis are never
+reused as clean; zero-finding coverage comes only from engine `paths.scanned`;
+deleted/renamed paths drop out. Corrupt cache metadata disables reuse without
+hiding saved findings; severity/ignore changes re-filter, never invalidate.
+
+**Digest** (what agents see):
+- Filter FIRST (severity floor, ignore lists), then dedupe by fingerprint.
+- Hard byte budget. "Scan caveats" render first and are reserved from it. An
+  oversized group is re-rendered TRIMMED before being cut, so a huge ERROR rule
+  never drops while small INFO groups stay; the tail names what was omitted.
+- Short fingerprint (first 16 hex + `_N`) is what the digest prints and agents
+  put in tasks as `opengrep:<fp>`; every matcher accepts full or short,
+  case-insensitively, with or without `opengrep:`.
+- Native `extra.is_ignored` findings stay in the raw inventory but never in
+  digests or graph colors.
+
+**Graph.** Unvisited files never read as clean; partial parses/errors keep
+coverage uncertain. Only open shown findings color the graph, but below-floor
+and ignored/deferred ones are kept — presentation never destroys evidence.
+
+**Triage and review.**
+- Triage is presentation only (never a scanner-input or CI exclusion); ignore
+  needs a reason, defer an owner + future date; expired exceptions read open; a
+  local reopen can't override source suppressions or Settings ignores; corrupt
+  state is never replaced.
+- One active review per project. Its store holds metadata only. The brief makes
+  the agent WAIT for the user's explicit choice and create only agreed tasks
+  (Open, never run/merged).
+- Session metadata is persisted BEFORE spawn. Stop (Pi: `agent_settled`) only
+  marks awaiting-decision — never collects a report, kills the PTY or deletes
+  scratch. Cancel blocks terminal restore durably before guarded cleanup.
+- An unreachable terminal server is never evidence of death; only an absent,
+  unregistered PTY past a grace period is closed.
 
 ## Consumers
 
-- `routes/opengrep.ts` — `/api/opengrep/{status,install,rules/install,
-  rules/:packId,scan,scans,scans/:id,scans/:id/cancel}`; 409 codes `busy` / `not-installed` /
-  `no-rules` / `scan-cancelled` / `install-failed` / `installing` (DELETE of a
-  pack mid-install). `POST /scan` with
-  `async: true` waits at most `ASYNC_SCAN_ACCEPT_WINDOW_MS` (15 s): a scan done
-  by then answers like the synchronous form, a longer one `202 {scanId,
-  status: 'running'}`. The chip also sends `acceptImmediately: true`, returning
-  the id without the 15 s wait so early cancellation can target it. `POST
-  /scans/:id/cancel {project}` waits for that exact scan to stop; a stale id
-  cannot cancel another scan. Aborted scan polls answer 409 `scan-cancelled`.
-  `GET /scans/:id` answers a still-running id with 202 and
-  a failed one with the status/code its POST would have had; after a backend
-  restart the id is unknown (404 — the restart killed the engine). The
-  synchronous form (the Settings button) remains a full scan; one scan per project
-  either way. `GET /scans/:id?format=graph` returns the complete filtered
-  findings/per-file snapshot and freshness for the Security graph overlay,
-  with the same 202/failure polling semantics. Scan requests accept optional
-  `mode: full | incremental` (default full).
-- `latticeMcp/createServer.ts` — `opengrep_scan`, `opengrep_findings` (every
-  session; both return the digest markdown, never raw JSON — `opengrep_scan`
-  uses the async form and polls, because Node's fetch drops a response after
-  300 s, well under the 10 min scan cap) and, **outside task worktrees only**,
-  `opengrep_ignore` → `POST /api/opengrep/ignore` → `service.ts
-  addOpengrepIgnores`: append rule ids / fingerprints to the project's ignore
-  lists (a worktree agent's brief is untrusted input; letting it silence the
-  findings its own change introduced would hide them from every later
-  security-review digest). This is the ONE Lattice-settings write a planning
-  agent may make —
-  rule noise is a per-project setting, not a ticket for a human — additive
-  and deduplicated, merged inside the settings file's own lock on a strict read
-  (`userSettings` `updateUserSettings`) so neither a burst of calls nor a
-  concurrent Settings save is clobbered; entries are removed in
-  Settings → Tools. The Opengrep
-  step prompt (`frontend/src/components/workflows/prompts/opengrep.md`) and
-  the `{{tool_reports}}` block both point the agent at it.
-- `workflowRuns/stepTools.ts` — the pre-run hook for an agent step whose
-  `tools` includes `opengrep`: scan → `OPENGREP_FINDINGS.md` beside
-  `WORKFLOW_STEP.md` → the `{{tool_reports}}` token in the brief. A missing
-  engine / no rules / busy / failed scan does NOT fail the step: the token
-  becomes a one-paragraph explanation and the step runs.
-- Settings → Tools tab (`frontend/src/components/settings/ToolsTab.tsx`).
-- Graph Security chip (`frontend/src/components/forceGraph/hooks/useSecurityOverlay.ts`):
-  first activation without saved results runs a full scan; refresh reconnects through `status.project.runningScan`
-  and GET polling of that exact id. Shows a spinner and an ETA from the previous
-  scan's duration. Restores saved snapshots; idle chip toggles the view without
-  rescanning. Hover previews and file/total-findings clicks open the searchable
-  findings panel. Separate Update changed files / Full scan actions POST;
-  background focus/git-change/30 s reads only check freshness. Keeps the normal
-  graph or previous results visible until completion. Clicking while scanning cancels the exact id (including
-  a restored scan), with "Cancelling…" until the backend confirms. Cancellation
-  intent before acceptance is honored once the id arrives; cancellation preserves
-  the previous snapshot. Project changes
-  and unmount abort HTTP waiting; an accepted backend scan may finish normally.
+- `../routes/opengrep.ts` — `POST /scan` `async: true` waits ≤ 15 s then
+  answers `202 {scanId}` (`acceptImmediately`: at once, so early cancel can
+  target it). `GET /scans/:id`: 202 while running, the POST's error once
+  failed, 404 after a restart.
+- `../latticeMcp/` — `opengrep_scan` polls the async form (Node's fetch drops a
+  response after 300 s, under the 10 min scan cap). `opengrep_ignore` →
+  `addOpengrepIgnores` exists **outside task worktrees only** (an untrusted
+  worktree brief must not silence findings its own change introduced). It is
+  the ONE Lattice-settings write a planning agent may make: additive, deduped,
+  merged under the settings lock on a strict read (`updateUserSettings`) so
+  bursts and Settings saves aren't clobbered; removal is in Settings → Tools.
+- `../workflowRuns/stepTools.ts` — agent step with `tools: [opengrep]`: scan →
+  `OPENGREP_FINDINGS.md` beside `WORKFLOW_STEP.md` → `{{tool_reports}}`. A
+  missing engine / no rules / busy / failed scan never fails the step.
 
 ## Tests
 
-`opengrepDigest` (fixture = a trimmed real scan of Lattice), `opengrepScan`
-(fake engine at the spawn seam: cwd, args, storage, busy, error classes),
-`opengrepInstall` (fake fetch + pin table: size → digest → runs, quarantine
-message, `.part` cleanup + sweep, single-flight across a pending asset choice),
-`opengrepPackConcurrency` (fake git fetch + blocking fake engine: removal
-mid-install stays removed, DELETE mid-install is 409, a swap waits for a
-running scan and a scan waits for a pending swap, removal refused mid-scan),
-`latticeMcpOpengrep` (202 + poll, headers timeout → "still running"),
-`opengrepRulesPrune` (the licence boundary on a fixture tree),
-`opengrepPlatformSettings` (asset table, pin presence, settings sanitizing),
-`opengrepNoVendoredAssets` (no binary / pack in `git ls-files`).
-`opengrepCache` covers changed/clean/deleted/renamed files, rule invalidation,
-mid-scan edits and cancellation; `opengrepRealCache` optionally validates include
-selection (including mixed-case Windows paths) against an installed engine in
-an isolated project/HOME. Set `LATTICE_TEST_OPENGREP_BINARY` to opt in; Windows
-also needs `LATTICE_TEST_OPENGREP_USERPROFILE` for the engine child only.
+Named after the module — grep `opengrep` in `backend/src/__tests__/`.
+`opengrepRealCache` is opt-in: set `LATTICE_TEST_OPENGREP_BINARY` (Windows
+also `LATTICE_TEST_OPENGREP_USERPROFILE`, for the engine child only).

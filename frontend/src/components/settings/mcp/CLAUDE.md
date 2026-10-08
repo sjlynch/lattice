@@ -5,12 +5,15 @@ MCP-tab-only UI rendered by `settings/McpTab.tsx`.
 - `McpServerRow` renders one catalog entry with three independent per-harness
   enable toggles (Claude → `mcpOverrides`, Codex/Pi → `mcpHarnessOverrides`) and
   delegates secret editing to `McpKeyField`.
-- `McpKeyField` writes secrets immediately via `commitMcpSecret` (its
-  edit/commit/clear/test state machine lives in `useSecretField`); secrets never
-  ride the Settings dialog Save button and never enter global/user settings.
-- `McpAddCustom` edits machine-global custom-server definitions.
-- `McpImportSection` scans/imports other tools' MCP configs; keep imported
-  secrets redacted until explicitly saved through the secret API.
+- `McpKeyField` (masked-but-confirmable; autosaves on blur) writes secrets
+  immediately via `commitMcpSecret` (its edit/commit/clear/test state machine
+  lives in `useSecretField`); secrets never ride the Settings dialog Save button
+  and never enter global/user settings.
+- `McpAddCustom` adds machine-global custom stdio/http server definitions
+  (definition only — no key), written immediately.
+- `McpImportSection` scans/imports other tools' MCP configs (immediately, via its
+  own API call); keep imported secrets redacted until explicitly saved through
+  the secret API.
 - `useMcpTabDraft` owns `McpTab`'s state: the load-on-open effect (strict
   settings load — `loaded` only flips on success), the reloaders, per-harness
   `isEnabledFor`/`toggle`, the Playwright-headed and lattice-only setters, and

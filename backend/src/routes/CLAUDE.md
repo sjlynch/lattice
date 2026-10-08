@@ -1,205 +1,156 @@
 # backend/src/routes
 
-One Express `Router` per domain. Every module exports a `buildXRouter(...)`
-factory and `server/app.ts` mounts them in this order: restartDrain
-(admission gate, then the internal handshake), the callback-outbox ack
-middleware, health, search, settings, globalSettings, mcp, opengrep,
-projectInit, terminals, terminalTabs, tasks, agentActivity, projectClaude,
-mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows. `debug.ts`
-(`/api/debug/*`, memory diagnostics — see `../memDiag/CLAUDE.md`) mounts right
-after health. Every route, one row each: [ROUTES.md](./ROUTES.md).
+One Express `Router` per domain, each built by a `buildXRouter(...)` factory
+and mounted by `server/app.ts` `mountRouteFactories` (read the order there).
+Every route, one row each: [ROUTES.md](./ROUTES.md). Business logic lives in
+the domain module each router wraps, not here.
 
 ## Route map
 
 - `restartDrain.ts` — the dev runner's restart handshake
-  (`/api/internal/restart-drain/{prepare,cancel,lock-holders}`; refuses any
+  (`/api/internal/restart-drain/{prepare,cancel,lock-holders}`: refuses any
   `Origin`, requires `x-lattice-terminal-token`) and
   `buildRestartDrainAdmissionGate`, which 503s (`backend-restarting`,
-  `Retry-After`) new top-level starts while a drain is on. Must stay mounted
-  FIRST so the gate runs before the routes it guards. See
+  `Retry-After`) new top-level starts during a drain. **Must stay mounted
+  FIRST** so the gate runs before the routes it guards. See
   `../restartDrain/CLAUDE.md`.
-- `buildCallbackOutboxAck` (`../callbackOutbox/ack.ts`, not a router) —
-  middleware mounted between restartDrain and health. For a POST whose path
-  matches `CALLBACK_PATH_RE` (`/(complete|done|verdict|merged|merge-aborted|stash-resolved)$`,
-  `../callbackOutbox/drain.ts`), it unlinks that callback's durable outbox
-  entry once the response is final (anything but 5xx, 408 or 429). The hook
-  that sent it may be killed by the cleanup the callback triggers. Outbox
-  replays (marked by `OUTBOX_REPLAY_HEADER`) are skipped; the drain removes
-  those entries itself. See `../callbackOutbox/CLAUDE.md`.
-- `health.ts` — composes `routes/health/`: `liveness.ts` (liveness/
-  default-root/harnesses), `scan.ts` (scan + agent-facing dead-code summary),
-  `gitInfo.ts` (`/api/git-history` + `/api/git-branch`), and `browse.ts`
-  (folder-picker list-dir/create-dir).
-  `health/scan.ts` shares scans across HTTP subscribers and observes unfinished
-  response `close` for disconnects. Incoming request `close` is not a reliable
-  disconnect signal: a fully consumed GET can emit it while its response waits.
+- `buildCallbackOutboxAck` (`../callbackOutbox/ack.ts`, middleware, mounted
+  right after restartDrain) — for a POST matching `CALLBACK_PATH_RE`
+  (`../callbackOutbox/drain.ts`) it unlinks that callback's durable outbox
+  entry once the response is final (anything but 5xx / 408 / 429), because
+  the hook that sent it may be killed by the cleanup the callback triggers.
+  Replays (`OUTBOX_REPLAY_HEADER`) are skipped; the drain removes those
+  itself. See `../callbackOutbox/CLAUDE.md`.
+- `health.ts` — composes `health/`: `liveness.ts`, `scan.ts` (scan +
+  agent-facing dead-code summary), `gitInfo.ts` (`/api/git-history`,
+  `/api/git-branch`), `browse.ts` (folder picker). `scan.ts` shares scans
+  across subscribers and detects a disconnect via the unfinished
+  *response's* `close` — never the request's, which a fully consumed GET can
+  emit while its response still waits.
+- `debug.ts` — `/api/debug/*` memory diagnostics, mounted right after health
+  (`../memDiag/CLAUDE.md`).
 - `search.ts` — `/api/search` file-content grep (rg fast path, JS fallback).
-- `settings.ts` — per-project settings, project env notes, instruction
-  templates, Pi model menu, and Pi endpoint probing.
-- `globalSettings.ts` — `/api/global-settings` machine-global PATCH/GET;
-  applies spawn softCap live and reconciles Pi providers when changed.
-- `mcp.ts` — MCP catalog, secrets, env presence, validation, and config import.
-- `opengrep.ts` — Opengrep (SAST): `GET /api/opengrep/status`, the user-clicked
-  `POST /api/opengrep/install` + `POST /api/opengrep/rules/install` /
-  `DELETE /api/opengrep/rules/:packId` (202 + poll `/status`), and the
-  agent-facing `POST /api/opengrep/scan` + `GET /api/opengrep/scans[/:id]`
-  and `POST /api/opengrep/scans/:id/cancel` (exact-id cancellation, waits for
-  the engine to stop)
-  (`latest` allowed; `format=md`, `rule=`/`file=`/`severity=`/`budgetKb=`
-  narrow the digest; `format=graph` returns complete findings, coverage and
-  freshness). Scan bodies accept `mode: full | incremental` (default full).
-  Also `POST /api/opengrep/ignore` (append to the project's
-  ignore lists). 409 codes `busy` / `not-installed` / `no-rules`; 400
-  `bad-target` for a scan target outside the project. The pack install/remove
-  routes also answer 409 `busy` while ANY project's scan is running, since a
-  pack swap or delete under a reading engine is a half-swapped tree (or a
-  Windows EBUSY). Thin over `../opengrep/` (see its CLAUDE.md);
-  project-scoped paths use `readProjectParam`. Static paths, mount order
-  unconstrained.
-- `opengrepReview.ts` — mounted by `opengrep.ts`. `GET/POST
-  /api/opengrep/triage` reads local history or saves a disposition; `POST
-  /api/opengrep/shared-ignore` creates a reviewed source-suppression task.
-  `GET/POST /api/opengrep/reviews` lists session metadata or starts an interactive
-  review; `POST /api/opengrep/reviews/:id/{done,cancel}` marks a turn waiting
-  without closing the conversation, or explicitly ends/reclaims it. No report
-  storage or application endpoint; the harness waits for the user's choice
-  before creating agreed Open tasks. Writes validate
-  an existing project directory; completion takes the project in its query.
-  Apply defaults to preview and requires `preview: false` for mutations.
-- `projectInit.ts` — `POST /api/project-init/preview` (what a first commit
-  would capture, re-POSTed as the user edits the `.gitignore`) and
-  `POST /api/project-init` (`git init` + first commit). Thin: validation plus
-  the `ProjectInitError.code` → 409/422/500/503 mapping; the work lives in
-  `projectInit/`. Both paths are static, so mount order is unconstrained.
-- `terminalTabs.ts` — the durable terminal-tab registry's surface
-  (`backend/src/terminalRegistry/`): `GET /api/terminal-tabs` (records),
-  `POST /api/terminal-tabs/restore` (adopt / relaunch on project open),
-  `PATCH /api/terminal-tabs` (order), `PATCH /api/terminal-tabs/:id` (label),
-  `DELETE /api/terminal-tabs/:id` (close: persist intent, abort a post-merge
-  hook owning the pty, kill the pty, then remove the record; uncertain kills
-  retain ownership and return retryable 503 — same abort as `DELETE /api/terminals/:id`). All
-  `?project=`-scoped. Static paths, so mount order is unconstrained.
-- `terminals.ts` — terminal list (debug) + `DELETE /api/terminals/:id`, plus
-  **`POST /api/terminals`**: pre-create a pty via `proxyCreateSession` and return
-  its `serverId`, so a sidebar-launched harness terminal joins the same spawn
-  chokepoint (`resolveHarnessSpawnBody`) as tasks and gets its Codex/Pi MCP config
-  applied (a serverless `/ws/terminal` connect would bypass it). Debug
-  spawn-queue snapshot too.
-- `tasks.ts` — task CRUD/list/summary/search/projects, markdown batch/upsert,
-  bulk-update, transition, reorder, append-summary, run/resume/merge, worktree
-  hook callbacks (`complete`/`merged`/`merge-aborted`/`stash-resolved`), task
-  activity hooks, and worktree-modified reads. Submodules under `tasks/` own the
-  details; keep path-specific routes (`/summary`, `/search`, `/transition`, …)
-  before `/api/tasks/:id`. The list/summary/search reads are the agent-facing
-  progressive-disclosure surface (active-lane + compact + newest-100 defaults,
-  self-pricing envelopes, 256 KB ceiling → 413) — see `tasks/listQuery.ts` and
-  `tasks/taskSearch.ts`.
+- `settings.ts` — per-project settings, env notes, instruction templates, Pi
+  models/endpoint probe; see [settings/CLAUDE.md](settings/CLAUDE.md).
+- `globalSettings.ts` — `/api/global-settings`; a PATCH applies the spawn
+  `softCap` live and reconciles Pi providers when they change.
+- `mcp.ts` — MCP catalog, secrets, env presence, validation, config import.
+- `opengrep.ts` — Opengrep (SAST), thin over `../opengrep/` (see its
+  CLAUDE.md): status, the user-clicked engine / rule-pack install (202 + poll
+  `/status`), the agent-facing scan / stored scans / cancel, and `/ignore`.
+  Errors map to codes (409 `busy` / `not-installed` / `no-rules` / …, 400
+  `bad-target` for a target outside the project; full list in ROUTES.md).
+  Pack install/remove also answer 409 `busy`
+  while ANY project's scan runs — a pack swap under a reading engine is a
+  half-swapped tree (or a Windows EBUSY).
+- `opengrepReview.ts` (mounted by `opengrep.ts`) — triage history /
+  disposition, shared-ignore (creates a reviewed source-suppression task) and
+  interactive security reviews (`/reviews`, `/reviews/:id/{done,cancel}`:
+  `done` marks the turn waiting without closing the conversation). No report
+  storage or apply endpoint — the harness waits for the user's choice before
+  creating the agreed Open tasks. Writes require an existing project
+  directory; `done` takes the project in its query.
+- `projectInit.ts` — `POST /api/project-init/preview` (re-POSTed as the user
+  edits the `.gitignore`) and `POST /api/project-init`. Thin: validation plus
+  the `ProjectInitError.code` → 409/422/500/503 mapping; work in
+  `../projectInit/`.
+- `terminals.ts` — terminal list + spawn-queue snapshot (debug),
+  `DELETE /api/terminals/:id`, and `POST /api/terminals`: pre-creates a pty
+  via `proxyCreateSession` and returns its `serverId`, so a sidebar harness
+  terminal goes through the spawn chokepoint (`resolveHarnessSpawnBody`) and
+  gets its Codex/Pi MCP config — a serverless `/ws/terminal` connect would
+  bypass it.
+- `terminalTabs.ts` — the durable tab registry's surface
+  (`../terminalRegistry/`), all `?project=`-scoped. `DELETE …/:id` order:
+  persist the close intent, abort a post-merge hook owning the pty, kill the
+  pty, then remove the record; an uncertain kill keeps ownership and returns
+  a retryable 503 (same abort as `DELETE /api/terminals/:id`).
+- `tasks.ts` — the task API; see [tasks/CLAUDE.md](tasks/CLAUDE.md). Its
+  list / summary / search reads are the agent-facing progressive-disclosure
+  surface (active-lane + compact + newest-100 defaults, self-pricing
+  envelopes, 256 KB ceiling → 413).
 - `agentActivity.ts` — `/api/agent-activity/:token` for Lattice-spawned
-  non-worktree Claude sessions (push/workflow/post-merge) and graph beams.
+  non-worktree sessions (push / workflow / post-merge) → graph beams.
 - `projectClaude.ts` — project-root instrumentation install/remove plus
-  `/api/project-activity/:token`. It is the activity callback for every
-  project-instrumented session: user-started Claude sessions (hooks in
-  `.claude/settings.local.json`), user-opened Codex tabs (per-launch hook
-  overrides) and the project-root Pi activity extension. Keyed by the body's
-  `session_id`.
-- `mergeRuns.ts` — merge-all start/active/get/cancel/stash-resolved.
-- `postMergeHooks.ts` — active/recent hook read, completion callback, abort.
-- `pushRuns.ts` — git-check plus push-run start/status/done/forget. `/api/git-check`
-  also returns the additive `git: ProjectGitProbe` for the Git Setup chip;
-  `hasGit` keeps its exact `fs.stat(<path>/.git)` semantics, since the Push
-  button reads it and must not start appearing for subdirectories of repos.
-- `qaRuns.ts` — QA e2e run start/status/verdict/done/forget. Route wiring over
-  `qaRuns/` (lifecycle stays in `../qaRuns.ts` + `../qaRuns/`):
-  - `responses.ts` — picks exactly the fields the frontend reads off
-    `POST /api/qa-runs` and the polled `GET /api/qa-runs/:id`
-    (`frontend/src/components/taskboard/hooks/useQaRuns.ts`). **Load-bearing
-    shapes; don't let them drift.**
-  - `startGuard.ts` — `resolveQaRunStart` (body validation, task belongs to
-    project, status `qa`) returns `{ok:false, status, error}` /
-    `{ok:true, project, task}` that the route maps straight onto HTTP;
-    `findActiveQaRunForTask` is the **duplicate-run guard** (409, plus the
-    route's in-flight `starting` set): two Playwright sessions for one task
-    each post a verdict, and either confident PASS promotes it.
-  - `verdictBody.ts` — **deliberately tolerant** verdict parse:
-    `{verdict:'pass'|'fail', confidence:'high'|'low'}` or the boolean
-    shorthand `passed`/`confident`, so a user-edited QA template's wording
-    drift still advances the task. Don't make it strict.
-- `workflows.ts` — workflow definition CRUD, workflow-run start/cancel/
-  step-complete/active, and prompt-customization start/status/complete.
+  `/api/project-activity/:token`, the activity callback for every
+  project-instrumented session (user Claude via `.claude/settings.local.json`,
+  user Codex tabs via per-launch hook overrides, the project-root Pi
+  extension), keyed by the body's `session_id`.
+- `mergeRuns.ts` — merge-all start / active / get / cancel / stash-resolved.
+- `postMergeHooks.ts` — active/recent read, completion callback, abort.
+- `pushRuns.ts` — `/api/git-check` plus push-run start / status / done /
+  forget. `hasGit` keeps its exact `fs.stat(<path>/.git)` semantics (the Push
+  button reads it and must not appear for a repo's subdirectories); the Git
+  Setup chip's `git: ProjectGitProbe` is additive.
+- `qaRuns.ts` — QA e2e run start / status / verdict / done / forget; its
+  load-bearing response shapes, duplicate-run guard and tolerant verdict
+  parse are in [qaRuns/CLAUDE.md](qaRuns/CLAUDE.md).
+- `workflows.ts` — workflow definitions, runs, prompt customizations; see
+  [workflows/CLAUDE.md](workflows/CLAUDE.md).
+- `projectParam.ts` — the project/path readers below.
 
 ## The `project` parameter
 
-`projectParam.ts` — `readProjectParam(req, res, {source?, optional?})` is the
-ONE way a non-task route reads the project it acts on (`?project=` first, then
-the body; the tasks routes have their own `requireAbsoluteProject` /
-`validateProjectForCreate` with the same rule). It refuses a relative or
-drive-relative value with a 400 that names the likely cause (shell-stripped
-backslashes: `C:developmentproj`). On Windows it also refuses a ROOT-relative
-value (`\foo`, or the MSYS / Git-Bash `/c/development/proj`, whose 400 suggests
-the `C:\development\proj` spelling): `path.isAbsolute` accepts those, but
-`path.resolve` pins them to the backend's drive, which read as a silently-empty
-board. Every guard (these routes, `ws/projectEndpoint.ts` `parseProject`, and
-the task cache's index registration in `ensureProjectLoaded`) uses the one
-`isRealAbsoluteProjectPath` helper in `../projectPath.ts`, never bare
-`path.isAbsolute`. **Validate before identity resolution**: resolving a
-rejected value first can turn it into an absolute path under the backend's
-cwd or current drive, bypass downstream guards, and register a phantom
-project with a junk identity binding.
-
-`canonicalProjectPath` in `../projectPath.ts` delegates to
-`physicalProjectPath` in `../projectIdentity.ts`: native realpath for existing
-paths, legacy resolved spelling for missing paths. Storage-hash selection is
-separate: durable bindings preserve existing stores when canonical spelling
-changes. See [project identity](../projectIdentity/CLAUDE.md) for that protocol.
-
-`POST /api/terminals` applies the same rule to `cwd` and `projectPath`, and
-a route that WRITES under the project folder additionally requires it to be an
-existing directory via `requireExistingProjectDir` (same module) —
-`POST /api/project-instrumentation` (its reconcile mkdirs `<project>/.claude/`),
-`PATCH /api/settings` and `POST /api/opengrep/ignore` (the settings store
-mkdirs `<project>/.lattice/`, so a typo'd or since-deleted project was
-recreated by the next save). The folder browser (`/api/list-dir`,
-`/api/create-dir`, `../fsbrowse/`) uses `isRealAbsoluteProjectPath` +
-`relativeProjectError` too. Always act
-on the value `readProjectParam` returns (trimmed), never the raw body field.
-The read-only graph routes that take `?path=` (or `?project=`) with a
-default-root fallback —
-`/api/scan`, `/api/search`, `/api/health/dead-code`, `/api/git-history`,
-`/api/git-branch` — go through `readPathParam` (same module): absent → the
-default root, present-but-relative → the same 400. The WS endpoints apply it
-too (`ws/projectEndpoint.ts` `parseProject` yields `''` for a relative
-project, which closes the socket). Pinned by
-`__tests__/relativeProjectRefused.test.ts`, which drives every project-scoped
-route (and `/ws/tasks`) through the real app.
+- **`readProjectParam(req, res, {source?, optional?})` is the ONE way a
+  non-task route reads its project** (`?project=` first, then the body; the
+  tasks routes' `requireAbsoluteProject` / `validateProjectForCreate` apply
+  the same rule). Act on the value it returns (trimmed), never the raw field.
+- **A relative or drive-relative value is a 400** naming the likely cause
+  (shell-stripped backslashes: `C:developmentproj`). On Windows a
+  ROOT-relative value (`\foo`, or MSYS `/c/development/proj`, whose 400
+  suggests `C:\development\proj`) is refused too: `path.isAbsolute` accepts
+  it but `path.resolve` pins it to the backend's drive — a silently-empty
+  board. Every guard (these routes, `ws/projectEndpoint.ts` `parseProject`,
+  the task cache's `ensureProjectLoaded`) uses `isRealAbsoluteProjectPath`
+  (`../projectPath.ts`), never bare `path.isAbsolute`.
+- **Validate before identity resolution**: resolving a rejected value first
+  can make it absolute under the backend's cwd/drive, bypass downstream
+  guards, and register a phantom project with a junk identity binding.
+  (Canonical spelling vs. storage-hash bindings:
+  [project identity](../projectIdentity/CLAUDE.md).)
+- `POST /api/terminals` applies the rule to `cwd` and `projectPath`; the
+  folder browser (`/api/list-dir`, `/api/create-dir`, `../fsbrowse/`) uses
+  `isRealAbsoluteProjectPath` + `relativeProjectError`.
+- **A route that WRITES under the project folder also requires an existing
+  directory** (`requireExistingProjectDir`): `POST /api/project-instrumentation`
+  (mkdirs `.claude/`), `PATCH /api/settings`, `POST /api/opengrep/ignore`
+  (the settings store mkdirs `.lattice/`) — else a typo'd or deleted project
+  is recreated by the next save.
+- Read-only graph routes with a default-root fallback (`/api/scan`,
+  `/api/search`, `/api/health/dead-code`, `/api/git-history`,
+  `/api/git-branch`) use `readPathParam`: absent → default root,
+  present-but-relative → the same 400. WS endpoints close the socket
+  (`parseProject` yields `''`).
+- By-id routes honour an optional `?project=` ownership pin
+  (`requireOwnedByRequestedProject`; tasks: `requireTaskInRequestedProject`):
+  another board's record is a 404, checked before any side effect.
+  Absent/empty → unpinned (Stop hooks and resolver curls send none).
+- Pinned by `__tests__/relativeProjectRefused.test.ts`, which drives every
+  project-scoped route (and `/ws/tasks`) through the real app.
 
 ## Why factories?
 
-Routes need `backendOrigin` (for generated curl callbacks in hooks/prompts),
-which `server/config.ts` computes and `server/app.ts` threads through
-`mountRouteFactories` into each `buildXRouter`. Passing it in keeps routers
-testable and avoids hidden globals.
+Routers need `backendOrigin` (for the curl callbacks baked into hooks and
+prompts), computed by `server/config.ts` and threaded through
+`mountRouteFactories` — passing it in keeps routers testable, no globals.
 
 ## Adding a route
 
-0. Add its row to [ROUTES.md](./ROUTES.md) (the exhaustive, drift-tested map)
-   and either document it for agents (`../latticeApiDocs/*.template.md`) or
-   opt it out in the drift test's `UNDOCUMENTED_ROUTES` with a reason.
+0. Add its row to [ROUTES.md](./ROUTES.md) (drift-tested) and either document
+   it for agents (`../latticeApiDocs/*.template.md`) or opt it out in the
+   drift test's `UNDOCUMENTED_ROUTES` with a reason.
 1. Add a handler to the right module (or create a new `buildXRouter`).
-2. Mount new routers from `server/app.ts` in an order that cannot shadow static
-   paths with parameter routes.
-3. Errors thrown synchronously or from async handlers are caught by the global
-   JSON error middleware in `server/app.ts` (`express-async-errors`).
-4. A new **completion-callback** route (one a Stop hook POSTs through the
-   callback outbox) must end in one of `CALLBACK_PATH_RE`'s suffixes:
-   `/complete`, `/done`, `/verdict`, `/merged`, `/merge-aborted` or
-   `/stash-resolved`. Otherwise the ack middleware never clears its outbox
-   entry, and the drain drops the entry as "not a completion callback route"
-   instead of replaying it. A callback lost during a backend restart is then
-   never redelivered. To add a new suffix, extend the shared regex in
+2. Mount it from `server/app.ts` in an order where no parameter route shadows
+   a static path.
+3. Sync and async handler errors reach the global JSON error middleware in
+   `server/app.ts` (`express-async-errors`).
+4. A **completion-callback** route (one a Stop hook POSTs through the
+   callback outbox) must end in a `CALLBACK_PATH_RE` suffix (`/complete`,
+   `/done`, `/verdict`, `/merged`, `/merge-aborted`, `/stash-resolved`), or
+   the ack never clears its outbox entry and the drain drops it as "not a
+   completion callback route" — a callback lost in a restart is never
+   redelivered. New suffix → extend the shared regex in
    `../callbackOutbox/drain.ts`; don't write a second filter.
 
-## Command reference
-
-From `backend/`: `npm run build` (compile + copy assets), `npm test` (suite),
-`npx tsc --noEmit` (type-check). For a HOME-isolated single-file test invocation,
-see [the test guide](../__tests__/CLAUDE.md).
+Commands (from `backend/`): `npm run build`, `npm test`, `npx tsc --noEmit`;
+HOME-isolated single-file runs: [the test guide](../__tests__/CLAUDE.md).

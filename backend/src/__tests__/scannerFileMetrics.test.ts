@@ -2,7 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { computeFileMetrics, readForAnalysis } from '../scanner/fileMetrics.js';
+import { computeFileMetrics } from '../scanner/fileMetrics.js';
+import { readForAnalysis } from '../scanner/readForAnalysis.js';
 import { LOC_MAX_BYTES } from '../health/constants.js';
 import { withTempDir } from './helpers/tempDir.js';
 

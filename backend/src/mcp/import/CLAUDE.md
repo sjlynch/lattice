@@ -4,8 +4,12 @@
 MCP servers they already declare into Lattice's `McpServerEntry` shape, and
 classify their secrets. The orchestrator (`scanImportableServers` / `applyImport`
 + dedupe) and the public re-exports live in `../importConfigs.ts`; this directory
-holds the concerns it composes. See `../CLAUDE.md` for the full secret-handling
-policy (MCP plan §8) — don't duplicate it here.
+holds the concerns it composes. Where secrets live and how they reach a server
+is `../CLAUDE.md` → Policies — don't duplicate it here.
+
+The orchestrator renames an import whose id is a retired built-in
+(`../retiredServers.ts`) to `<id>-imported`: the settings layer strips those
+ids from every toggle map, so under the old id it could never be switched on.
 
 ## Modules
 
