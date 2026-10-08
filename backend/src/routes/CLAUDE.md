@@ -5,7 +5,9 @@ factory and `server/app.ts` mounts them in this order: restartDrain
 (admission gate, then the internal handshake), the callback-outbox ack
 middleware, health, search, settings, globalSettings, mcp, opengrep,
 projectInit, terminals, terminalTabs, tasks, agentActivity, projectClaude,
-mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows.
+mergeRuns, postMergeHooks, pushRuns, qaRuns, workflows. `debug.ts`
+(`/api/debug/*`, memory diagnostics — see `../memDiag/CLAUDE.md`) mounts right
+after health. Every route, one row each: [ROUTES.md](./ROUTES.md).
 
 ## Route map
 
@@ -179,6 +181,9 @@ testable and avoids hidden globals.
 
 ## Adding a route
 
+0. Add its row to [ROUTES.md](./ROUTES.md) (the exhaustive, drift-tested map)
+   and either document it for agents (`../latticeApiDocs/*.template.md`) or
+   opt it out in the drift test's `UNDOCUMENTED_ROUTES` with a reason.
 1. Add a handler to the right module (or create a new `buildXRouter`).
 2. Mount new routers from `server/app.ts` in an order that cannot shadow static
    paths with parameter routes.

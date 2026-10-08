@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { buildSearchRegExp } from '../components/forceGraph/searchMatcher.ts';
 
 // buildSearchRegExp builds the graph search bar's filename matcher. It MUST stay
-// in sync with the backend buildSearchRegExp (backend/src/search.ts) so a
+// in sync with the backend `regexSource` (backend/src/search.ts) so a
 // wildcard query selects the same files whether the hit came from a filename
 // match (this) or a file-contents match (backend). It must also return null
 // (never throw) on empty/invalid input so the UI can show an inline error.

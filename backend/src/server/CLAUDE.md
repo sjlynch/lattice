@@ -4,7 +4,7 @@ Named backend bootstrap helpers used by `index.ts` after process guards are inst
 
 - `config.ts` — computes `PORT` (`backendPort()`), default project root
   (`LATTICE_DEFAULT_ROOT` overrides it — the isolated e2e instance uses a
-  scratch dir), and `BACKEND_ORIGIN`.
+  scratch dir), and the `backendOrigin` field of `getBackendServerConfig()`.
 - `bootGuards.ts` — `runBootGuards()`, awaited at the very top of `index.ts`
   (before `installProcessGuards`, i.e. before crash-log adoption, Pi setup, the
   terminal-server handshake and recovery). Refuses — message + exit 1 — when

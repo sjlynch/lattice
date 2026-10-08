@@ -29,7 +29,7 @@ path spelling ([PROJECT_IDENTITY.md](backend/src/PROJECT_IDENTITY.md)):
 - `~/.lattice/worktrees/<hash>/<slug>-<id>/` — per-task worktree checkout. **Outside the project tree on purpose** (2026-05-10): nesting them in `<repo>/.lattice/` caused three `.git`-deletion incidents. Only the `worktrees/<name>/gitdir` pointer lives in `<repo>/.git`.
 - `~/.lattice/snapshots/<hash>/<ts>-<label>/` — copy-based working-tree snapshots (replace `git stash --include-untracked`, which silently lost data); orphans restored at boot. Also holds `*-discarded-worktree-*` **archives** of a force-removed worktree's uncommitted edits — keep-for-the-user, never auto-restored, newest 20 plus any under 7 days kept; if archiving fails the worktree is not removed. See `backend/src/worktree/snapshot/CLAUDE.md`.
 - `~/.lattice/git-backups/<hash>/<ts>.bundle` — `git bundle --all` before a merge run (one under 10 min old is reused; skipped when disk is short; ≤5, ≤8 GB per project — `backend/src/worktree/CLAUDE.md`). Last-resort recovery: `git fetch <bundle>`.
-- `~/.lattice/logs/` — crash forensics. **Check here first when something died** (the backend's console belongs to the user's terminal; the terminal-server runs `stdio: 'ignore'`): `crash-*.log`, `report.*.json` (JS-heap OOM / V8 fatal only — absence ≠ no crash), `live-*.log`, `crash-*-nojs.log` (the only record of a death that ran no JS: native fault, OS OOM-kill, `taskkill /F`), `dev-runner.log` (exit codes, Windows faults decoded). See `backend/src/CLAUDE.md`.
+- `~/.lattice/logs/` — crash forensics + memory time series (`mem-{backend,terminal-server,browser}.jsonl`, on-demand `heap-*.heapsnapshot`; the `[mem]` console line every 5 min — `backend/src/memDiag/CLAUDE.md`). **Check here first when something died** (the backend's console belongs to the user's terminal; the terminal-server runs `stdio: 'ignore'`): `crash-*.log`, `report.*.json` (JS-heap OOM / V8 fatal only — absence ≠ no crash), `live-*.log`, `crash-*-nojs.log` (the only record of a death that ran no JS: native fault, OS OOM-kill, `taskkill /F`), `dev-runner.log` (exit codes, Windows faults decoded). See `backend/src/CLAUDE.md`.
 - `~/.lattice/globalSettings.json` — machine-global settings (`backend/src/globalSettings/`); `~/.lattice/mcpSecrets.json` (`0600`) — MCP secrets; `~/.lattice/piManagedProviders.json` — Pi providers Lattice owns in `~/.pi/agent/models.json`.
 - `~/.lattice/bin/lattice-callback.cjs` + `~/.lattice/callback-outbox/` — durable completion callbacks: every Stop hook records, POSTs with retries, and the backend replays whatever was undelivered while it restarted (`backend/src/callbackOutbox/`).
 - `~/.lattice/opengrep/` — the Lattice-managed Opengrep engine + rule packs (`backend/src/opengrep/`).
@@ -151,298 +151,68 @@ idempotent on half-done tasks).
 
 ## HTTP / WS surface
 
-Full per-route detail: the route modules (`backend/src/routes/CLAUDE.md`) and
-the agent-facing `backend/src/latticeApiDocs/*.template.md`.
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/api/health` | Liveness probe |
-| GET | `/api/harnesses?refresh=1` | Detected agent CLIs (`claude` / `pi` / `codex`) |
-| GET | `/api/default-root` | Default project for the UI |
-| GET | `/api/scan?path=` | Recursive source-file scan, gitignore-aware |
-| GET | `/api/search?project=&q=&regex=` | File-contents search → `{matches, scanned, truncated}` (abs paths == graph node ids); `*`/`?` wildcards unless `regex=1` |
-| GET | `/api/health/dead-code?project=` | Files confidently flagged unreachable (60s-memoized) |
-| GET | `/api/git-history?path=&limit=` | Timeline history (`git log --name-status -M`) + `deletedPaths` for ghost nodes |
-| GET | `/api/git-branch?path=` | Current branch (one-shot; navbar uses `/ws/git-branch`) |
-| GET | `/api/list-dir?path=` | Folder browser |
-| POST | `/api/create-dir` | Folder-picker create-directory `{parent, name}` |
-| GET | `/api/settings?project=` | Read per-project user settings |
-| PATCH | `/api/settings?project=` | Merge-update per-project user settings |
-| GET | `/api/instruction-templates?project=` | Editable agent brief templates (default, current, `{{token}}` docs); saved via PATCH `/api/settings` |
-| GET | `/api/harness-system-prompts?project=` | Per-harness system-prompt editor data (default overview + Append/Replace override) |
-| GET | `/api/global-settings` | Read machine-global settings |
-| PATCH | `/api/global-settings` | Update machine-global settings (softCap applied live; `piProviders` reconciled into models.json) |
-| GET | `/api/pi-models` | Pi models + curated "Pi — X" `menu` + Pi's `defaultPattern` |
-| POST | `/api/pi-endpoints/probe` | `{baseUrl, apiKey?, headers?}` → models an OpenAI-compatible server serves (+ context window) |
-| GET | `/api/mcp-catalog` | Merged MCP catalog (definitions only, no secrets) |
-| GET | `/api/mcp-secrets` | Redacted MCP secret presence (booleans + last-4 hints) |
-| PATCH | `/api/mcp-secrets` | Set/clear one secret `{serverId, envVar, value}` |
-| GET | `/api/mcp-env-presence` | Which required MCP env vars exist in the backend env |
-| POST | `/api/mcp/validate` | `{serverId}` → run the server's key validator |
-| GET | `/api/mcp-import/scan?project=` | Scan other tools' MCP configs (secrets redacted) |
-| POST | `/api/mcp-import` | Apply selected imports `{ids, project?}` |
-| GET | `/api/opengrep/status?project=` | Engine / install job / rule packs / running scan / last scan |
-| POST | `/api/opengrep/install` | Start the managed engine install (`202`, user-clicked only) |
-| POST | `/api/opengrep/rules/install` | `{packId}` fetch/update a rule pack (**409** while a scan runs) |
-| DELETE | `/api/opengrep/rules/:packId` | Remove a rule pack (**409** while a scan runs) |
-| POST | `/api/opengrep/scan` | `{project, targets?, mode?: full/incremental, includeMarkdown?}` run a scan (default full; **409** `busy`/`not-installed`/`no-rules`/`scan-cancelled`/`install-failed`, **400** `bad-target`) |
-| POST | `/api/opengrep/scans/:id/cancel` | `{project}` cancel that exact running scan; waits for the engine to settle |
-| GET | `/api/opengrep/scans?project=` | Recent scan records |
-| GET | `/api/opengrep/scans/:id?project=&format=md&…` | One scan (`latest` ok) as the filtered agent digest; `format=graph` gives complete findings, per-file severity/coverage and freshness |
-| POST | `/api/opengrep/ignore` | `{project, ruleIds?, fingerprints?}` append to the project's Opengrep ignore lists |
-| GET | `/api/project-env?project=` | Detected package-manager envs + "don't reinstall" notes |
-| GET | `/api/projects` | Known project roots + hashes |
-| POST | `/api/project-init/preview` | `{project, gitignore?}` → what a first commit would capture |
-| POST | `/api/project-init` | `git init -b main` + `.gitignore` + first commit (`409`/`422`/`500`/`503`; see `backend/src/projectInit/`) |
-| GET | `/api/tasks?project=&status=&ids=&fields=&clip=&since=&limit=&format=&confirm_large=` | List tasks — progressive-disclosure defaults (active lanes, compact, clipped, newest 100; **413** over 256 KB). See `routes/tasks/listQuery.ts` |
-| GET | `/api/tasks/summary?project=` | Counts + per-lane cost, under 1 KB — the intended FIRST call for an agent |
-| GET | `/api/tasks/search?project=&q=&status=&limit=` | AND-of-terms task search with snippets (default `status=all`) |
-| GET | `/api/tasks/worktree-modified?project=` | Files changed by each unmerged task (graph `W` overlay) |
-| GET | `/api/tasks/:id` | Fetch a single task |
-| POST | `/api/tasks` | Create `{project, title, description?}` |
-| POST | `/api/tasks/batch` | Batch-create (JSON or `text/markdown` `# Heading` blocks) |
-| POST | `/api/tasks/bulk-update` | Apply multiple `{id, patch}` updates |
-| POST | `/api/tasks/upsert` | Upsert from markdown/JSON (`{id=...}` headings update) |
-| POST | `/api/tasks/transition` | Bulk status transition by `ids` or `{fromStatus, project}` |
-| PATCH | `/api/tasks/:id` | Update `title` / `description` / `status` (JSON or markdown body) |
-| POST | `/api/tasks/reorder` | Persist per-lane order `{project, status, ids}` |
-| POST | `/api/tasks/:id/append-summary` | Append a summary beneath the description |
-| DELETE | `/api/tasks/:id` | Remove + tear down worktree; a branch with unmerged commits is kept (`keptBranch`) |
-| POST | `/api/tasks/:id/cancel-queued-run` | Drop a queued run back to plain Open |
-| POST | `/api/tasks/:id/run` | Enqueue a run → `{accepted, queued}` (pty via `task-spawned` WS) |
-| POST | `/api/tasks/:id/resume` | Enqueue a re-spawn in the existing worktree → `{accepted, queued}` |
-| POST | `/api/tasks/:id/complete` | Stop-hook callback (in_progress → ready_to_merge) |
-| POST | `/api/tasks/:id/activity` | Worktree agent tool-use / subagent hook → `task-activity` WS (graph beams) |
-| POST | `/api/agent-activity/:token` | Same, for a non-worktree session (push / workflow step / post-merge hook) |
-| POST | `/api/project-instrumentation` | `{project}` install/remove activity hooks in the project's `.claude/settings.local.json` |
-| POST | `/api/project-activity/:token` | Hook callback for any project-instrumented session, keyed by `session_id` |
-| POST | `/api/tasks/:id/merge` | Attempt merge; conflict pre-creates resolver pty, returns `serverId` |
-| POST | `/api/tasks/:id/merged` | Resolver callback after a successful merge |
-| POST | `/api/tasks/:id/merge-aborted` | Resolver callback if it gave up |
-| POST | `/api/tasks/:id/stash-resolved` | Snapshot-conflict resolver callback |
-| POST | `/api/merge-runs` | Body `{project}` — start a merge-all run |
-| GET | `/api/merge-runs/active?project=` | Active run for a project, or `null` |
-| GET | `/api/merge-runs/recovery?project=` | Persisted recovery attempts and pause reasons |
-| GET | `/api/merge-runs/:id` | Run snapshot |
-| POST | `/api/merge-runs/:id/cancel` | Request cancellation (finishes current task) |
-| POST | `/api/merge-runs/:id/stash-resolved` | Post-run snapshot-conflict resolver callback |
-| GET | `/api/workflows?project=` | List workflow definitions |
-| POST | `/api/workflows` | Create a workflow definition |
-| PATCH | `/api/workflows/:id` | Update (optional `?project=` pin → 404 cross-project) |
-| DELETE | `/api/workflows/:id` | Delete (optional `?project=` pin) |
-| POST | `/api/workflows/:id/run` | Start a run; one per project (**409** `active-run-exists`); optional `?project=` pin → 404 cross-project |
-| POST | `/api/workflow-prompt-customizations` | Spawn a harness to tailor a step prompt |
-| GET | `/api/workflow-prompt-customizations/:id` | Poll customization status/result |
-| POST | `/api/workflow-prompt-customizations/:id/complete` | Harness callback with the customized prompt |
-| POST | `/api/workflow-runs/:runId/steps/:n/complete` | Step Stop-hook callback — advances |
-| GET | `/api/workflow-runs/:runId?project=` | One run incl. recently finished (404 once forgotten) |
-| POST | `/api/workflow-runs/:runId/cancel` | Cancel an active run (optional `?project=` pin) |
-| GET | `/api/workflow-runs/active?project=` | Active workflow runs |
-| GET | `/api/git-check?path=` | Repo probe: `hasGit` + walk-up `git` state (Git Setup chip) |
-| POST | `/api/push-runs` | Start a one-off push session |
-| GET | `/api/push-runs/:id` | Push-run status |
-| POST | `/api/push-runs/:id/done` | Push-run Stop-hook callback |
-| DELETE | `/api/push-runs/:id` | Forget a completed push run |
-| POST | `/api/qa-runs` | Start a QA e2e Playwright session for a QA-lane task |
-| GET | `/api/qa-runs/:id` | QA-run status/verdict |
-| POST | `/api/qa-runs/:id/verdict` | Structured verdict; confident PASS may promote qa → done |
-| POST | `/api/qa-runs/:id/done` | QA-run Stop-hook backstop |
-| DELETE | `/api/qa-runs/:id` | Forget a completed QA run |
-| GET | `/api/post-merge-hooks/active?project=` | Active or most-recent post-merge hook |
-| POST | `/api/post-merge-hooks/:id/complete` | Post-merge hook completion callback |
-| POST | `/api/post-merge-hooks/:id/abort` | Abort an active post-merge hook |
-| GET | `/api/terminals` | Debug: active pty sessions |
-| POST | `/api/terminals` | Pre-spawn a sidebar harness pty through the spawn chokepoint → `serverId` |
-| DELETE | `/api/terminals/:id` | Kill a pty (ends its tab; aborts an owning post-merge hook) |
-| GET | `/api/terminal-tabs?project=` | Durable terminal-tab records |
-| POST | `/api/terminal-tabs/restore?project=` | Rebuild sidebar tabs (adopt live, relaunch dead into their conversation) |
-| PATCH | `/api/terminal-tabs?project=` | Persist tab order `{order}` |
-| PATCH | `/api/terminal-tabs/:id?project=` | Rename a tab `{label}` |
-| DELETE | `/api/terminal-tabs/:id?project=` | Close a tab (never relaunched) and kill its pty (aborts an owning post-merge hook) |
-| GET | `/api/spawn-queue` | Debug: spawn-queue snapshot |
-| POST | `/api/internal/restart-drain/prepare` | Dev-runner restart drain (internal, token-guarded; see `backend/src/restartDrain/`) |
-| POST | `/api/internal/restart-drain/cancel` | End a drain not followed by a restart (internal) |
-| GET | `/api/internal/restart-drain/lock-holders` | Is each run.lock holder parked on a live agent? (internal) |
-| GET | `/api/terminal-server/status` | Is the detached terminal-server current / stale / absent |
-| GET | `/api/debug/memory` | Memory debug snapshot: this process's sample + gauges, trend, heap spaces, last browser samples (`memDiag/`) |
-| POST | `/api/debug/heap-snapshot` | Write a V8 `.heapsnapshot` to `~/.lattice/logs/` (blocks the loop for seconds; explicit use only) |
-| POST | `/api/debug/client-memory` | A browser tab's periodic memory sample → `[mem] browser#…` console line |
-| WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
-| WS | `/ws/terminal-activity?project=` | Busy harness ptys `{busy: serverId[]}` (sidebar spinner; machine-wide) |
-| WS | `/ws/terminal-tabs?project=` | Terminal-tab registry, live |
-| WS | `/ws/tasks?project=` | Task updates + `task-spawned` / `task-spawn-failed` / `task-activity` / `agent-activity` |
-| WS | `/ws/agent-sessions?project=` | Presence of non-worktree agent sessions (orange graph nodes) |
-| WS | `/ws/merge-runs?project=` | Merge-run progress + resolver spawn events |
-| WS | `/ws/post-merge-hooks?project=` | Post-merge hook state |
-| WS | `/ws/workflows?project=` | Workflow definition updates |
-| WS | `/ws/workflow-runs?project=` | Workflow run lifecycle + step terminal spawns |
-| WS | `/ws/health?project=` | Incremental file-health updates |
-| WS | `/ws/git-branch?project=` | Current branch, pushed on every `.git/HEAD` change |
-| WS | `/ws/git-status?project=` | Git-status signature (HEAD + dirty set); timeline refetches on change |
-| WS | `/ws/harnesses` | Harness availability snapshots |
-
-Every project-scoped route refuses a relative or drive-relative `project` /
-`path` / `cwd` with a **400** (shell-stripped backslashes: `C:developmentproj`
-would otherwise resolve under the backend's cwd) — `routes/projectParam.ts`,
-`routes/tasks/requestUtils.ts`. All WS endpoints share the HTTP server through
-one `upgrade` dispatcher (`noServer: true`), routed by `pathname`
-(`backend/src/ws/`).
+The full route map (every HTTP route + WS endpoint, drift-tested) is
+[backend/src/routes/ROUTES.md](backend/src/routes/ROUTES.md); per-router
+detail in `backend/src/routes/CLAUDE.md`. Two rules worth knowing up front:
+every project-scoped route refuses a relative or drive-relative `project` /
+`path` / `cwd` with a **400** (`routes/projectParam.ts`), and all WS endpoints
+share the HTTP server through one `upgrade` dispatcher (`backend/src/ws/`).
 
 ## Conventions
 
-Each bullet names the invariant; the linked `CLAUDE.md` owns the detail.
+Each bullet is an invariant plus the doc that owns the detail — read that doc
+before changing the area.
 
-- **No MUI.** UI is hand-written CSS — `frontend/src/index.css` is an ordered
-  `@import` list over feature files in `frontend/src/styles/` (see
-  `frontend/src/styles/CLAUDE.md`) — plus `lucide-react` icons.
-- **`frontend/src/extensionStyles.ts`** is the single source of truth for
-  sprite shapes/colors per file extension (3D graph + Legend). To add a
-  language, add an entry there.
-- **`frontend/src/taskColors.ts`** is the single source of truth for per-task
-  accent colors (card edge, graph agent node, `W` rings) and session colors
-  (Claude orange, Codex white, Pi blue). Each running task keeps a stable palette
-  slot (`Task.colorIndex`, `backend/src/routes/tasks/colorSlot.ts`), so colors
-  never reshuffle when a sibling finishes.
-- **Graph overlays** — hold-key or click-to-pin chips in the overlay key:
-  `H` health, `Z` lines of code, `D` dead code, `W` worktree-modified files,
-  `Alt` labels. Metric views (`H`/`Z`/`D`) hide ghost nodes and
-  metrics-ignored extensions and suppress change-rings. Dead code =
-  reachability from detected entry points (`backend/src/health/crossFile/`).
-  Camera/sprite/filtering rules (OrbitControls, +Y up, `nodeVisibility`
-  filtering): `frontend/src/components/forceGraph/CLAUDE.md`.
-  The **Security** chip appears only once a usable OpenGrep engine (managed or
-  external) is detected and scans only on an explicit click — never on graph
-  load, file change or project switch; the rest is `useSecurityOverlay`
-  (`forceGraph/hooks/CLAUDE.md`).
-- **Agent overlay (graph).** Every in-progress agent (Claude, Codex, Pi) is a
-  node with TTL-fading focus beams to the files it touches and a current-file
-  label; subagents are satellites with their own labels (`showSubagentLabels`
-  graph setting, off by default, prefixes the `agent_type`). Claude hooks, Codex
-  `.codex/hooks.json` and the Pi `lattice-activity.ts` extension all decode in
-  `backend/src/activityHook.ts` (hosted-Codex rollout fallback:
-  `backend/src/terminalRegistry/CLAUDE.md`; non-worktree session colors:
-  `backend/src/agentSessions.ts`).
-- **Any agent session in an opened project** (even one the user started) gets a
-  node: project open merges activity hooks into the project's
-  `.claude/settings.local.json` (`projectClaudeHooks.ts`, opt-out
-  `instrumentProjectClaudeSessions`); user-opened Codex tabs get per-launch
-  `--config hooks.*` overrides plus `--dangerously-bypass-hook-trust`
-  (`projectCodexHooks.ts`, nothing written to the repo or `~/.codex`); Pi gets a
-  project-root activity extension. Presence follows turns, not sessions. A
-  session must be (re)started to pick up new hooks. See
-  `backend/src/projectClaude/CLAUDE.md`.
-- **Codex ≥0.157 runs hook commands through PowerShell 5.1 on Windows**: a bare
-  `@-` is a parse error there (and bare `curl` is `Invoke-WebRequest`), so Codex
-  hooks post with `cmd /c curl … -d@- <url>`, never `--data-binary @-`.
-- **MCP servers** are curated once in Lattice and injected into every Claude /
-  Codex / Pi session it spawns, resolved at the one spawn chokepoint
-  (`resolveHarnessSpawnBody`). Third-party servers are off by default, one
-  switch per harness; secrets reach servers by env name only. The one
-  `defaultEnabled` server is Lattice's own `lattice` board server
-  (`backend/src/latticeMcp/`) — **never set `defaultEnabled` on a third-party
-  entry**. Task-worktree sessions get a reduced tool set and, by default, ONLY
-  `lattice`. Playwright has two independent toggles (global vs. QA-runs-only).
-  See `backend/src/mcp/CLAUDE.md`.
-- **QA e2e runs** (`backend/src/qaRuns/`) — when the QA-lane Globe is on, ▶
-  spawns a Playwright-scoped Claude that tests the merged task, appends a
-  verdict, and posts a structured one; a confident PASS auto-advances qa → done.
-- **Opengrep (SAST) is a pre-run tool, not a dependency.** Engine and rule
-  packs are downloaded at the user's click (pinned SHA-256 / pinned commits) into
-  `~/.lattice/opengrep/`; **Lattice stays MIT because nothing third-party is
-  ever committed or bundled** (guard test `opengrepNoVendoredAssets`). Agents
-  see a filtered, fingerprint-deduped digest, never raw JSON — via the Opengrep
-  workflow step (`OPENGREP_FINDINGS.md`), the `opengrep_*` MCP tools, or
-  `/api/opengrep/*`. Task marker `opengrep:<fp>` on its own line. See
-  `backend/src/opengrep/CLAUDE.md`.
-- **Pi sub-agents** (`@tintinweb/pi-subagents`) auto-install into
-  `~/.lattice/pi-extensions/` when `pi` is detected and load via a cwd-exact shim
-  (`.pi/extensions/lattice-subagents.ts`) in every Pi cwd Lattice creates and at
-  the project root — the user's global Pi config is never touched. See
-  `backend/src/piSubagents/CLAUDE.md`.
-- **Pi model selection** is a second field `piModel` (`provider/model`) beside
-  the `harness` enum — never a composite — applied per spawn as `--model` by
-  `buildPiModelFlag` (`backend/src/agentCommandBuilder.ts`).
-  **The model half may contain further slashes**
-  (an OpenAI-compatible server reports e.g.
-  `my-vllm/meta-llama/Llama-3.1-8B-Instruct`), **and the frontend mirror
-  `PI_MODEL_RE` (`frontend/src/harnesses.ts`) must stay in lockstep with the
-  backend pattern: a pattern either side rejects has its `--model` flag
-  *silently dropped*, so the session runs Pi's default model instead of the
-  chosen one.** Discovery, probes and Pi-config management:
-  `backend/src/piModels/CLAUDE.md`.
-- **Tasks store** is in-memory keyed by project with debounced JSON persistence;
-  `~/.lattice/projects.json` is consulted lazily so Stop-hook callbacks resolve
-  task ids across sessions (`backend/src/taskCache/`).
-- **Per-project UI state** — filter/panel state in `localStorage` under
-  `lattice.<thing>.<projectPath>`; user settings in
-  `<project>/.lattice/userSettings.json` via `/api/settings` (type in
-  `backend/src/userSettings.ts`, frontend helpers in
-  `frontend/src/api/settings.ts`).
-- Prefer editing existing files; don't introduce new abstractions for one-off
-  tweaks.
-- **Per-tab agent spinner** (`backend/src/terminalActivity.ts` →
-  `/ws/terminal-activity`): Codex is classified by its explicit status terminal
-  title (injected per launch, never global config), never by printable output;
-  Claude/Pi by sustained printable output the user isn't driving; harness
-  sessions only. Backend-derived because unopened tabs have no WS. **Never kill
-  live ptys to upgrade this indicator.** See
-  `frontend/src/components/sidebar/CLAUDE.md`, `backend/src/terminal/CLAUDE.md`.
-- **Terminal tabs survive restarts and reboots**: every pty is recorded in the
-  per-project registry; the harness conversation is pinned at spawn (Claude
-  `--session-id`, Pi `--session-id lattice-<uuid>`, Codex thread id learned
-  afterwards), and on project open dead tabs are relaunched *into their previous
-  conversation*. One-shot runs (push / QA / post-merge / workflow steps) are
-  owned by their own recovery and never resurrected here. See
-  `backend/src/terminalRegistry/CLAUDE.md`.
-- **Terminal pty pre-spawn**: task/workflow/conflict spawns pre-create the pty
-  and return a `serverId`; the frontend lazy-mounts `<TerminalPane>` on first
-  activation so "Run All" can't blow past Chrome's per-page WebGL context cap.
-- **Codex trust is per terminal, not global** — a one-shot
-  `projects={'<cwd>'={trust_level='trusted'}}` override via child-only env;
-  never writes `~/.codex/config.toml` (`backend/src/terminal/CLAUDE.md`).
-- **Per-harness system-prompt overrides** (Append / Replace per harness,
-  `UserSettings.harnessSystemPrompts`) are injected at the spawn chokepoint.
-  Claude's built-in prompt is proprietary (the editor says so; the override
-  still works); replacing is discouraged. See
-  `backend/src/harnessSystemPrompts/CLAUDE.md`.
-- **Lattice self-discovery is a system-prompt preamble** on that same append
-  channel (`harnessSystemPrompts/latticePreamble.ts`), pointing at the project's
-  auto-generated `.lattice/LATTICE_API.md` — a short index (< 5 KB, test-enforced) that
-  points at `.lattice/LATTICE_API_RECIPES.md`; both regenerate from
-  `backend/src/latticeApiDocs/*.template.md` and are drift-tested against the
-  live route table. It is a system prompt (not a typed first turn) so it stays
-  invisible and out of Claude Code's session naming. **Two earlier channels
-  could never work and must not be reintroduced**: `LATTICE_*` pty env vars
-  (removed — no harness reads the environment into its context) and the dim
-  terminal banner (kept, but it lands in the scrollback the browser replays, so
-  the pty child never receives it — it informs the *user*, not the agent).
-- **Task agents don't run tests.** Task run/resume sessions and their worktree
-  merge resolvers are told — in the brief's `{{verification}}` block AND their
-  system prompt — to run no test suite, build or type-check, overriding repo
-  CLAUDE.md/AGENTS.md and the task description (`backend/src/taskVerification.ts`).
-  A workflow's Run tests step verifies merged work once instead. Per-project
-  opt-in `taskAgentTypecheck` allows a type-check of the edited package(s).
-- **Workflow "Run tests" step** (kind `test`, usually `… → Merge → Run tests →
-  Push`) runs the project's tests on the main checkout, commits fixes with
-  `git commit -- <paths>` only, leaves the user's WIP alone, and **never stops
-  the workflow** (skip / failure / timeout = note + advance). It holds the
-  project `run.lock` non-lendably, so manual Merge gets a 409 meanwhile. See
-  `backend/src/workflowRuns/testStep/CLAUDE.md`.
-
-## Security finding review and triage
-
-Security findings review/triage (all project-scoped; source writes are proposed
-through ordinary Open tasks):
-
-| Method | Path | Purpose |
-|--------|------|---------|
-| GET | `/api/opengrep/triage?project=&findingId=` | Local disposition history (last 100) |
-| POST | `/api/opengrep/triage` | `{project, scanId, findingId, status, reason, owner?, reviewAt?}` local ignore/defer/reopen |
-| POST | `/api/opengrep/shared-ignore` | `{project, scanId, findingId, reason}` create a shared source/CI suppression review task |
-| GET | `/api/opengrep/reviews?project=` | Review session metadata and current console identity; no recommendation reports |
-| POST | `/api/opengrep/reviews` | `{project, scanId, findingIds, harness, piModel?}` start an interactive review of current open findings; harness waits for the user's choice |
-| POST | `/api/opengrep/reviews/:id/done?project=` | Mark a review turn awaiting decision; durable callback keeps the conversation open |
-| POST | `/api/opengrep/reviews/:id/cancel` | `{project}` end this conversation and reclaim guarded scratch; agreed tasks remain |
+- **UI:** no MUI; hand-written CSS (`frontend/src/index.css` → `frontend/src/styles/`)
+  + `lucide-react`. Single sources of truth: `frontend/src/extensionStyles.ts`
+  (sprite shape/color per extension — add a language there) and
+  `frontend/src/taskColors.ts` (task/session colors; stable `Task.colorIndex` slots).
+- **Graph** (`frontend/src/components/forceGraph/CLAUDE.md`): overlays `H`/`Z`/`D`/`W`/`Alt`;
+  filter through `nodeVisibility`, never structural add/remove; render-on-demand
+  idle reasons. The Security chip scans only on an explicit click — never on
+  load, file change or project switch.
+- **Agent presence:** every agent (Claude/Codex/Pi; task, workflow or
+  user-started) is a graph node with focus beams; every hook shape decodes in
+  `backend/src/activityHook.ts`; opening a project installs activity hooks
+  (`backend/src/projectClaude/CLAUDE.md`). Codex ≥0.157 runs hooks through
+  PowerShell 5.1: post with `cmd /c curl … -d@- <url>`, never `--data-binary @-`.
+- **MCP** (`backend/src/mcp/CLAUDE.md`): resolved once at the spawn chokepoint
+  (`resolveHarnessSpawnBody`); third-party servers off by default; secrets by
+  env name only; **never set `defaultEnabled` on a third-party entry** (only
+  Lattice's own `lattice` server has it).
+- **Opengrep** (`backend/src/opengrep/CLAUDE.md`): downloaded on the user's click
+  into `~/.lattice/opengrep/`; **nothing third-party is ever committed or
+  bundled** (keeps Lattice MIT; guard test `opengrepNoVendoredAssets`). Agents
+  see digests, never raw JSON.
+- **Pi** (`backend/src/piModels/CLAUDE.md`, `backend/src/piSubagents/CLAUDE.md`):
+  `piModel` (`provider/model`; the model half may contain `/`) is a separate
+  field, never a composite with `harness`. The backend pattern and frontend
+  `PI_MODEL_RE` (`frontend/src/harnesses.ts`) must stay in lockstep — a model
+  either side rejects has its `--model` silently dropped. The user's global Pi
+  config is never touched.
+- **Terminals** (`backend/src/terminal/CLAUDE.md`, `backend/src/terminalRegistry/CLAUDE.md`,
+  `frontend/src/components/sidebar/CLAUDE.md`): tabs survive restarts (the
+  conversation is pinned at spawn and relaunched into); spawns pre-create the
+  pty and panes lazy-mount; Codex trust is a per-launch override, never
+  `~/.codex/config.toml`; **never kill live ptys** to upgrade an indicator or default.
+- **System prompts** (`backend/src/harnessSystemPrompts/CLAUDE.md`): per-harness
+  Append/Replace plus the Lattice preamble naming `.lattice/LATTICE_API.md`
+  (< 5 KB, generated from `backend/src/latticeApiDocs/`). Agent discovery goes
+  through the system prompt only — **never reintroduce `LATTICE_*` pty env vars
+  or rely on the terminal banner**; neither reaches the agent.
+- **Task agents don't run tests, builds or type-checks** (brief + system prompt,
+  `backend/src/taskVerification.ts`; per-project opt-in `taskAgentTypecheck`).
+  A workflow's Run tests step verifies merged work once, commits fixes by
+  explicit path only, and never stops the workflow
+  (`backend/src/workflowRuns/testStep/CLAUDE.md`). A confident QA-run PASS
+  auto-advances qa → done (`backend/src/qaRuns/`).
+- **State:** tasks are an in-memory per-project cache with debounced JSON
+  persistence (`backend/src/taskCache/`); per-project UI state is
+  `localStorage` `lattice.<thing>.<projectPath>` plus
+  `<project>/.lattice/userSettings.json` via `/api/settings`.
+- **Memory:** register a gauge (`registerMemGauge`) beside every long-lived
+  collection, listener set or GPU resource (`backend/src/memDiag/CLAUDE.md`).
+- Prefer editing existing files; no new abstractions for one-off tweaks.
 
 ## Ports
 
@@ -466,48 +236,7 @@ For a repo at `<repoRoot>` (with `<hash>` = `projectHash(repoRoot)`):
 - conflict-resolver instructions inside the worktree:
   `<worktree>/MERGE_INSTRUCTIONS.md`
 
-## Creating tasks via the API (e.g. for testing)
+## Manual testing
 
-To seed tasks programmatically, POST to `/api/tasks`:
-
-```bash
-curl -s -X POST http://127.0.0.1:5184/api/tasks \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "C:\\development\\lattice",
-    "title": "Bump version comment to 1.0.1",
-    "description": "in frontend/src/api/index.ts at the top of the file, add a comment `// version 1.0.1` (replacing any existing version comment)."
-  }'
-```
-
-The response is the new task with its `id`. Run a task with
-`POST /api/tasks/:id/run`.
-
-### Seeding low-change / high-conflict tasks for end-to-end testing
-
-To stress the merge pipeline, create N tasks that all touch the same one
-or two lines in the same file. Each task in isolation makes a tiny edit;
-when several land at the same time, every merge after the first one
-conflicts on the same hunk — exercising the resolver flow at scale.
-
-Pattern: ask each task to set the same constant to a different value at
-the top of one file. Example for Lattice's own repo, all 5 modifying
-`frontend/src/api/index.ts`:
-
-```bash
-for i in 1 2 3 4 5; do
-  curl -s -X POST http://127.0.0.1:5184/api/tasks \
-    -H "Content-Type: application/json" \
-    -d "{
-      \"project\": \"C:\\\\development\\\\lattice\",
-      \"title\": \"version stamp ${i}\",
-      \"description\": \"At the very top of frontend/src/api/index.ts, add or replace a single line that reads exactly: // lattice-test-stamp: ${i}. Do not edit anything else in the file.\"
-    }"
-done
-```
-
-After seeding, click "Run All" on the Open lane to spawn worktree
-Claudes, then "Merge All" on Ready-to-Merge. The first merge will land
-clean; subsequent ones should hit a one-line conflict on the stamp,
-trigger a resolver Claude in each worktree, and (assuming the resolver
-just keeps the incoming side) finalize automatically.
+Seeding tasks / high-conflict merge scenarios against a live instance:
+[docs/MANUAL_TESTING.md](docs/MANUAL_TESTING.md).

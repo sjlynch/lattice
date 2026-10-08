@@ -60,7 +60,7 @@ importing them by relative path.
 - `projectGit`, `cleanupSafety`, `pruneReparsePoints` — `.git`-deletion defences: the git subcommand whitelist, worktree-path / reparse-point throw-guards.
 - `repoIntegrity` — the merge-run circuit breaker (defence #6): fires on a vanished `.git` or non-forward HEAD, never on a fast-forward.
 - `gitIdentityUntouched` — no shipped source writes the host's git identity; every commit-instructing brief keeps the per-commit `-c` recovery.
-- `latticeApiDocsDrift` — the API doc templates and the root `CLAUDE.md` HTTP table vs the live router; a new route fails until documented or added to `UNDOCUMENTED_ROUTES`.
+- `latticeApiDocsDrift` — the API doc templates and `routes/ROUTES.md` vs the live router; a new route fails until it has a ROUTES.md row and is documented for agents or added to `UNDOCUMENTED_ROUTES`.
 - `latticeApiDocs` — the generated `LATTICE_API.md` index (read whole on every Lattice question) must stay under 5 KB, even for a long project path.
 - `defaultPromptMigrations` — backend built-in step prompts must match the frontend `prompts/*.md` bytes.
 - `regExpTemplateEscapes` — no ``new RegExp(`…`)`` template in `backend/src`/`frontend/src` may use a single-backslash escape (`\.` is lost to `.` in a template literal).

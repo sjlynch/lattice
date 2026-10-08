@@ -54,9 +54,9 @@ Agent-facing API reference assets; rendering lives in `../latticeApiDocs.ts`.
   copies both templates into dist during build and dev startup; keep new
   runtime assets in its explicit copy list.
 - `../__tests__/latticeApiDocsDrift.test.ts` checks both templates against live
-  routes and checks the root `CLAUDE.md` HTTP table. New routes need agent
-  documentation or an intentional `UNDOCUMENTED_ROUTES` exclusion with a
-  reason; keep the root HTTP table exhaustive and remove stale entries.
+  routes and checks the exhaustive route map `../routes/ROUTES.md`. New routes
+  need agent documentation or an intentional `UNDOCUMENTED_ROUTES` exclusion
+  with a reason, plus a ROUTES.md row; remove stale entries.
 
 Reference commands from `backend/`: `npm run build`, `npm test`,
 `npx tsc --noEmit`.

@@ -132,7 +132,7 @@ task records, and skips the whole pass when the terminal-server is unreachable
   waits on a session boot just re-adopted — a Merge step with In-Progress and
   Ready-to-Merge empty waiting out a live post-merge hook, a Push step
   re-attaching to its live push session (`workflowRunResume.ts`
-  `waitingOnLiveSession`): its checkpoint cannot move while that agent works,
+  `isWaitingOnLiveSession`): its checkpoint cannot move while that agent works,
   and charging it paused a healthy run after three restarts.
   Workflow step/task-lane progress and remaining merge-task IDs reset budgets.
   Only an explicit user POST `/api/merge-runs` resets the merge allowance;

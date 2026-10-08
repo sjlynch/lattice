@@ -34,7 +34,8 @@ export type TerminalEnded = {
 export type AgentSessionRef = {
   harness: AgentHarness;
   id: string;
-  source: 'minted' | 'rollout-scan';
+  // Mirrors backend `AgentSessionSource` (backend/src/terminalRegistry/types.ts).
+  source: 'minted' | 'rollout-scan' | 'transcript-scan' | 'command';
   ambiguous?: boolean;
 };
 

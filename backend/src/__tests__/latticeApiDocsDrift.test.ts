@@ -32,7 +32,11 @@ const TEMPLATE_PATHS = [
   'LATTICE_API.template.md',
   'LATTICE_API_RECIPES.template.md',
 ].map((name) => fileURLToPath(new URL(`../latticeApiDocs/${name}`, import.meta.url)));
-const ROOT_CLAUDE_MD = fileURLToPath(new URL('../../../CLAUDE.md', import.meta.url));
+// The exhaustive route map. It used to be the root CLAUDE.md's HTTP table, but
+// that file is auto-loaded into EVERY agent session (task worktrees included),
+// so an always-growing 12 KB table there cost every agent context it rarely
+// needed. The root now links here instead.
+const ROUTE_MAP_MD = fileURLToPath(new URL('../routes/ROUTES.md', import.meta.url));
 
 // ---------------------------------------------------------------- route table
 
@@ -336,22 +340,22 @@ test('UNDOCUMENTED_ROUTES has no stale entries', () => {
   );
 });
 
-test('the root CLAUDE.md HTTP table covers every route', () => {
-  // The other half of the docs problem: CLAUDE.md's HTTP/WS table is what every
-  // agent working ON Lattice reads. Unlike LATTICE_API.md it aims to be
+test('the routes/ROUTES.md table covers every route', () => {
+  // The other half of the docs problem: ROUTES.md is the route map every agent
+  // working ON Lattice is pointed at. Unlike LATTICE_API.md it aims to be
   // exhaustive, so the contract here is total coverage in both directions.
-  const md = fs.readFileSync(ROOT_CLAUDE_MD, 'utf8').replace(/\r\n?/g, '\n');
+  const md = fs.readFileSync(ROUTE_MAP_MD, 'utf8').replace(/\r\n?/g, '\n');
   const rows = new Set<string>();
   for (const m of md.matchAll(
     /^\|\s*(GET|POST|PATCH|PUT|DELETE)\s*\|\s*`([^`]+)`\s*\|/gm,
   )) {
     rows.add(`${m[1]} ${normalizePath(m[2].split('?')[0].replace(/\/$/, ''))}`);
   }
-  assert.ok(rows.size > 50, `CLAUDE.md HTTP table failed to parse (${rows.size} rows)`);
+  assert.ok(rows.size > 50, `ROUTES.md table failed to parse (${rows.size} rows)`);
 
   const missing = [...NORMALIZED_ROUTES].filter((r) => !rows.has(r)).sort();
-  assert.deepEqual(missing, [], 'route(s) missing from the CLAUDE.md HTTP table');
+  assert.deepEqual(missing, [], 'route(s) missing from backend/src/routes/ROUTES.md');
 
   const dead = [...rows].filter((r) => !NORMALIZED_ROUTES.has(r)).sort();
-  assert.deepEqual(dead, [], 'CLAUDE.md HTTP table lists route(s) that no longer exist');
+  assert.deepEqual(dead, [], 'backend/src/routes/ROUTES.md lists route(s) that no longer exist');
 });

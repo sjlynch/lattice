@@ -41,8 +41,7 @@ export type GraphSettings = {
   // Render all links as a single batched `THREE.LineSegments` instead of one
   // `THREE.Line`/cylinder per link. Collapses E≈N per-frame draw calls to 1 —
   // the big lever for orbiting a settled graph (no physics) without the CPU
-  // spike. Flat 1px lines. Default-on. See `instancedLinks.ts` and
-  // `plans/graph-perf-plan.md`.
+  // spike. Flat 1px lines. Default-on. See `instancedLinks.ts`.
   batchedLinks: boolean;
   // Draw the directory→file links at all. Off hides every link (both the
   // batched and per-link renderers) via `linkVisibility`, leaving just the node

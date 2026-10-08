@@ -41,7 +41,7 @@ rule there traces to a real incident. Sub-docs: `merge/CLAUDE.md`, `snapshot/CLA
 - `projectGuards.ts` + `projectGuards/` (`gitignore.ts`, `repoExclude.ts`, `verify.ts`, `untrack.ts`) — project-repo hygiene facade; see `projectGuards/CLAUDE.md`.
 - `instructions.ts` + `instructions/` — `LATTICE_TASK.md` / `MERGE_INSTRUCTIONS.md` / `STASH_CONFLICT_*.md` renderers + `ensureValidStopHook`; see `instructions/CLAUDE.md`.
 - `envDetect.ts` + `envDetect/` (`detectors.ts` facade over `catalog.ts` + `markers.ts`; `notes.ts`) — `detectProjectEnvironments(repoRoot)`: root-only probe for package-manager envs whose heavy gitignored dir (`node_modules`, `.venv`, `target`, …) won't be in a fresh worktree — reported only when the marker exists, the dir is installed in the main checkout, and it's untracked. `describeProjectEnvs` layers `UserSettings.worktreeEnvNotes` (empty ⇒ suppressed) for the settings dialog; `resolveEnvNotesForInstructions` returns what the instruction writers inject.
-- `commands.ts` — pure command-string builders (claude/pi/codex; run/resume/conflict/stash; `buildPiModelFlag`). No I/O.
+- `commands.ts` — pure command-string builders (claude/pi/codex; run/resume/conflict/stash; re-exports `buildPiModelFlag` from `../agentCommandBuilder.ts`). No I/O.
 
 **Read-only queries**
 - `state.ts` — see the query map below.

@@ -1,6 +1,6 @@
-// Re-export facade. The scanner pipeline now lives in scanner/. Keeping this
-// file means routes/tests/watchers can continue importing from '../scanner.js'
-// regardless of which phase they need.
+// Re-export facade over the scanner pipeline in scanner/. Production code
+// imports the phase modules in scanner/ directly; this facade's remaining
+// importer is a test (`__tests__/userSettingsFieldShapes.test.ts`).
 export {
   collectSourceTree,
   collectSourceFiles,

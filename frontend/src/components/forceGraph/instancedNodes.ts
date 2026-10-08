@@ -3,7 +3,7 @@
 // one per distinct base style present (≈5–50, vs N). This removes the bulk of
 // the per-frame draw calls / scene traversal that makes orbiting a *settled*
 // graph spike CPU — the other half of the problem batched links solved (see
-// `instancedLinks.ts` and `plans/graph-perf-plan.md` Tier 3b).
+// `instancedLinks.ts`).
 //
 // WHAT. For every visible, non-ghost node we draw its base shape into a shared
 // `InstancedMesh` keyed by `styleKey` (shape+colors). The mesh reuses the EXACT

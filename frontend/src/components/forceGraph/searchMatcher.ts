@@ -1,5 +1,5 @@
 // Builds the case-insensitive matcher used by the graph search bar's filename
-// pass. KEEP IN SYNC with the backend's buildSearchRegExp (backend/src/
+// pass. KEEP IN SYNC with the backend's `regexSource` (backend/src/
 // search.ts) so a wildcard query selects the same files whether the hit came
 // from a filename match (here) or a file-contents match (backend).
 //
