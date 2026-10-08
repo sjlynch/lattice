@@ -41,7 +41,7 @@ test('resolver mutations borrow a waiting run owner and serialize against snapsh
 });
 
 for (const rejects of [false, true]) {
-  test(`escaped context queues behind a borrower after its originating mutation ${rejects ? 'rejects' : 'succeeds'}`, { timeout: 5_000 }, async (t) => {
+  test(`escaped context queues behind a borrower after its originating mutation ${rejects ? 'rejects' : 'succeeds'}`, { timeout: 20_000 }, async (t) => {
     const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-mutation-expired-'));
     const handle = await acquireProjectRunLock(project, 'merge-run');
     const resume = deferred();
@@ -126,7 +126,9 @@ for (const rejects of [false, true]) {
   });
 }
 
-test('release drains a queued successor after a borrowed mutation rejects', { timeout: 5_000 }, async (t) => {
+// Real file-lock I/O with retry backoff: under the parallel full suite these
+// legitimately took over 5 s (timed out twice); a deadlock still fails at 20 s.
+test('release drains a queued successor after a borrowed mutation rejects', { timeout: 20_000 }, async (t) => {
   const project = await fs.mkdtemp(path.join(os.tmpdir(), 'lattice-mutation-failed-borrower-'));
   const handle = await acquireProjectRunLock(project, 'merge-run');
   const owner = (await inspectProjectRunLock(project))?.holder;

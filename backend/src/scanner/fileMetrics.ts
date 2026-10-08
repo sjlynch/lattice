@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { analyzeFile, HealthCache, type HealthMetrics } from '../health/index.js';
+import { analyzeFile, HealthCache, type HealthMetrics } from '../health.js';
 import { readForAnalysis } from './readForAnalysis.js';
 import { registerMemGauge } from '../memDiag/gauges.js';
 import {

@@ -24,7 +24,7 @@
 // to in-thread analysis — i.e. this can never be WORSE than the previous
 // all-on-the-main-thread behaviour.
 
-import type { HealthMetrics } from '../health/index.js';
+import type { HealthMetrics } from '../health.js';
 import {
   DEFAULT_ANALYSIS_STALL_MS,
   createStallTimer,

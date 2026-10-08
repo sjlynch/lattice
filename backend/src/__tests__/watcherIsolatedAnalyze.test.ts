@@ -130,7 +130,10 @@ test('IsolatedAnalyzer: an unexpected worker exit rejects the in-flight job for 
 // on the main thread this test would hang forever).
 test('IsolatedAnalyzer (real worker): a hung file is skipped while normal files analyze and the main thread stays alive', async () => {
   const fixtureUrl = new URL('./helpers/hangAnalyzeFixture.mjs', import.meta.url).href;
-  const a = new IsolatedAnalyzer({ analyzeUrl: fixtureUrl, stallMs: 150 });
+  // The stall budget also covers the cold worker's startup; at 150 ms a loaded
+  // machine (the full suite runs files in parallel) killed the FIRST normal
+  // file as hung. The HANG fixture loops forever, so 1 s still catches it.
+  const a = new IsolatedAnalyzer({ analyzeUrl: fixtureUrl, stallMs: 1_000 });
   let ticks = 0;
   const ticker = setInterval(() => {
     ticks += 1;

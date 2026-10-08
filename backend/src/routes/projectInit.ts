@@ -10,7 +10,7 @@ import {
   previewProjectInit,
   ProjectInitError,
   type ProjectInitErrorCode,
-} from '../projectInit/index.js';
+} from '../projectInit.js';
 import { relativeProjectError } from './projectParam.js';
 
 const STATUS_FOR_CODE: Record<ProjectInitErrorCode, number> = {

@@ -1,4 +1,4 @@
-// Public surface of the Opengrep integration. See ./CLAUDE.md.
+// Public surface of the Opengrep integration. See ./opengrep/CLAUDE.md.
 export {
   OPENGREP_VERSION,
   OPENGREP_RELEASE_TAG,
@@ -6,15 +6,15 @@ export {
   findRulePackDef,
   type OpengrepRulePackDef,
   type OpengrepRulePackId,
-} from './versions.js';
-export { resolveOpengrep, resetOpengrepCache, type OpengrepResolution } from './detect.js';
+} from './opengrep/versions.js';
+export { resolveOpengrep, resetOpengrepCache, type OpengrepResolution } from './opengrep/detect.js';
 export {
   startOpengrepInstall,
   getOpengrepInstallJob,
   awaitOpengrepInstall,
   OpengrepInstallError,
   type OpengrepInstallJob,
-} from './install.js';
+} from './opengrep/install.js';
 export {
   installRulePack,
   removeRulePack,
@@ -24,8 +24,8 @@ export {
   RulePackError,
   type RulePackStatus,
   type RulePackJob,
-} from './rules.js';
-export { OpengrepRulesBusyError } from './rulesGate.js';
+} from './opengrep/rules.js';
+export { OpengrepRulesBusyError } from './opengrep/rulesGate.js';
 export {
   runOpengrepScan,
   startOpengrepScan,
@@ -47,7 +47,7 @@ export {
   OpengrepScanFailedError,
   type OpengrepScanRecord,
   type OpengrepScanRequest,
-} from './scan.js';
+} from './opengrep/scan.js';
 export {
   parseOpengrepJson,
   buildDigest,
@@ -60,7 +60,7 @@ export {
   type OpengrepFinding,
   type OpengrepSeverity,
   type DigestFilter,
-} from './digest.js';
+} from './opengrep/digest.js';
 export {
   effectiveOpengrepConfig,
   enabledPackIds,
@@ -69,7 +69,7 @@ export {
   type OpengrepGlobalSettings,
   type OpengrepProjectSettings,
   type EffectiveOpengrepConfig,
-} from './settings.js';
+} from './opengrep/settings.js';
 export {
   getOpengrepStatus,
   scanProjectWithDigest,
@@ -82,5 +82,5 @@ export {
   type OpengrepStatus,
   type ScanWithDigestResult,
   type DigestRenderContext,
-} from './service.js';
-export { projectRulesDir, PROJECT_RULES_RELATIVE_DIR, projectScansDir } from './paths.js';
+} from './opengrep/service.js';
+export { projectRulesDir, PROJECT_RULES_RELATIVE_DIR, projectScansDir } from './opengrep/paths.js';

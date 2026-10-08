@@ -7,7 +7,7 @@ import { Router } from 'express';
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { canonicalProjectPath, isRealAbsoluteProjectPath } from '../projectPath.js';
-import { probeProjectGit } from '../projectInit/index.js';
+import { probeProjectGit } from '../projectInit.js';
 import {
   cleanupPushSession,
   forgetPushRun,

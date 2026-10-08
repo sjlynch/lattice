@@ -22,7 +22,7 @@ import {
 import { pushAgentId } from '../../pushRuns/stopHook.js';
 import { unregisterAgentSession } from '../../agentSessions.js';
 import { proxyKillSession } from '../../terminalProxy.js';
-import { terminalRegistry } from '../../terminalRegistry/index.js';
+import { terminalRegistry } from '../../terminalRegistry.js';
 import type { Workflow } from '../../workflows.js';
 import { notify, subscribe, type WorkflowRun } from '../state.js';
 import { effectiveStepHarness, effectiveStepPiModel } from '../stepMarkdown.js';

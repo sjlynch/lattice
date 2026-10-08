@@ -1,14 +1,63 @@
-// Re-export shim: import resolution now lives under `./resolveImport/` as a set
-// of focused pure modules (case-folded filesystem index, extension/index
-// candidates + NodeNext .js→.ts remap, Python relative-import translation,
-// tsconfig alias resolution). Existing callers import `./resolveImport.js`; the
-// public surface is unchanged. See ./resolveImport/index.ts for the module map.
-export {
-  INDEX_FILES,
-  RESOLVE_EXTS,
-  normalizePythonRelativeImport,
-  resolvePythonAbsoluteImport,
-  resolveByAlias,
-  resolveImport,
-  tryAllExtensions,
-} from './resolveImport/index.js';
+// Import resolver: turn a module specifier (as written in `import "./foo"`) into
+// an absolute file path within the scanned tree. Best-effort — this isn't a full
+// module resolver (we don't read package.json) — but it's accurate enough for
+// fan-in/fan-out signals on well-organized projects.
+//
+// This is the orchestration core. The focused pieces live in sibling modules and
+// are re-exported here so `./resolveImport.js` stays a single import surface:
+//   - caseFold.ts             — case-insensitive filesystem index + lookup
+//   - extensionCandidates.ts  — RESOLVE_EXTS/INDEX_FILES + NodeNext .js→.ts remap
+//                               (`tryAllExtensions`)
+//   - pythonImports.ts        — Python relative-import (`.foo` / `..pkg`) translation
+//   - aliasResolution.ts      — tsconfig path-alias resolution (`resolveByAlias`)
+//
+// Resolution order: Python-relative normalization (Python importers only) →
+// tsconfig aliases → bare specs: Python absolute import (ancestor dirs) or
+// external-package bail → relative filesystem candidates.
+
+import path from 'node:path';
+import type { ParsedAlias } from '../tsconfig.js';
+import { tryAllExtensions } from './resolveImport/extensionCandidates.js';
+import { isRelativeSpec, resolveByAlias } from './resolveImport/aliasResolution.js';
+import { normalizePythonRelativeImport, resolvePythonAbsoluteImport } from './resolveImport/pythonImports.js';
+
+// Re-export the public surface so existing `./resolveImport.js` imports are
+// unaffected by the split.
+export { RESOLVE_EXTS, INDEX_FILES, tryAllExtensions } from './resolveImport/extensionCandidates.js';
+export { resolveByAlias } from './resolveImport/aliasResolution.js';
+export { normalizePythonRelativeImport, resolvePythonAbsoluteImport } from './resolveImport/pythonImports.js';
+
+export function resolveImport(
+  fromFile: string,
+  spec: string,
+  presentFiles: Set<string>,
+  aliases?: readonly ParsedAlias[],
+): string | null {
+  if (!spec) return null;
+
+  const isPython = fromFile.endsWith('.py') || fromFile.endsWith('.pyi');
+  const normalized = isPython ? normalizePythonRelativeImport(spec) : spec;
+
+  // Path-alias check has to come BEFORE the "external package" bail because
+  // aliased specs (like `@/components/Foo`) look identical to scoped npm
+  // packages — only the alias map can tell them apart.
+  if (aliases && aliases.length > 0) {
+    const aliased = resolveByAlias(normalized, aliases, presentFiles);
+    if (aliased) return aliased;
+  }
+
+  // External package — `react`, `lodash/fp`, etc. (Bare specifiers that a
+  // baseUrl catch-all could resolve were already handled by the alias pass
+  // above; anything still bare here is a real node_modules dependency.)
+  // A bare Python spec is an absolute package import, resolved against the
+  // importer's ancestor dirs (see resolvePythonAbsoluteImport).
+  if (!isRelativeSpec(normalized)) {
+    return isPython
+      ? resolvePythonAbsoluteImport(fromFile, normalized, presentFiles)
+      : null;
+  }
+
+  const fromDir = path.dirname(fromFile);
+  const target = path.resolve(fromDir, normalized);
+  return tryAllExtensions(target, presentFiles);
+}

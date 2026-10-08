@@ -1,8 +1,7 @@
 # backend/src/taskCache
 
 In-memory + on-disk store for Lattice's per-project task lists. Implementation
-behind `../tasks.ts` and `../taskCache.ts`; keep those stable re-export shims
-for existing imports.
+behind the `../tasks.ts` facade — import from there, not from these internals.
 
 ## Storage layout
 

@@ -22,7 +22,7 @@ the watcher and the full scan both drive `computeCrossFile`.
 - `resolveImport.ts` / `resolveImport/` — extension/index/alias/Python-relative
   import resolution behind the `resolveImport.ts` re-export shim. Focused pure
   modules under `resolveImport/`:
-  - `resolveImport/index.ts` — the `resolveImport()` orchestrator (Python-relative
+  - `resolveImport.ts` — the `resolveImport()` orchestrator (Python-relative
     normalization → tsconfig aliases → bare spec: Python absolute resolution or
     external-package bail → relative filesystem candidates) plus the re-export
     barrel for the public surface.

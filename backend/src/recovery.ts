@@ -1,5 +1,175 @@
-// Stable public recovery entry point. Implementation lives in `recovery/`
-// so the startup phases can stay focused while existing imports from
-// `./recovery.js` continue to work.
+// Crash-recovery sweep run on every backend boot.
+//
+// Detects ready_to_merge tasks whose branch no longer exists. finalize now
+// writes qa BEFORE scheduling cleanup (and keeps the branch when that write
+// fails), so this is a backstop for older backends / out-of-band deletions:
+// a Lattice cleanup only ever deletes a branch after its FF landed, so the
+// work is assumed to be in main.
 
-export * from './recovery/index.js';
+import {
+  listReadyToMergeTasks,
+  restoreAllProjectsFromBackup,
+  updateTaskCrashSafe,
+  type Task,
+} from './tasks.js';
+import { checkBranchExists, gitDirExists, recoverPendingSnapshots } from './worktree.js';
+import { forEachWithConcurrency } from './recovery/concurrency.js';
+import { sweepOrphanedWorktrees } from './recovery/worktreeSweep.js';
+import { sweepOrphanedPushSessions } from './recovery/pushSessionSweep.js';
+import { sweepOrphanedQaSessions } from './recovery/qaSessionSweep.js';
+import { sweepOrphanedPostMergeHookSessions } from './recovery/postMergeHookSweep.js';
+import { resumeInterruptedOneOffRuns } from './recovery/oneOffRunResume.js';
+import {
+  sweepStaleClaudeProjectEntries,
+  sweepOrphanedClaudeConfigTempFiles,
+} from './recovery/claudeConfigSweep.js';
+
+export { resumeInterruptedOneOffRuns } from './recovery/oneOffRunResume.js';
+export { resumeInterruptedMergeRuns } from './recovery/mergeRunResume.js';
+export { resumeInterruptedWorkflowRuns } from './recovery/workflowRunResume.js';
+export { resumeQueuedTaskRuns } from './recovery/queuedRunResume.js';
+export { sweepOrphanedWorktrees } from './recovery/worktreeSweep.js';
+export { sweepOrphanedPushSessions } from './recovery/pushSessionSweep.js';
+export { sweepOrphanedQaSessions } from './recovery/qaSessionSweep.js';
+export { sweepOrphanedPostMergeHookSessions } from './recovery/postMergeHookSweep.js';
+export {
+  sweepStaleClaudeProjectEntries,
+  sweepOrphanedClaudeConfigTempFiles,
+} from './recovery/claudeConfigSweep.js';
+export {
+  startWorktreeResidueSweepLoop,
+  stopWorktreeResidueSweepLoop,
+  requestWorktreeResidueSweep,
+  runWorktreeResidueSweepPass,
+  WORKTREE_RESIDUE_SWEEP_INTERVAL_MS,
+} from './recovery/worktreeResidueSweepLoop.js';
+export {
+  startInProgressSweepLoop,
+  stopInProgressSweepLoop,
+  sweepStuckInProgressTasks,
+  IN_PROGRESS_SWEEP_INTERVAL_MS,
+} from './recovery/inProgressSweep.js';
+
+export async function recoverOrphanedTasks(): Promise<void> {
+  // Phase 1: repair `.lattice/tasks.json` from `.lattice/tasks.backup.json`
+  // for any project where the main file went missing or unparseable. Must
+  // run BEFORE any tasks.ts read so the cache is populated from the
+  // restored file. Logs loudly per project that gets restored.
+  await runStartupRecoveryStep('restoreAllProjectsFromBackup', () => restoreAllProjectsFromBackup());
+
+  // Phase 1b: scan ~/.lattice/snapshots/ for any orphan snapshots from a
+  // crashed run and restore them into their original repos. Replaces the
+  // prior `git stash` based recovery (which depended on the stash entry
+  // surviving across restarts — failure-prone, see snapshot.ts header).
+  await runStartupRecoveryStep('recoverPendingSnapshots', () => recoverPendingSnapshots());
+
+  // (Phase 1c, the orphaned-worktree sweep, runs AFTER listen — see
+  // `startBootWorktreeSweep`: with 1000+ leftover checkouts it held the port
+  // for many minutes.)
+
+  // Phase 1c': re-adopt push / QA / post-merge-hook runs whose agent survived
+  // the restart in the detached terminal-server (their running records are
+  // mirrored to disk). Before listen, so their first callback — or the
+  // callback outbox's replay — finds the record instead of a 404; and before
+  // the scratch sweeps below, which keep only live-pty dirs. See
+  // recovery/oneOffRunResume.ts.
+  await runStartupRecoveryStep('resumeInterruptedOneOffRuns', () => resumeInterruptedOneOffRuns());
+
+  // Phase 1d: reclaim orphaned push-session scratch dirs left behind by
+  // a /done cleanup that lost its EBUSY race with the still-shutting-down
+  // PTY, or whose session did not survive the restart (anything with no
+  // live PTY is stale). Mirrors sweepOrphanedWorktrees.
+  await runStartupRecoveryStep('sweepOrphanedPushSessions', () => sweepOrphanedPushSessions());
+
+  // Phase 1e: same convergence layer for QA e2e-run scratch dirs.
+  await runStartupRecoveryStep('sweepOrphanedQaSessions', () => sweepOrphanedQaSessions());
+
+  // Phase 1f: same convergence layer for post-merge hook scratch dirs.
+  await runStartupRecoveryStep('sweepOrphanedPostMergeHookSessions', () => sweepOrphanedPostMergeHookSessions());
+
+  // Phase 1g: reclaim dead `projects[<cwd>]` entries in ~/.claude.json that
+  // point at Lattice ephemeral worktree/scratch dirs already removed (incl. the
+  // ones the sweeps above just reclaimed). Each spawn pre-seeds one such entry
+  // (trust + managed MCP) and nothing else prunes them, so the map grew by one
+  // per run forever. Global, not per-project — one shared file. See
+  // recovery/claudeConfigSweep.ts.
+  await runStartupRecoveryStep('sweepStaleClaudeProjectEntries', () => sweepStaleClaudeProjectEntries());
+
+  // Phase 1h: delete orphaned ~/.claude.json.lattice-*.tmp temps left by a
+  // writer hard-killed between its temp write and rename. The fixed
+  // atomic-write path now cleans up on a failed rename, but this reclaims
+  // legacy orphans (and any from a true hard-kill). See claudeConfigSweep.ts.
+  await runStartupRecoveryStep('sweepOrphanedClaudeConfigTempFiles', () => sweepOrphanedClaudeConfigTempFiles());
+
+  await runStartupRecoveryStep('recoverOrphanedTasks', () => recoverReadyTasksWithDeletedBranches());
+}
+
+// Reclaim orphaned worktrees (failed background cleanups, crashed runs,
+// legacy in-project worktrees). cleanup.ts deliberately leaves a worktree dir
+// in place when `git worktree remove` fails mid-run; this is the retry that
+// makes it converge. Started right after listen and NOT awaited by boot: each
+// orphan is a git call plus, when reclaimed, an archive and a recursive delete,
+// and a machine carrying 1000+ of them (an old version's leftovers) kept the
+// frontend on "Scanning…" for the whole sweep. The returned promise never
+// rejects; `resumeQueuedTaskRuns` waits for it, so a half-created worktree is
+// still reconciled by the re-run rather than reclaimed.
+export function startBootWorktreeSweep(): Promise<void> {
+  return runStartupRecoveryStep('sweepOrphanedWorktrees', () => sweepOrphanedWorktrees());
+}
+
+async function runStartupRecoveryStep(
+  label: string,
+  step: () => Promise<void>,
+): Promise<void> {
+  try {
+    await step();
+  } catch (err) {
+    console.error(`[startup] ${label} failed:`, err);
+  }
+}
+
+// Bounded fan-out (each probe is one git spawn, and this phase runs before
+// `listen`, so a serial walk delayed the port by one spawn per task), with
+// per-task isolation: one task's failure never skips the rest.
+async function recoverReadyTasksWithDeletedBranches(): Promise<void> {
+  const stuckTasks = await listReadyToMergeTasks();
+  await forEachWithConcurrency(stuckTasks, RECOVERY_CONCURRENCY, async (task) => {
+    try {
+      await recoverTaskIfBranchWasDeleted(task);
+    } catch (err) {
+      console.warn(
+        `[startup] task ${task.id}: branch probe failed — leaving at ready_to_merge:`,
+        err,
+      );
+    }
+  });
+}
+
+const RECOVERY_CONCURRENCY = 8;
+
+// Only a CONFIRMED absence (git exit 0, no match) moves the task. A missing
+// `.git` (project moved/deleted) or a git failure (checkBranchExists throws)
+// is "can't tell" — the task is left alone rather than stripped of its branch.
+//
+// `mergedAt` is always re-stamped: this is a NEW landing in QA, and a stale
+// value (from an earlier merge the task was dragged back out of) would let a
+// QA verdict about that older build promote this one (qaRuns/verdict.ts).
+export async function recoverTaskIfBranchWasDeleted(task: Task): Promise<void> {
+  if (!task.branch) return;
+  if (!(await gitDirExists(task.projectPath))) return;
+
+  const exists = await checkBranchExists(task.projectPath, task.branch);
+  if (exists) return;
+
+  console.log(
+    `[startup] task ${task.id} ("${task.title.slice(0, 40)}") branch deleted but status is ready_to_merge — recovering to qa`,
+  );
+  await updateTaskCrashSafe(task.id, {
+    status: 'qa',
+    mergedAt: Date.now(),
+    worktreePath: undefined,
+    branch: undefined,
+    conflict: undefined,
+    conflictStartedAt: undefined,
+  });
+}

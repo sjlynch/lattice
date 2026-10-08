@@ -4,7 +4,7 @@
 // health.cycles / health.watcher for the other slices).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { analyzeFile } from '../health/index.js';
+import { analyzeFile } from '../health.js';
 import { smellCount } from './helpers/health.js';
 
 // A switch with N cases used to cost N*(1+nesting) cognitive points

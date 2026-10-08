@@ -6,7 +6,7 @@ import {
   OpengrepNotInstalledError,
   OpengrepScanAbortedError,
   OpengrepScanBusyError,
-} from '../opengrep/index.js';
+} from '../opengrep.js';
 import type { ScanWithDigestResult } from '../opengrep/service.js';
 import { DEFAULT_WORKFLOW_STEP_TEMPLATE } from '../instructionTemplates/defs.js';
 import { renderStepMarkdown } from '../workflowRuns/stepMarkdown.js';

@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import type { HealthMetrics } from '../health/index.js';
+import type { HealthMetrics } from '../health.js';
 import type { CacheEntry } from '../health/cache.js';
 import { hydrateWatcherState } from '../health/watcher/cacheHydration.js';
 import { loadOrAnalyzeFile, readFileForAnalysis } from '../health/watcher/fileAnalysis.js';

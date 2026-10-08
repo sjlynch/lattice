@@ -1,4 +1,7 @@
-// Public shim for the instruction-template subsystem. Implementation lives in
-// `instructionTemplates/` (defs/catalog, the apply engine, per-project override
-// resolution, and the settings-editor payload builder). See its modules.
-export * from './instructionTemplates/index.js';
+// Editable agent-brief templates — the public facade over
+// ./instructionTemplates/ (defs/catalog, apply engine, per-project override
+// resolution, settings-editor payload). See ./instructionTemplates/CLAUDE.md.
+export * from './instructionTemplates/apply.js';
+export * from './instructionTemplates/defs.js';
+export * from './instructionTemplates/resolve.js';
+export * from './instructionTemplates/editorData.js';

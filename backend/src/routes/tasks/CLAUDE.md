@@ -194,7 +194,7 @@ undoes that bump, and any other failure clears the run-queue state:
 
 ## Worktree lifecycle hooks (`hooks/`)
 
-Idempotent Stop-hook / resolver callbacks. `hooks/index.ts`'s
+Idempotent Stop-hook / resolver callbacks. `hooks.ts`'s
 `buildTaskHookRouter` assembles the router; one handler module per route:
 
 - `hooks/complete.ts` — `/complete`. First `rejectStaleReplay`: an outbox

@@ -14,7 +14,7 @@
 import { Router } from 'express';
 import { buildTaskCrudRouter } from './tasks/crud.js';
 import { buildTaskRunRouter } from './tasks/run.js';
-import { buildTaskHookRouter } from './tasks/hooks/index.js';
+import { buildTaskHookRouter } from './tasks/hooks.js';
 import { buildTaskActivityRouter } from './tasks/activity.js';
 import { buildWorktreeModifiedRouter } from './tasks/worktreeModified.js';
 

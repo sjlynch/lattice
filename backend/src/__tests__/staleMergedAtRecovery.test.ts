@@ -12,7 +12,7 @@ import {
   recordQaRun,
   recordQaVerdict,
 } from '../qaRuns.js';
-import { recoverTaskIfBranchWasDeleted } from '../recovery/index.js';
+import { recoverTaskIfBranchWasDeleted } from '../recovery.js';
 import { stampTimestamps } from '../taskCache/taskUpdate.js';
 import { createTask, getTask, updateTask, type Task } from '../tasks.js';
 

@@ -1,7 +1,7 @@
 import type { Node } from 'web-tree-sitter';
 import type { GrammarKey } from '../parser.js';
-import type { NodeKinds } from '../nodeKinds/index.js';
-import type { FileAnalysis } from './index.js';
+import type { NodeKinds } from '../nodeKinds.js';
+import type { FileAnalysis } from '../walker.js';
 import { hasFunctionDocstring } from './docstrings.js';
 import { getFunctionName } from './functionNames.js';
 import {

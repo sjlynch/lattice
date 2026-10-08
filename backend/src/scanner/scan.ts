@@ -4,7 +4,7 @@ import {
   detectRoots,
   readPackageJsonRoots,
   type HealthMetrics,
-} from '../health/index.js';
+} from '../health.js';
 import { loadProjectAliases } from '../health/tsconfig.js';
 import { beginWatcherScan } from '../health/watcher.js';
 import { getUserSettings } from '../userSettings.js';

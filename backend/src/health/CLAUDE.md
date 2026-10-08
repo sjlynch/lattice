@@ -21,7 +21,7 @@ Halstead token counts and a Maintainability Index, and folded into a composite
   `.ps1`/`.cs` isn't analysed as NUL-interleaved garbage. Used by
   `watcher/fileAnalysis.ts` and `../scanner/readForAnalysis.ts`.
 - `walker.ts` + `walker/` — shim plus the single AST pass producing a
-  `FileAnalysis`; see `walker/CLAUDE.md`. `walker/index.ts` orchestrates the
+  `FileAnalysis`; see `walker/CLAUDE.md`. `walker.ts` orchestrates the
   walk via a `context.ts` `WalkerContext` plus visitor helpers in
   `visitors.ts` (`handleComment`, `handleFunctionEntry`/`Exit`,
   `handleFileStructure`, `handleImportsAndStrings`, `handleAstSmells`,
@@ -161,7 +161,7 @@ Adding a language (AST metrics):
    available WASM filename and extension aliases. Both extension lookups are
    derived from that table.
 2. Provide a `NodeKinds` factory in `nodeKinds/`, then import and dispatch it
-   in `nodeKinds/index.ts` (`buildNodeKinds`, used by `nodeKindsFor`).
+   in `nodeKinds.ts` (`buildNodeKinds`, used by `nodeKindsFor`).
 3. Align `languageForExt` in `analyze/language.ts` and `HealthLanguage` in
    `types.ts` so emitted language metadata matches the registered extensions.
 

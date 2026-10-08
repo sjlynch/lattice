@@ -4,17 +4,17 @@
 // language-agnostic — it asks `isFunction(node, lang)` etc. rather
 // than embedding grammar-specific node names directly.
 
-import type { GrammarKey } from '../parser.js';
-import type { NodeKinds } from './base.js';
-import { buildTsLikeNodeKinds } from './typescript.js';
-import { buildPythonNodeKinds } from './python.js';
-import { buildGoNodeKinds } from './go.js';
-import { buildRustNodeKinds } from './rust.js';
-import { buildJavaNodeKinds } from './java.js';
-import { buildCsharpNodeKinds } from './csharp.js';
-import { buildRubyNodeKinds } from './ruby.js';
+import type { GrammarKey } from './parser.js';
+import type { NodeKinds } from './nodeKinds/base.js';
+import { buildTsLikeNodeKinds } from './nodeKinds/typescript.js';
+import { buildPythonNodeKinds } from './nodeKinds/python.js';
+import { buildGoNodeKinds } from './nodeKinds/go.js';
+import { buildRustNodeKinds } from './nodeKinds/rust.js';
+import { buildJavaNodeKinds } from './nodeKinds/java.js';
+import { buildCsharpNodeKinds } from './nodeKinds/csharp.js';
+import { buildRubyNodeKinds } from './nodeKinds/ruby.js';
 
-export type { NodeKindSets, NodeKinds } from './base.js';
+export type { NodeKindSets, NodeKinds } from './nodeKinds/base.js';
 
 function buildNodeKinds(grammar: GrammarKey): NodeKinds {
   if (grammar === 'python') return buildPythonNodeKinds();

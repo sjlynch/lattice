@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { applyCrossFile, type HealthMetrics } from '../health/index.js';
+import { applyCrossFile, type HealthMetrics } from '../health.js';
 import type { DirectoryEntry } from './collectSourceTree.js';
 import type { FileMetric } from './fileMetrics.js';
 import type { CouplingMap } from './coupling.js';

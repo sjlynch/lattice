@@ -1,7 +1,7 @@
 import type { GrammarKey } from '../parser.js';
-import type { NodeKinds } from '../nodeKinds/index.js';
+import type { NodeKinds } from '../nodeKinds.js';
 import type { FnRecord } from './functionRecord.js';
-import type { FileAnalysis } from './index.js';
+import type { FileAnalysis } from '../walker.js';
 
 export type WalkerExportState = {
   hasDefaultExport: boolean;

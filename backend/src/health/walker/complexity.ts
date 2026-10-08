@@ -1,6 +1,6 @@
 import type { Node } from 'web-tree-sitter';
 import type { GrammarKey } from '../parser.js';
-import type { NodeKinds } from '../nodeKinds/index.js';
+import type { NodeKinds } from '../nodeKinds.js';
 
 const SHORT_CIRCUIT_OPS_TS = new Set(['&&', '||', '??']);
 const PY_BOOL_OP_TYPE = 'boolean_operator';

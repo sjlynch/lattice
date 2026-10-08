@@ -1,8 +1,10 @@
 # backend/src
 
 Express server (`:5184`) plus a detached PTY executor (`terminal-server.ts`, `:5185`).
-The root is flat: most `x.ts` files are stable re-export shims over an `x/`
-folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail here.
+Module convention (pinned by `__tests__/moduleLayout.test.ts`): a domain's
+public surface is a root `x.ts` facade beside its `x/` folder (`worktree.ts` over
+`worktree/`); never an `x/index.ts`. Where a folder has a `CLAUDE.md`, read that
+instead of expecting detail here.
 
 ## Layout
 
@@ -32,7 +34,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 
 ### Tasks, merge & runs
 
-- `tasks.ts` / `taskCache.ts` / `taskCache/` — shims over the in-memory task cache + debounced `per-project/<hash>/tasks.json` persistence. See `taskCache/CLAUDE.md`.
+- `tasks.ts` / `taskCache/` — `tasks.ts` is the facade (the name predates the folder): the in-memory task cache + debounced `per-project/<hash>/tasks.json` persistence. See `taskCache/CLAUDE.md`.
 - `taskSpawnEvents.ts` — `task-spawned` / `task-spawn-failed` pub/sub: a queued run's pty (or its non-CAP failure) reaches the UI over `/ws/tasks`.
 - `taskVerification.ts` — renders `taskAgentTypecheck`: task agents run no tests/builds/type-checks, stated in the brief AND the system prompt.
 - `worktree.ts` / `worktree/` — git-worktree subsystem: setup, merge, `projectGit`, `gitBackup`, disk guard, snapshots. See `worktree/CLAUDE.md`.
@@ -117,7 +119,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `watchTree.ts` — win32 recursive `fs.watch` (one handle) replacing chokidar's per-dir handles, which locked directories; `LATTICE_WATCH_MODE` overrides; symlinks not followed.
 - `search.ts` — file-contents search for `/api/search`; `regexSource` is the shared wildcard translation (`shared/searchPattern.ts`, also the frontend's filename pass); returns absolute paths (= graph node ids). Its JS fallback (`search/jsGrepWorker.ts`) greps in a worker thread with a wall-clock budget, so a ReDoS user regex can't freeze the event loop.
 - `ripgrep.ts` — optional memoized `rg` fast path for `search.ts` (`LATTICE_DISABLE_RG`, `LATTICE_RG_PATH`); cancel-poll interval shared with the JS fallback in `search/constants.ts`.
-- `scanner.ts` / `scanner/` — project → `{nodes, links}` graph pipeline; `scanner.ts` is a re-export facade. See `scanner/CLAUDE.md`.
+- `scanner/` — project → `{nodes, links}` graph pipeline (no facade: import the phase module, e.g. `scanner/scan.ts`). See `scanner/CLAUDE.md`.
 - `health/` — tree-sitter per-file metrics, health score, cross-file dead code, file watcher. See `health/CLAUDE.md`.
 - `fsbrowse.ts` / `fsbrowse/` — folder-picker backend (roots, validation, listing, create-dir).
 

@@ -1,4 +1,4 @@
-import { computeCrossFile, type FileImports } from '../health/index.js';
+import { computeCrossFile, type FileImports } from '../health.js';
 import type { ParsedAlias } from '../health/tsconfig.js';
 import type { FileMetric } from './fileMetrics.js';
 

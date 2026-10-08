@@ -3,7 +3,7 @@
 // everything else. Cross-file metrics (fan-in/fan-out/cycles) layer
 // on after the per-file pass via `applyCrossFile`.
 
-export { analyzeFile, type AnalyzeResult } from './analyze.js';
+export { analyzeFile, type AnalyzeResult } from './health/analyze.js';
 export type {
   HealthMetrics,
   HealthSmell,
@@ -11,9 +11,9 @@ export type {
   HealthLanguage,
   HalsteadMetrics,
   DeadCodeStatus,
-} from './types.js';
-export { SMELL_LABELS } from './types.js';
-export { HealthCache } from './cache.js';
+} from './health/types.js';
+export { SMELL_LABELS } from './health/types.js';
+export { HealthCache } from './health/cache.js';
 export {
   computeCrossFile,
   applyCrossFile,
@@ -23,5 +23,5 @@ export {
   type ComputeCrossFileOptions,
   type FileImports,
   type CrossFileResult,
-} from './crossFile.js';
-export { grammarKeyForExt } from './parser.js';
+} from './health/crossFile.js';
+export { grammarKeyForExt } from './health/parser.js';

@@ -9,10 +9,10 @@
 // `/complete`, `/merged`, and `/stash-resolved` lives in `./postMergeHookHelper.ts`.
 
 import { Router } from 'express';
-import { handleTaskComplete } from './complete.js';
-import { handleTaskMerged } from './merged.js';
-import { handleTaskMergeAborted } from './mergeAborted.js';
-import { handleTaskStashResolved } from './stashResolved.js';
+import { handleTaskComplete } from './hooks/complete.js';
+import { handleTaskMerged } from './hooks/merged.js';
+import { handleTaskMergeAborted } from './hooks/mergeAborted.js';
+import { handleTaskStashResolved } from './hooks/stashResolved.js';
 
 export function buildTaskHookRouter(backendOrigin: string): Router {
   const r = Router();

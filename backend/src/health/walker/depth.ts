@@ -1,5 +1,5 @@
 import type { Node } from 'web-tree-sitter';
-import type { NodeKinds } from '../nodeKinds/index.js';
+import type { NodeKinds } from '../nodeKinds.js';
 
 // Optional-chain depth: count how many `?.` tokens appear in a
 // single chain. Tree-sitter-typescript wraps each `?.` in a *named*

@@ -6,7 +6,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { getUserSettings, patchUserSettings, userSettingsShapeError } from '../userSettings.js';
-import { scan } from '../scanner.js';
+import { scan } from '../scanner/scan.js';
 
 // Regression: `deadCodeEntryGlobs` (never written by the UI — only by hand or
 // an API/agent PATCH) was stored and read back verbatim. A string

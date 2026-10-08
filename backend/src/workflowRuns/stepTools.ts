@@ -19,7 +19,7 @@ import {
   OpengrepScanAbortedError,
   OpengrepScanBusyError,
   scanProjectWithDigest,
-} from '../opengrep/index.js';
+} from '../opengrep.js';
 import { runExclusive } from '../serializeWrites.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import type { WorkflowStep, WorkflowStepTool } from '../workflows/types.js';

@@ -34,7 +34,7 @@ import {
   type DigestRenderContext,
   type OpengrepSeverity,
   type ScanWithDigestResult,
-} from '../opengrep/index.js';
+} from '../opengrep.js';
 import { readProjectParam, requireExistingProjectDir } from './projectParam.js';
 import { buildOpengrepReviewRouter } from './opengrepReview.js';
 

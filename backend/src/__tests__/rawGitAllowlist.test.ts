@@ -28,7 +28,7 @@ const ALLOWED: Record<string, string> = {
   'worktree/envDetect.ts': 'read-only ls-files probe',
   'worktree/setupProject.ts': 'read-only rev-parse probe before a worktree is created',
   'gitBranch.ts': 'read-only HEAD probe; the path may not be a repo root',
-  'gitHistory/index.ts': 'read-only log/ls-files/status probes; the path may not be a repo root',
+  'gitHistory.ts': 'read-only log/ls-files/status probes; the path may not be a repo root',
   'gitHistory/signature.ts': 'read-only status probe',
   'workflowRuns/projectDirtyState.ts': 'read-only rev-parse probe',
   'projectInit/probe.ts': 'read-only probe of a folder that is not a repo yet',

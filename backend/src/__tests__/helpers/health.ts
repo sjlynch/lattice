@@ -1,7 +1,7 @@
 // Shared health-metric fixtures for the split health suites. Not a `*.test.ts`
 // file, so it isn't collected as a suite — just imported by the ones that need it.
 
-import type { HealthMetrics } from '../../health/index.js';
+import type { HealthMetrics } from '../../health.js';
 
 export function smellCount(metrics: HealthMetrics, id: string): number {
   return metrics.smells.find((s) => s.id === id)?.count ?? 0;
