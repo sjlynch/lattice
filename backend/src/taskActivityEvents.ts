@@ -7,6 +7,8 @@
 // focus beam from the task's Claude node to that file node. Mirrors the
 // `taskSpawnEvents.ts` model.
 
+import { createEmitter } from './emitter.js';
+
 export type TaskActivityPhase = 'start' | 'end';
 // A subagent (Task/Agent) of the task's main Claude appeared ('spawn',
 // SubagentStart) or finished ('stop', SubagentStop). These carry no `file`.
@@ -39,19 +41,12 @@ export type TaskActivityEvent = {
 
 type Listener = (event: TaskActivityEvent) => void;
 
-const listeners = new Set<Listener>();
+const activity = createEmitter<[TaskActivityEvent]>('task-activity');
 
 export function subscribeTaskActivity(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  return activity.subscribe(listener);
 }
 
 export function notifyTaskActivity(event: TaskActivityEvent): void {
-  for (const listener of [...listeners]) {
-    try {
-      listener(event);
-    } catch (err) {
-      console.error('[task-activity] listener threw:', err);
-    }
-  }
+  activity.emit(event);
 }

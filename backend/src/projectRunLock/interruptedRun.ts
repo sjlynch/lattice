@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { homeProjectDir } from '../projectPath.js';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import type { LockBody } from './types.js';
 
 // Run-lock labels whose stale (dead-PID) presence means orphaned merge work

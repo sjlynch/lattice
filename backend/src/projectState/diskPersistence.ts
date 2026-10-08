@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import fsSync from 'node:fs';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { TEMP_SUFFIX, atomicWriteFile } from '../claudeTrust/configFile.js';
+import { TEMP_SUFFIX, atomicWriteFile } from '../fsAtomic.js';
 
 export type LoadProjectStateOptions<TState> = {
   name: string;

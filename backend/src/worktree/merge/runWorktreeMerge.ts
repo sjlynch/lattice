@@ -8,7 +8,6 @@ import {
 
 export async function runWorktreeMerge(
   worktreePath: string,
-  branchName: string,
   mainHeadSha: string,
   mergeMessage: string,
 ): Promise<ExecResult> {

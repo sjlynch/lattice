@@ -16,7 +16,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import type { HarnessSystemPromptOverride } from './defs.js';
 
 export const PI_SYSTEM_PROMPT_EXTENSION_FILENAME = 'lattice-system-prompt.ts';

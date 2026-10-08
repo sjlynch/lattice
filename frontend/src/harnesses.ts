@@ -14,11 +14,6 @@ export type HarnessChoice = AgentHarness | 'interleave';
 
 export type HarnessAvailability = Record<AgentHarness, boolean>;
 
-export const ALL_HARNESS_CHOICES: readonly HarnessChoice[] = [
-  ...ALL_AGENT_HARNESSES,
-  'interleave',
-] as const;
-
 export const HARNESS_LABELS: Record<HarnessChoice | 'default', string> = {
   default: 'Default',
   claude: 'Claude',

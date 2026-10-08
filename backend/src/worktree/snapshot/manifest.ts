@@ -2,7 +2,7 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import type { LockBody } from '../../projectRunLock/types.js';
-import { atomicWriteFile } from '../../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../../fsAtomic.js';
 
 export const SNAPSHOTS_BASE = path.join(os.homedir(), '.lattice', 'snapshots');
 export const SNAPSHOT_MANIFEST_FILENAME = '_lattice-snapshot.json';

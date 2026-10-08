@@ -211,11 +211,6 @@ export function startLowDiskMonitor(backendOrigin: string, intervalMs = LOW_DISK
   monitorTimer.unref?.();
 }
 
-export function stopLowDiskMonitor(): void {
-  if (monitorTimer) clearInterval(monitorTimer);
-  monitorTimer = null;
-}
-
 // Test seam.
 export function resetDiskPressureMergeStateForTests(): void {
   lastAttemptAt.clear();

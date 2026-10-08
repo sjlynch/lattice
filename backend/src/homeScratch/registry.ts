@@ -16,6 +16,7 @@
 
 import { canonicalProjectPath } from '../projectPath.js';
 import type { OneOffRunStore } from './persistence.js';
+import { createEmitter } from '../emitter.js';
 
 export type OneOffRunBase = {
   id: string;
@@ -61,7 +62,7 @@ export function createOneOffRunRegistry<Run extends OneOffRunBase>(args: {
   store?: OneOffRunStore<Run>;
 }): OneOffRunRegistry<Run> {
   const runs = new Map<string, Run>();
-  const listeners = new Set<OneOffRunRegistryListener<Run>>();
+  const events = createEmitter<[OneOffRunRegistryEvent<Run>]>(args.logLabel.replace(/[[\]]/g, ''));
 
   function cloneRun(run: Run): Run {
     return { ...run };
@@ -87,14 +88,7 @@ export function createOneOffRunRegistry<Run extends OneOffRunBase>(args: {
   }
 
   function notify(event: OneOffRunRegistryEvent<Run>): void {
-    if (!args.emitEvents) return;
-    for (const fn of listeners) {
-      try {
-        fn(event);
-      } catch (err) {
-        console.error(`${args.logLabel} listener threw:`, err);
-      }
-    }
+    if (args.emitEvents) events.emit(event);
   }
 
   return {
@@ -160,10 +154,7 @@ export function createOneOffRunRegistry<Run extends OneOffRunBase>(args: {
     },
 
     subscribe(fn) {
-      listeners.add(fn);
-      return () => {
-        listeners.delete(fn);
-      };
+      return events.subscribe(fn);
     },
   };
 }

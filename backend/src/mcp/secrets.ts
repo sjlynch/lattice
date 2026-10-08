@@ -10,7 +10,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { latticeHomeDir } from '../projectPath.js';
-import { atomicWriteFile } from '../claudeTrust.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { runExclusive } from '../serializeWrites.js';
 
 // { [serverId]: { [envVar]: value } }

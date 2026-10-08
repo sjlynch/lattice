@@ -14,6 +14,8 @@
 // spawn, unregistered at the completion callback, served over
 // /ws/agent-sessions) — the beams here hang off that node.
 
+import { createEmitter } from './emitter.js';
+
 export type AgentActivityPhase = 'start' | 'end';
 // A subagent (Task/Agent) of this session's Claude appeared ('spawn',
 // SubagentStart) or finished ('stop', SubagentStop). These carry no `file`.
@@ -43,19 +45,12 @@ export type AgentActivityEvent = {
 
 type Listener = (event: AgentActivityEvent) => void;
 
-const listeners = new Set<Listener>();
+const activity = createEmitter<[AgentActivityEvent]>('agent-activity');
 
 export function subscribeAgentActivity(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  return activity.subscribe(listener);
 }
 
 export function notifyAgentActivity(event: AgentActivityEvent): void {
-  for (const listener of [...listeners]) {
-    try {
-      listener(event);
-    } catch (err) {
-      console.error('[agent-activity] listener threw:', err);
-    }
-  }
+  activity.emit(event);
 }

@@ -13,7 +13,7 @@
 // AFTER sweepOrphanedWorktrees (which would otherwise reclaim that worktree)
 // — it does: this phase is invoked post-listen, the sweep runs pre-listen.
 
-import { listTasks, updateTask, type Task } from '../tasks.js';
+import { listTasks, updateTask } from '../tasks.js';
 import { enqueueTaskRun } from '../routes/tasks/queuedSpawn.js';
 import { isFreshlyRunnable } from '../routes/tasks/startTask.js';
 import { forEachKnownProjectSafely } from './projectIteration.js';

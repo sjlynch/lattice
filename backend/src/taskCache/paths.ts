@@ -7,7 +7,6 @@ import {
 export const LATTICE_HOME = latticeHomeDir();
 export const PROJECTS_INDEX = path.join(LATTICE_HOME, 'projects.json');
 export const LEGACY_GLOBAL_TASKS = path.join(LATTICE_HOME, 'tasks.json');
-export const PER_PROJECT_BASE = path.join(LATTICE_HOME, 'per-project');
 
 export const PROJECT_DIR_NAME = '.lattice';
 export const PROJECT_TASKS_FILENAME = 'tasks.json';

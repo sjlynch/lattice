@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { canonicalProjectPath, homeProjectScratchDir } from '../projectPath.js';
 
 export const MAX_AUTOMATIC_RECOVERY_ATTEMPTS = 3;

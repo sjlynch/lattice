@@ -1,15 +1,4 @@
-// Tiny shared primitives for the `~/.claude.json` I/O + locking modules.
-// Kept in one place so the writer, the mutex, and the maintenance sweeps share
-// a single definition of "wait" and "best-effort remove".
-import fs from 'node:fs/promises';
-
+// Tiny shared primitive for the `~/.claude.json` I/O + locking modules.
 export function sleep(ms: number): Promise<void> {
   return new Promise(r => setTimeout(r, ms));
-}
-
-// Best-effort removal on cleanup paths where a failure is non-fatal — the path
-// may already be gone, or be briefly held open by another process. Dedupes the
-// `fs.unlink(...).catch(() => {})` idiom used by the atomic writer.
-export function unlinkQuietly(p: string): Promise<void> {
-  return fs.unlink(p).catch(() => {});
 }

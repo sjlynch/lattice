@@ -11,7 +11,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteFile } from '../../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../../fsAtomic.js';
 import { homeProjectScratchDir } from '../../projectPath.js';
 
 export const RUN_TESTS_STATE_FILENAME = 'run-tests.json';

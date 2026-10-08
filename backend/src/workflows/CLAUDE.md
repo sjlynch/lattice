@@ -40,8 +40,7 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   definition but the run engine skips it — see `nextStepGroup` in
   `../workflowRuns/execution.ts`, which forms group boundaries *before*
   skipping: a frozen parallel member stays in its group but is skipped, and a
-  frozen serial step still separates groups. (`../workflowRuns/frozenSteps.ts`
-  is legacy — no production importer, only its own test.) `tools` (`WorkflowStepTool[]`, v1 only
+  frozen serial step still separates groups. `tools` (`WorkflowStepTool[]`, v1 only
   `opengrep` — set by the "Opengrep" quick-add chip / template, shown as a
   read-only shield badge, no per-step toggle) names the pre-run tools an
   agent step runs before its harness spawns; see `../workflowRuns/stepTools.ts`.

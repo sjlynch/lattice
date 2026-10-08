@@ -14,7 +14,4 @@ export const qaPaths = createHomeScratchPaths({
   noun: 'qa session',
 });
 
-export const createQaSessionId = qaPaths.createSessionId;
-export const qaSessionsRoot = qaPaths.sessionsRoot;
-export const qaSessionDir = qaPaths.sessionDir;
 export const assertSafeQaSessionPath = qaPaths.assertSafeSessionPath;

@@ -8,6 +8,7 @@ import {
 } from '../homeScratch/persistence.js';
 import { postMergeHookPaths } from './paths.js';
 import type { PostMergeHookRun, PostMergeHookStatus } from './types.js';
+import { createEmitter } from '../emitter.js';
 
 export {
   beginPostMergeHookTrigger,
@@ -125,23 +126,14 @@ export type PostMergeHookEvent =
   | { type: 'finished'; run: PostMergeHookRun };
 
 type Listener = (event: PostMergeHookEvent) => void;
-const listeners = new Set<Listener>();
+const events = createEmitter<[PostMergeHookEvent]>('post-merge-hook');
 
 function notify(event: PostMergeHookEvent): void {
-  for (const fn of listeners) {
-    try {
-      fn(event);
-    } catch (err) {
-      console.error('[post-merge-hook] listener threw:', err);
-    }
-  }
+  events.emit(event);
 }
 
 export function subscribePostMergeHooks(fn: Listener): () => void {
-  listeners.add(fn);
-  return () => {
-    listeners.delete(fn);
-  };
+  return events.subscribe(fn);
 }
 
 export function recordPostMergeHook(run: PostMergeHookRun): void {

@@ -12,7 +12,7 @@ import { getTask, updateTaskWith, type Task, type TaskUpdates } from '../../task
 import { setupTaskWorktree } from '../../worktree.js';
 import { SpawnCapacityError, isSpawnDiskSpaceError } from '../../spawnQueue.js';
 import { requestMergeToFreeDiskSpace } from '../../diskPressureMerge.js';
-import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
+import { normalizeAgentHarness } from '../../harnesses.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
 import { isCodexYoloEnabled } from '../../userSettings.js';
 import {
@@ -335,14 +335,3 @@ const defaultStartDeps: StartTaskDeps = {
   selectHarnessCommand,
   discard: defaultDiscardDeps,
 };
-
-// Convenience for callers that already have a harness string (e.g. workflow
-// runs that resolved the override at run start). Just a typed alias around
-// the option above.
-export async function startTaskByIdWithHarness(
-  taskId: string,
-  backendOrigin: string,
-  harness: AgentHarness,
-): Promise<StartTaskByIdResult> {
-  return startTaskById(taskId, backendOrigin, { requestedHarness: harness });
-}

@@ -44,7 +44,3 @@ export function buildPostMergeHookCommand(args: {
 }
 
 export const POST_MERGE_HOOK_FILENAME = 'POST_MERGE_HOOK.md';
-
-export function instructionsFilePath(scratchDir: string): string {
-  return path.join(scratchDir, POST_MERGE_HOOK_FILENAME);
-}

@@ -11,6 +11,7 @@
 
 import { spawn } from 'node:child_process';
 import { ALL_AGENT_HARNESSES, type AgentHarness } from './harnesses.js';
+import { createEmitter } from './emitter.js';
 
 export type HarnessAvailability = Record<AgentHarness, boolean>;
 
@@ -35,7 +36,7 @@ let generation = 0;
 let lastSnapshot: HarnessAvailability | null = null;
 let reprobeTimer: ReturnType<typeof setTimeout> | null = null;
 let reprobeAttempt = 0;
-const listeners = new Set<(avail: HarnessAvailability) => void>();
+const changes = createEmitter<[HarnessAvailability]>('harness-availability');
 
 function isOnPath(cmd: string): Promise<ProbeResult> {
   return new Promise((resolve) => {
@@ -77,9 +78,7 @@ function publish(avail: HarnessAvailability): void {
   const changed = lastSnapshot !== null && !sameSnapshot(lastSnapshot, avail);
   lastSnapshot = avail;
   if (!changed) return;
-  for (const listener of listeners) {
-    try { listener(avail); } catch { /* a listener must not break detection */ }
-  }
+  changes.emit(avail);
 }
 
 function clearReprobe(): void {
@@ -133,8 +132,7 @@ export function detectHarnesses(): Promise<HarnessAvailability> {
 export function onHarnessAvailabilityChange(
   listener: (avail: HarnessAvailability) => void,
 ): () => void {
-  listeners.add(listener);
-  return () => { listeners.delete(listener); };
+  return changes.subscribe(listener);
 }
 
 // Force a re-probe — useful if the user installs a CLI after the server is
@@ -152,5 +150,5 @@ export function __setHarnessProbeSpawnForTests(fn: SpawnFn | null): void {
   spawnImpl = fn ?? spawn;
   resetHarnessCache();
   lastSnapshot = null;
-  listeners.clear();
+  changes.clear();
 }

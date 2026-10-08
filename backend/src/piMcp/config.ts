@@ -10,7 +10,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 import { runExclusive } from '../serializeWrites.js';
-import { atomicWriteFile } from '../claudeTrust.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { MANAGED_MCP_MARKER } from '../mcp/claudeInject.js';
 import type { PiMcpServerConfig } from '../mcp/piServerConfig.js';
 

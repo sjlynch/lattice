@@ -14,6 +14,8 @@
 // vanish (run) or nothing at all (resume). `task-spawn-failed` carries the
 // failure to the same `/ws/tasks` channel so the UI can toast it.
 
+import { createEmitter } from './emitter.js';
+
 export type TaskSpawnedEvent = {
   projectPath: string;
   taskId: string;
@@ -40,37 +42,23 @@ export type TaskSpawnFailedEvent = {
 type SpawnedListener = (event: TaskSpawnedEvent) => void;
 type SpawnFailedListener = (event: TaskSpawnFailedEvent) => void;
 
-const spawnedListeners = new Set<SpawnedListener>();
-const spawnFailedListeners = new Set<SpawnFailedListener>();
+const spawned = createEmitter<[TaskSpawnedEvent]>('task-spawned');
+const spawnFailed = createEmitter<[TaskSpawnFailedEvent]>('task-spawn-failed');
 
 export function subscribeTaskSpawned(listener: SpawnedListener): () => void {
-  spawnedListeners.add(listener);
-  return () => spawnedListeners.delete(listener);
+  return spawned.subscribe(listener);
 }
 
 export function notifyTaskSpawned(event: TaskSpawnedEvent): void {
-  for (const listener of [...spawnedListeners]) {
-    try {
-      listener(event);
-    } catch (err) {
-      console.error('[task-spawned] listener threw:', err);
-    }
-  }
+  spawned.emit(event);
 }
 
 export function subscribeTaskSpawnFailed(
   listener: SpawnFailedListener,
 ): () => void {
-  spawnFailedListeners.add(listener);
-  return () => spawnFailedListeners.delete(listener);
+  return spawnFailed.subscribe(listener);
 }
 
 export function notifyTaskSpawnFailed(event: TaskSpawnFailedEvent): void {
-  for (const listener of [...spawnFailedListeners]) {
-    try {
-      listener(event);
-    } catch (err) {
-      console.error('[task-spawn-failed] listener threw:', err);
-    }
-  }
+  spawnFailed.emit(event);
 }

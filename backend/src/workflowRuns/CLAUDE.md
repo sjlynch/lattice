@@ -24,9 +24,6 @@ call `completeWorkflowStep` themselves.
   Also `isRoundTask` / `addRoundTasks` over `WorkflowRun.roundTaskIds`.
 - `definition.ts` — `cloneWorkflowDefinition` / `readWorkflowDefinition`: the
   frozen per-run definition copy and its validated read-back.
-- `frozenSteps.ts` — legacy pure frozen-step policy (`isStepFrozen`,
-  `nextRunnableStepIndex`). No production importer any more — only
-  `__tests__/workflowFrozenSteps.test.ts`; the live skip is `nextStepGroup`.
 - `execution.ts` — current group policy and member state helpers. Adjacent
   `agent` steps with `parallel: true` form a group; all other steps are
   singletons. `nextStepGroup` forms authored boundaries before skipping frozen

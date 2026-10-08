@@ -58,7 +58,7 @@ async function mkResidue(base: string, name: string, files: Record<string, strin
   return dir;
 }
 
-async function sweep(base: string, deps: ResidueSweepDeps, tasks: Task[] = [], live = new Set<string>()) {
+async function sweep(_base: string, deps: ResidueSweepDeps, tasks: Task[] = [], live = new Set<string>()) {
   return sweepWorktreeResidue('C:\\repo', tasks, live, deps.projectGit, deps, { logPrefix: '[test]' });
 }
 

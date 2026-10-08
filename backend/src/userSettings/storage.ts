@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 // Import the constant from the leaf paths module, NOT from `../tasks.js` (which
 // re-exports the whole task cache). This keeps userSettings — and therefore the
 // MCP registry / detached terminal-server that now read it at spawn time — free

@@ -1,6 +1,6 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { atomicWriteFile } from './claudeTrust/configFile.js';
+import { atomicWriteFile } from './fsAtomic.js';
 import {
   CALLBACK_HOOK_TIMEOUT_S,
   claudeCallbackCommand,
@@ -120,13 +120,6 @@ async function writeStopHookFile(dir: string, expected: string): Promise<void> {
   // one (a kill mid-write) means a session with NO Stop hook, i.e. a task that
   // never reports `/complete`.
   await atomicWriteFile(file, expected);
-}
-
-export async function installClaudeStopHook(
-  dir: string,
-  callbackUrl: string,
-): Promise<void> {
-  await writeStopHookFile(dir, renderClaudeStopHookConfig(callbackUrl));
 }
 
 // Install Stop + (optionally) the PreToolUse/PostToolUse activity hooks.

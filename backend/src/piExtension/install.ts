@@ -7,7 +7,7 @@
 import path from 'node:path';
 import fs from 'node:fs/promises';
 
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import {
   defaultPiExtensionFileName,
   defaultPiSentinelFileName,

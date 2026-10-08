@@ -123,6 +123,8 @@ export const FINGERPRINT_FILES = [
   'claudeTrust/configLock.js',
   'claudeTrust/maintenance.js',
   'claudeTrust/util.js',
+  // The atomic temp→rename writer every ~/.claude.json write goes through.
+  'fsAtomic.js',
   'mcp/claudeInject.js',
   // node-pty conout Worker release (the per-pty thread node-pty never stops).
   'terminal/conoutWorker.js',

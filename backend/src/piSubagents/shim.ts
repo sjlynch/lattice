@@ -11,7 +11,7 @@
 
 import path from 'node:path';
 import fs from 'node:fs/promises';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { getPiSubagentsEntry } from './ensure.js';
 import { PI_SUBAGENTS_SHIM_FILENAME, renderPiSubagentsShim } from './render.js';
 

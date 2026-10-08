@@ -167,7 +167,3 @@ export function disposeLabelEntry(entry: FloatingLabelEntry): void {
 // same to the whole scene on `_destructor`. Disposing is idempotent; a line
 // removed outside a digest (the Alt delta walker's per-node label toggle) is
 // not deallocated by the library and still needs it.
-export function disposeAndClearRegistry(registry: Set<FloatingLabelEntry>): void {
-  for (const entry of registry) disposeLabelEntry(entry);
-  registry.clear();
-}

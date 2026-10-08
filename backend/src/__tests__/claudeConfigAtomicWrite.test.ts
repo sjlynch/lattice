@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { atomicWriteFile } from '../claudeTrust.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { withTempDir } from './helpers/tempDir.js';
 
 test('concurrent atomic writes in the same millisecond use independent temporary files', async (t) => {

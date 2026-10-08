@@ -19,7 +19,6 @@ import {
 } from './setup.js';
 import {
   snapshotWorkingTree,
-  restoreSnapshot,
   type SnapshotHandle,
 } from './snapshot.js';
 

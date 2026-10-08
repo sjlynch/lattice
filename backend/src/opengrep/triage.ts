@@ -2,7 +2,7 @@
 // their audit trail outside the checkout and refuse to overwrite corrupt state.
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { runExclusive } from '../serializeWrites.js';
 import { canonicalProjectPath, homeProjectDir } from '../projectPath.js';
 import { fingerprintMatches, ruleMatches, type OpengrepFinding, type ParsedOpengrepOutput } from './parseOutput.js';

@@ -13,7 +13,4 @@ export const pushPaths = createHomeScratchPaths({
   noun: 'push session',
 });
 
-export const createPushSessionId = pushPaths.createSessionId;
-export const pushSessionsRoot = pushPaths.sessionsRoot;
-export const pushSessionDir = pushPaths.sessionDir;
 export const assertSafePushSessionPath = pushPaths.assertSafeSessionPath;

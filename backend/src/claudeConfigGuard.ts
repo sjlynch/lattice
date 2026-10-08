@@ -26,9 +26,9 @@ import path from 'node:path';
 import {
   CLAUDE_GLOBAL_CONFIG as CLAUDE_JSON,
   CLAUDE_JSON_BACKUP as BACKUP,
-  atomicWriteFile,
   restoreClaudeConfigFromBackup,
 } from './claudeTrust.js';
+import { atomicWriteFile } from './fsAtomic.js';
 
 // Settle delay between the two reads in `validate` — long enough to let an
 // in-flight Claude write finish, short enough not to stall a health tick.

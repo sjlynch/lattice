@@ -1,4 +1,5 @@
 import { canonicalProjectPath } from '../projectPath.js';
+import { createEmitter } from '../emitter.js';
 
 // A trigger must read settings before it can construct the full run record.
 // Keep that pre-record launch window visible to the workflow Merge-step gate;
@@ -6,16 +7,10 @@ import { canonicalProjectPath } from '../projectPath.js';
 // Re-exported from `./registry.ts`, the import path callers use.
 const pendingTriggerCounts = new Map<string, number>();
 type TriggerListener = (projectPath: string) => void;
-const triggerListeners = new Set<TriggerListener>();
+const triggers = createEmitter<[string]>('post-merge-hook-trigger');
 
 function notifyTriggerListeners(key: string): void {
-  for (const fn of triggerListeners) {
-    try {
-      fn(key);
-    } catch (err) {
-      console.error('[post-merge-hook] trigger listener threw:', err);
-    }
-  }
+  triggers.emit(key);
 }
 
 export function beginPostMergeHookTrigger(projectPath: string): () => void {
@@ -39,8 +34,5 @@ export function hasPendingPostMergeHookTrigger(projectPath: string): boolean {
 }
 
 export function subscribePostMergeHookTriggers(fn: TriggerListener): () => void {
-  triggerListeners.add(fn);
-  return () => {
-    triggerListeners.delete(fn);
-  };
+  return triggers.subscribe(fn);
 }

@@ -14,9 +14,9 @@
 import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
-import { randomUUID } from 'node:crypto';
 import { withClaudeConfigLock } from './configLock.js';
-import { sleep, unlinkQuietly } from './util.js';
+import { atomicWriteFile } from '../fsAtomic.js';
+import { sleep } from './util.js';
 
 export const CLAUDE_GLOBAL_CONFIG = path.join(os.homedir(), '.claude.json');
 // Known-good copy maintained by claudeConfigGuard. The path + restore logic
@@ -25,19 +25,13 @@ export const CLAUDE_GLOBAL_CONFIG = path.join(os.homedir(), '.claude.json');
 // primitives and the guard becomes a thin policy layer over them.
 export const CLAUDE_JSON_BACKUP = path.join(os.homedir(), '.lattice', 'claude-json-backup.json');
 
-// `fs.rename` over an existing ~/.claude.json throws EPERM/EBUSY/EACCES on
-// Windows whenever another Claude has the file briefly open (read at startup,
-// rewrite at shutdown). With many concurrent agents this collision is routine,
-// and it used to (a) leak the temp and (b) silently drop the trust/MCP seed.
-// A short bounded retry lets the write land once the other handle closes.
-const RENAME_RETRY_DELAYS_MS = [15, 30, 60, 120, 250];
+// Writes go through ../fsAtomic.ts (temp → rename with a bounded retry: with
+// many concurrent agents, another Claude briefly holding ~/.claude.json open is
+// routine, and a bare rename used to leak the temp and drop the trust/MCP seed).
 // Pause before re-reading a ~/.claude.json that failed to parse, so a read
 // that landed mid-way through Claude's in-place rewrite isn't mistaken for
 // corruption (matches the guard's REVALIDATE_DELAY_MS).
 export const HEAL_REREAD_DELAY_MS = 200;
-// Suffix on every Lattice-written temp, so a boot sweep can recognize orphans
-// regardless of which file (config or secrets) produced them.
-export const TEMP_SUFFIX = '.tmp';
 // Per-file prefix component of a Lattice temp name (`<basename>.lattice-`).
 // Shared by the writer (below) and the orphan-temp sweep (maintenance.ts).
 export function tempPrefix(file: string): string {
@@ -119,36 +113,6 @@ export async function readClaudeConfig(): Promise<ClaudeGlobalConfig> {
 
 export async function writeClaudeConfigAtomic(cfg: ClaudeGlobalConfig): Promise<void> {
   await atomicWriteFile(CLAUDE_GLOBAL_CONFIG, JSON.stringify(cfg, null, 2));
-}
-
-// Generic temp-write → rename for a file under the user's home. Cleans up its
-// temp on any failure (the orphan-temp leak that piled up ~8MB of
-// `.claude.json.lattice-*.tmp`) and retries the rename through transient
-// Windows file-locks. Shared by the config write above and the guard's backup
-// refresh so both get the same durability.
-export async function atomicWriteFile(file: string, content: string): Promise<void> {
-  const tmp = `${file}.lattice-${process.pid}-${Date.now()}-${randomUUID()}${TEMP_SUFFIX}`;
-  try {
-    await fs.writeFile(tmp, content, 'utf8');
-    await renameWithRetry(tmp, file);
-  } catch (err) {
-    await unlinkQuietly(tmp);
-    throw err;
-  }
-}
-
-async function renameWithRetry(from: string, to: string): Promise<void> {
-  for (let i = 0; ; i++) {
-    try {
-      await fs.rename(from, to);
-      return;
-    } catch (err) {
-      const code = (err as NodeJS.ErrnoException).code;
-      const transient = code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
-      if (!transient || i >= RENAME_RETRY_DELAYS_MS.length) throw err;
-      await sleep(RENAME_RETRY_DELAYS_MS[i]);
-    }
-  }
 }
 
 // Restore ~/.claude.json from the known-good backup. Assumes the config lock is

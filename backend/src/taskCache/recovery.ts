@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import { ProjectIdentityConflictError } from '../projectIdentity.js';
 import path from 'node:path';
 import { canonicalProjectPath } from '../projectPath.js';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import type { TaskMigrations } from './migrations.js';
 import { projectTasksBackupFile, projectTasksFile } from './paths.js';
 import type { ProjectsIndex } from './projectsIndex.js';

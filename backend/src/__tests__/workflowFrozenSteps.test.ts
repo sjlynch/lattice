@@ -3,10 +3,6 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import {
-  isStepFrozen,
-  nextRunnableStepIndex,
-} from '../workflowRuns/frozenSteps.js';
 import { completeWorkflowStep, startWorkflowRun } from '../workflowRuns.js';
 import { runs } from '../workflowRuns/state.js';
 import { createWorkflow } from '../workflows.js';
@@ -14,8 +10,8 @@ import { normalizeSteps } from '../workflows/normalization.js';
 import type { WorkflowStep } from '../workflows.js';
 
 // The editor's snowflake toggle sets `WorkflowStep.frozen`; the run engine must
-// then walk straight past that step. These pin the two halves that can drift:
-// the pure skip policy, and the two places in workflowRuns.ts that consume it
+// then walk straight past that step (`nextStepGroup` in workflowRuns/execution.ts).
+// These pin the flag's coercion and the two places the run engine honours it
 // (run start and step advance).
 
 function step(over: Partial<WorkflowStep> = {}): WorkflowStep {
@@ -31,38 +27,7 @@ function step(over: Partial<WorkflowStep> = {}): WorkflowStep {
 
 const ORIGIN = 'http://127.0.0.1:5184';
 
-test('nextRunnableStepIndex walks past frozen steps in every position', () => {
-  const steps = [
-    step({ frozen: true }),
-    step({ frozen: true }),
-    step(),
-    step({ frozen: true }),
-    step(),
-  ];
-
-  // Leading frozen steps → a run starts at the first thawed one.
-  assert.equal(nextRunnableStepIndex(steps, 0), 2);
-  // Asking from the runnable step itself returns it (no forced advance).
-  assert.equal(nextRunnableStepIndex(steps, 2), 2);
-  // A frozen step in the middle is stepped over.
-  assert.equal(nextRunnableStepIndex(steps, 3), 4);
-  // Past the end → nothing runnable left.
-  assert.equal(nextRunnableStepIndex(steps, 5), null);
-  // A negative `from` is clamped rather than throwing off the scan.
-  assert.equal(nextRunnableStepIndex(steps, -3), 2);
-});
-
-test('nextRunnableStepIndex reports null for all-frozen and empty workflows', () => {
-  assert.equal(nextRunnableStepIndex([step({ frozen: true })], 0), null);
-  assert.equal(nextRunnableStepIndex([], 0), null);
-});
-
 test('only a literal true freezes a step', () => {
-  assert.equal(isStepFrozen(step()), false);
-  assert.equal(isStepFrozen(step({ frozen: false })), false);
-  assert.equal(isStepFrozen(undefined), false);
-  assert.equal(isStepFrozen(step({ frozen: true })), true);
-
   // Untrusted disk/HTTP input is coerced the same way, and a not-frozen step
   // keeps the flag out of the JSON entirely (undefined, not false).
   const [truthyGarbage, real, plain] = normalizeSteps([

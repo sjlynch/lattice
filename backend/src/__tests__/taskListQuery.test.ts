@@ -22,7 +22,7 @@ import {
 } from '../routes/tasks/listQuery.js';
 import { stringParams } from '../routes/tasks/crudList.js';
 import { parseMarkdownDoc } from '../routes/tasks/markdownBatch.js';
-import type { Task, TaskStatus } from '../tasks.js';
+import type { Task } from '../tasks.js';
 
 // The pure half of GET /api/tasks. The endpoint used to return every task,
 // full text, uncapped — on a mature board that is ~500 tasks / >1 MB / ~320k

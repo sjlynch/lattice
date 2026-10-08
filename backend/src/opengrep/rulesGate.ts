@@ -41,10 +41,6 @@ function wake(list: Array<() => void>): void {
   for (const w of list) w();
 }
 
-export function activeRulesReads(): number {
-  return activeReads;
-}
-
 export function isRulesMutationPending(): boolean {
   return pendingMutations > 0;
 }

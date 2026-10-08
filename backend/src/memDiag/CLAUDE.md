@@ -53,6 +53,8 @@ Register beside the collection, at module scope:
 
 - O(1)-cheap, side-effect free; a sum over a bounded set is fine at a 5-min
   cadence, a walk of a whole project tree is not.
+- Every `createEmitter` (../emitter.ts) already reports `listeners.<label>`;
+  a subscriber count that only climbs is a subscription leak.
 - Name byte-valued gauges with a `mem.` segment (`ws.mem.buffered`,
   `terminal.mem.scrollback`) — the formatter and trend thresholds key off it.
 - Per-instance resources (a graph renderer, a store instance) return/keep the

@@ -20,7 +20,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { homeProjectScratchDir } from '../projectPath.js';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { getUserSettings } from '../userSettings.js';
 
 const OWED_FILENAME = 'post-merge-hook-owed.json';

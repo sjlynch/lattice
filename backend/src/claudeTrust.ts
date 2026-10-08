@@ -17,7 +17,7 @@
 //                       only — no policy resolution lives here).
 //   - configFile.ts   — `~/.claude.json` primitives: parse-on-read with
 //                       heal-from-backup, the atomic temp→rename writer, the
-//                       restore-from-backup path, and `atomicWriteFile`.
+//                       restore-from-backup path (writes via ../fsAtomic.ts).
 //   - configLock.ts   — the exclusive owner-file mutex with bounded retry and
 //                       verified dead-owner recovery at the legacy lock path.
 //   - maintenance.ts  — boot/timer sweeps: prune dead ephemeral `projects[<cwd>]`
@@ -32,7 +32,6 @@
 export {
   CLAUDE_GLOBAL_CONFIG,
   CLAUDE_JSON_BACKUP,
-  atomicWriteFile,
   restoreClaudeConfigFromBackup,
 } from './claudeTrust/configFile.js';
 export { applyClaudeProjectConfig, seedClaudeTrust } from './claudeTrust/apply.js';

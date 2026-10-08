@@ -17,7 +17,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { canonicalProjectPath } from './projectPath.js';
 import { encodeAgentToken } from './agentActivityTokens.js';
-import { atomicWriteFile } from './claudeTrust/configFile.js';
+import { atomicWriteFile } from './fsAtomic.js';
 
 const URL_MARKER = '/api/project-activity/';
 const FILE_TOOL_MATCHER = 'Read|Edit|Write|MultiEdit|NotebookEdit';

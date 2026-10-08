@@ -123,7 +123,7 @@ test('pointer-mode worktree: pointers in, clean status, merge keeps pointers, FF
 
       // The worktree-side merge reads the (default) setting itself.
       assert.deepEqual(await worktreeCheckoutEnv(wt), { GIT_LFS_SKIP_SMUDGE: '1' });
-      const merged = await runWorktreeMerge(wt, branch, mainSha, 'merge main');
+      const merged = await runWorktreeMerge(wt, mainSha, 'merge main');
       assert.equal(merged.code, 0, merged.stderr);
       assert.equal(git(wt, ['status', '--porcelain']), '');
       assert.equal(await headOf(path.join(wt, 'asset.bin')), LFS_POINTER_PREFIX);

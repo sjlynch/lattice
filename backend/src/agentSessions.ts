@@ -16,6 +16,7 @@
 import { canonicalProjectPath } from './projectPath.js';
 import type { AgentHarness } from './harnesses.js';
 import { registerMemGauge } from './memDiag/gauges.js';
+import { createEmitter } from './emitter.js';
 
 export type AgentSession = {
   // Namespaced session id (`push:<id>`, `wf:<runId>:<step>`, `pmh:<id>`, or
@@ -46,7 +47,7 @@ type SessionRecord = AgentSession & {
 type Listener = (projectPath: string, sessions: AgentSession[]) => void;
 
 const sessions = new Map<string, SessionRecord>();
-const listeners = new Set<Listener>();
+const changes = createEmitter<[projectPath: string, sessions: AgentSession[]]>('agent-sessions');
 registerMemGauge('agentSessions.sessions', () => sessions.size);
 
 // Absolute safety net for lifecycle sessions whose completion callback never
@@ -77,19 +78,11 @@ export function listAgentSessions(projectPath: string): AgentSession[] {
 }
 
 export function subscribeAgentSessions(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+  return changes.subscribe(listener);
 }
 
 function emit(projectPath: string): void {
-  const list = listAgentSessions(projectPath);
-  for (const listener of [...listeners]) {
-    try {
-      listener(projectPath, list);
-    } catch (err) {
-      console.error('[agent-sessions] listener threw:', err);
-    }
-  }
+  changes.emit(projectPath, listAgentSessions(projectPath));
 }
 
 export function registerAgentSession(input: {

@@ -14,7 +14,6 @@ import {
 import { DEFAULT_HARNESS, loadHarnessForFolder } from './harnessSelectorLoad';
 
 export type { HarnessChoice };
-export type ResolvedHarness = AgentHarness;
 // What a run/resume needs: the harness plus (for Pi) the chosen model.
 export type RunHarnessSelection = { harness: AgentHarness; piModel?: string };
 export type { PiMenuEntry };

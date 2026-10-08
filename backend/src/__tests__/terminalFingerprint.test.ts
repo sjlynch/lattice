@@ -113,3 +113,17 @@ test('FINGERPRINT_FILES has no duplicate entries', () => {
     'duplicate fingerprint entries hash the same bytes twice for no benefit',
   );
 });
+
+// Modules the executor must NEVER load. Listing one in FINGERPRINT_FILES would
+// satisfy the coverage test above while defeating the reason it is excluded:
+//   - latticeApiDocs.js (+ its templates) change with every API edit; in the
+//     executor's graph they marked the live terminal-server stale about a third
+//     of the time. The executor only needs latticeApiDocs/docPath.js.
+//   - memDiag/browser.js is backend-only (browser-tab samples).
+const EXECUTOR_FORBIDDEN = ['latticeApiDocs.js', 'memDiag/browser.js'];
+
+test('the terminal-server never imports modules that would churn its fingerprint', () => {
+  const graph = new Set(terminalServerGraph());
+  const loaded = EXECUTOR_FORBIDDEN.filter((mod) => graph.has(mod));
+  assert.deepEqual(loaded, [], 'keep these out of terminal-server code (see the comment above)');
+});

@@ -2,13 +2,11 @@
 // project scans. Backend: src/routes/opengrep.ts over src/opengrep/.
 
 import { asJson, deleteJson, postJson } from './http';
-import type { OpengrepSeverity } from './types';
 import type {
   OpengrepGraphResult,
   OpengrepInstallJob,
   OpengrepRulePackStatus,
   OpengrepScanEnvelope,
-  OpengrepScanRecord,
   OpengrepStatus,
 } from './types/opengrep';
 
@@ -134,28 +132,3 @@ export async function runOpengrepScan(
   return postJson<OpengrepScanEnvelope>('/api/opengrep/scan', { project, ...opts });
 }
 
-export async function fetchOpengrepScans(project: string): Promise<OpengrepScanRecord[]> {
-  const r = await asJson<{ scans: OpengrepScanRecord[] }>(
-    await fetch(`/api/opengrep/scans?project=${encodeURIComponent(project)}`),
-  );
-  return r.scans ?? [];
-}
-
-// The digest markdown of a stored scan (`latest` allowed), optionally narrowed.
-export async function fetchOpengrepDigest(
-  project: string,
-  id = 'latest',
-  opts: { rule?: string; file?: string; severity?: OpengrepSeverity; budgetKb?: number } = {},
-): Promise<string> {
-  const params = new URLSearchParams({ project, format: 'md' });
-  if (opts.rule) params.set('rule', opts.rule);
-  if (opts.file) params.set('file', opts.file);
-  if (opts.severity) params.set('severity', opts.severity);
-  if (opts.budgetKb) params.set('budgetKb', String(opts.budgetKb));
-  const r = await fetch(`/api/opengrep/scans/${encodeURIComponent(id)}?${params.toString()}`);
-  if (!r.ok) {
-    // Reuse asJson's error extraction for the JSON error envelope.
-    await asJson<never>(r);
-  }
-  return r.text();
-}

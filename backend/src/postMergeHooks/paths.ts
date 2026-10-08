@@ -16,7 +16,6 @@ export const postMergeHookPaths = createHomeScratchPaths({
 });
 
 export const createPostMergeHookId = postMergeHookPaths.createSessionId;
-export const postMergeHooksRoot = postMergeHookPaths.sessionsRoot;
 export const postMergeHookDir = postMergeHookPaths.sessionDir;
 export const assertSafePostMergeHookPath =
   postMergeHookPaths.assertSafeSessionPath;

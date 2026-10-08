@@ -19,6 +19,8 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `globalSettings.ts` / `globalSettings/` — `~/.lattice/globalSettings.json` read/write facade; field validators live beside their shapes. See `globalSettings/CLAUDE.md`.
 - `userSettings.ts` / `userSettings/` — per-project `<project>/.lattice/userSettings.json` barrel. See `userSettings/CLAUDE.md`.
 - `serializeWrites.ts` — `runExclusive(key, fn)`: per-key promise chain so overlapping settings read-modify-writes can't clobber each other.
+- `fsAtomic.ts` — `atomicWriteFile`: THE crash-safe temp→rename writer (retries transient Windows locks, never leaks its temp). Use it for every JSON store/config write.
+- `emitter.ts` — `createEmitter(label)`: THE in-process pub/sub (snapshot iteration, per-listener isolation, `listeners.<label>` memory gauge). Use it instead of a hand-rolled listener `Set`.
 
 ### Project identity & state
 
@@ -151,7 +153,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - **Per-task merge lock** (`mergeLocks.ts`) — manual `/merge` can't race the run worker.
 - **Crash-safe ordering** — `updateTaskCrashSafe` writes disk before cache; used for `ready_to_merge → qa`.
 - **Merge in the worktree, not main** — see `worktree/merge.ts`. Main's tree only ever changes by fast-forward.
-- **All project-repo git goes through `projectGit`** — never raw `exec('git', …, repoRoot)`. Worktree-side git stays on `exec` (disposable, and it needs the real `git merge` `projectGit` forbids).
+- **All project-repo git goes through `projectGit`** — a raw `exec('git', …)` is allowed only in the modules `__tests__/rawGitAllowlist.test.ts` lists (worktree-side git, which needs the real `git merge` `projectGit` forbids; read-only probes of paths that may not be a repo root; Git Setup's `git init`). A new raw call fails that test.
 - **No `fs.rm({recursive})` on anything inside a project** — worktrees live outside the tree and teardown delegates to `git worktree remove`. One-off scratch cleanup is an intentional recursive delete, bounded to `per-project/<hash>/{push,qa,post-merge-hooks}/<id>/` with path + reparse-point guards.
 
 ## Type-check

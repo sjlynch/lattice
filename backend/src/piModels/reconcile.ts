@@ -12,7 +12,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { runExclusive } from '../serializeWrites.js';
 import { latticeHomeDir } from '../projectPath.js';
 import { readGlobalSettingsStrict, type PiProvider } from '../globalSettings.js';

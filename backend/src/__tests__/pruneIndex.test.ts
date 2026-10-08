@@ -12,7 +12,6 @@ import {
 import { ProjectsIndex } from '../taskCache/projectsIndex.js';
 import { PROJECTS_INDEX } from '../taskCache/paths.js';
 
-const isWindows = process.platform === 'win32';
 const driveRoot = path.parse(process.cwd()).root; // "C:\" or "/"
 
 // A well-formed absolute path that is NOT under the OS temp dir and will not

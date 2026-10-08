@@ -1,5 +1,5 @@
 import fs from 'node:fs/promises';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { runExclusive } from '../serializeWrites.js';
 import { LATTICE_HOME, PROJECTS_INDEX } from './paths.js';

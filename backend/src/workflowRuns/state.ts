@@ -9,6 +9,7 @@ import { canonicalProjectPath } from '../projectPath.js';
 import type { Workflow, WorkflowStepHarness, WorkflowStepKind } from '../workflows.js';
 import { scheduleWorkflowRunPersist, writeWorkflowRunsNow } from './persistence.js';
 import { cloneWorkflowDefinition } from './definition.js';
+import { createEmitter } from '../emitter.js';
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
 
@@ -136,7 +137,7 @@ export type WorkflowRunEvent =
     };
 
 export const runs = new Map<string, WorkflowRun>();
-const listeners = new Set<(ev: WorkflowRunEvent) => void>();
+const events = createEmitter<[WorkflowRunEvent]>('workflow-run');
 
 export function snapshot(run: WorkflowRun): WorkflowRun {
   return {
@@ -206,19 +207,12 @@ export function notify(ev: WorkflowRunEvent): void {
   // socket whose `ws.send` throws between the `readyState` check and
   // the send, or any future-added subscriber that throws under load
   // could silently break the entire workflow engine. Per-listener
-  // try/catch breaks that cascade.
-  for (const fn of listeners) {
-    try {
-      fn(ev);
-    } catch (err) {
-      console.error('[workflow-run] subscriber threw (isolated):', err);
-    }
-  }
+  // try/catch (createEmitter) breaks that cascade.
+  events.emit(ev);
 }
 
 export function subscribe(fn: (ev: WorkflowRunEvent) => void): () => void {
-  listeners.add(fn);
-  return () => { listeners.delete(fn); };
+  return events.subscribe(fn);
 }
 
 // Does this task belong to the run's round? A legacy run without a recorded

@@ -289,17 +289,3 @@ export function cancelRunInState(state: RunState, id: string): boolean {
   return state.cancelRun(id);
 }
 
-export function markRunLiveInState(state: RunState, id: string): void {
-  state.markRunLive(id);
-}
-
-export function markRunSettledInState(state: RunState, id: string): void {
-  state.markRunSettled(id);
-}
-
-export function reapOrphanedRunsInState(
-  state: RunState,
-  projectPath: string,
-): MergeRun[] {
-  return state.reapOrphanedRuns(projectPath);
-}

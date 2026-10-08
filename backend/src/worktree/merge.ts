@@ -86,7 +86,6 @@ export async function mergeWorktreeInRepo(
   const dirtyBefore = await readWorktreeDirtyPaths(worktreePath);
   const merge = await runWorktreeMerge(
     worktreePath,
-    branchName,
     preflight.mainHeadSha,
     mergeMessage,
   );

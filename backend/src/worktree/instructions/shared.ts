@@ -10,10 +10,6 @@ export const MERGE_FILES_LIST_HINT =
 export const STASH_FILES_LIST_HINT =
   '_(run `git diff --name-only --diff-filter=U` to list)_';
 export const CONFLICT_MARKERS = '`<<<<<<<` / `=======` / `>>>>>>>`';
-export const MERGE_CONFLICT_MARKERS = CONFLICT_MARKERS.replace(
-  ' / `>>>>>>>`',
-  ' /\n   `>>>>>>>`',
-);
 export const CHECKOUT_THEIRS_FOOTER = `## If a file cannot be resolved cleanly
 
 Use \`git checkout --theirs -- <file>\` (or \`--ours\`), stage it, and continue.

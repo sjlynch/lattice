@@ -36,7 +36,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { exec } from './exec.js';
 import { projectHash } from '../projectPath.js';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { SNAPSHOTS_BASE } from './snapshot/manifest.js';
 import { createSnapshotDirectory } from './snapshot/capture.js';
 import { parseStatus, filterSafeDirtyPaths, logDroppedPaths } from './snapshot/pathClassification.js';

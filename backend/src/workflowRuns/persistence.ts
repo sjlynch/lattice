@@ -28,7 +28,7 @@
 
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { atomicWriteFile } from '../claudeTrust/configFile.js';
+import { atomicWriteFile } from '../fsAtomic.js';
 import { canonicalProjectPath, homeProjectScratchDir } from '../projectPath.js';
 import { snapshot, type WorkflowRun } from './state.js';
 import { deserializeWorkflowRuns, serializeWorkflowRuns } from './runCodec.js';

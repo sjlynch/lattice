@@ -21,13 +21,6 @@ export const DEAD_CODE_COLORS: Record<DeadCodeStatus, string> = {
   uncertain: '#5b626d', // dim grey — asset / unsupported language / dynamic-only
 };
 
-export const DEAD_CODE_LEGEND: { status: DeadCodeStatus; label: string }[] = [
-  { status: 'live', label: 'Reachable' },
-  { status: 'dead', label: 'Dead / orphaned' },
-  { status: 'entry', label: 'Entry point' },
-  { status: 'uncertain', label: 'Uncertain' },
-];
-
 function deadCodeStyle(node: GraphNode, color: string): ExtStyle {
   const baseShape: Shape =
     node.kind === 'dir' ? DIR_STYLE.shape : getStyleFor(node.ext).shape;

@@ -34,14 +34,3 @@ export function safeLocalStorageSetItem(key: string, value: string): boolean {
     return false;
   }
 }
-
-export function safeLocalStorageRemoveItem(key: string): boolean {
-  try {
-    const s = storage();
-    if (!s) return false;
-    s.removeItem(key);
-    return true;
-  } catch {
-    return false;
-  }
-}

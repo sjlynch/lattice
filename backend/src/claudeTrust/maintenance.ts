@@ -10,10 +10,10 @@ import path from 'node:path';
 import os from 'node:os';
 import fs from 'node:fs/promises';
 import { withClaudeConfigLock } from './configLock.js';
+import { TEMP_SUFFIX } from '../fsAtomic.js';
 import {
   CLAUDE_GLOBAL_CONFIG,
   CLAUDE_JSON_BACKUP,
-  TEMP_SUFFIX,
   tempPrefix,
   readClaudeConfig,
   writeClaudeConfigAtomic,

@@ -33,8 +33,7 @@ the repo's `.git`-deletion defence layer (see the root `CLAUDE.md`).
 ## Files (the shared skeleton)
 
 - `paths.ts` — one `createHomeScratchPaths(...)` call wired with the
-  `push`/`[pushRuns]`/`push session` config; re-exports `createPushSessionId`,
-  `pushSessionsRoot`, `pushSessionDir`, `assertSafePushSessionPath`, plus the
+  `push`/`[pushRuns]`/`push session` config; re-exports `assertSafePushSessionPath`, plus the
   `pushPaths` object the builder consumes. The **path-safety guard** itself lives
   in `../homeScratch/paths.ts`: it refuses any id that fails the id regex, any
   dir not strictly under the home scratch root, or any dir that lands inside the
