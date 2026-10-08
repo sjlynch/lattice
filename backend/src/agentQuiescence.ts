@@ -27,6 +27,8 @@
 // Deliberately generic (keyed by the caller's `agentId`) and side-effect-free
 // so it stays trivially unit-testable and reusable by any Stop-hook consumer.
 
+import { registerMemGauge } from './memDiag/gauges.js';
+
 type QuiescenceState = {
   // Subagents started with an `agent_id`; only a stop carrying the same id
   // removes one.
@@ -69,10 +71,28 @@ type QuiescenceState = {
 export const READOPTED_SETTLE_MS = 120_000;
 
 const states = new Map<string, QuiescenceState>();
+registerMemGauge('agentQuiescence.sessions', () => states.size);
+
+// Hooks keep arriving after `forgetAgentQuiescence` (an in-flight PostToolUse,
+// a late SubagentStop, a step whose terminal stays open), and each re-creates
+// an entry nothing forgets again. Entries silent this long with no live
+// subagent are dropped when a new one is created (at most once a minute).
+const STALE_ENTRY_MS = 12 * 60 * 60 * 1000;
+let lastPruneAt = 0;
+function pruneStale(now: number): void {
+  if (now - lastPruneAt < 60_000) return;
+  lastPruneAt = now;
+  for (const [id, s] of states) {
+    if (now - s.lastSignalAt > STALE_ENTRY_MS && s.liveIds.size === 0 && s.anonymous === 0) {
+      states.delete(id);
+    }
+  }
+}
 
 function ensure(agentId: string, now: number): QuiescenceState {
   let s = states.get(agentId);
   if (!s) {
+    pruneStale(now);
     s = {
       liveIds: new Set(),
       anonymous: 0,

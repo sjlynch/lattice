@@ -4,7 +4,7 @@
 // magic numbers.
 
 import type { FloatingLabelSpriteConfig } from './floatingLabelSprite';
-import type { LabelTextureOptions } from './labelTexture';
+import { LABEL_TEXTURE_FREE_BYTES_BUDGET, type LabelTextureOptions } from './labelTexture';
 
 // How long a *non-current* touched file stays beamed after it stops being the
 // agent's current file. The current (last-touched) file's beam never expires —
@@ -121,6 +121,11 @@ export const LABEL_OPTIONS: LabelTextureOptions = {
   padX: 18,
   minWidth: 72,
   maxEntries: 256,
+  // Agent labels live in the overlay's own group, so the library never disposes
+  // them: a changed / removed label is only marked free. Without a byte budget,
+  // 256 free canvases + GPU textures (~35 MB each side) stayed until a project
+  // switch.
+  maxFreeBytes: LABEL_TEXTURE_FREE_BYTES_BUDGET,
 };
 
 // Floating-label sprite config: same base height + config as the Alt-label

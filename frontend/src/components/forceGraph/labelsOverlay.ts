@@ -16,6 +16,7 @@ import {
   createLabelTextureCache,
   deferLabelTextureTrim,
   LABEL_TEXTURE_FREE_BYTES_BUDGET,
+  labelTextureCacheBytes,
   releaseLabelTexture,
   settleLabelTextureBatch,
   trimLabelTextureCache,
@@ -23,6 +24,7 @@ import {
   type LabelTextureOptions,
 } from './labelTexture';
 import { isGhost } from './timelineDiff';
+import { registerMemGauge } from '../../debug/memDiag';
 
 // Node depth derived from path: root has depth 0; every path separator past
 // the root prefix bumps the depth by one. Works for both POSIX and Windows
@@ -48,6 +50,7 @@ const NAME_LABEL_TEXTURE_OPTIONS: LabelTextureOptions = {
   maxFreeBytes: LABEL_TEXTURE_FREE_BYTES_BUDGET,
 };
 const nameLabelTextureCache = createLabelTextureCache();
+registerMemGauge('graph.mem.nameLabelCanvases', () => labelTextureCacheBytes(nameLabelTextureCache));
 
 // Pushed up well clear of the node — same offset as the LOC overlay — so
 // dense clusters of labels can fan out without crashing into their nodes.
@@ -67,6 +70,15 @@ export const LABEL_REPULSION_BASE = 90;
 // LOC overlay.
 export type LabelEntry = FloatingLabelEntry;
 export const labelsRegistry = new Set<LabelEntry>();
+
+// Hard cap on name labels in use at once. The texture caches' caps only evict
+// FREE entries, and a box-select / broad search + Alt labels every selected
+// node: each label is a ~150–300 KB canvas plus the same again as a GPU
+// texture, so select-all on a 5k-node graph allocated gigabytes in one go (the
+// likeliest trigger of the intermittent tab OOM). Past this many labels are
+// unreadable anyway; nodes beyond the cap simply get none.
+export const MAX_NAME_LABELS = 300;
+registerMemGauge('graph.nameLabels', () => labelsRegistry.size);
 
 // Tag carried by the label sprite + connector line, and the entry stash on the
 // node's root `userData`, so a label can be toggled in place on an already-
@@ -94,7 +106,7 @@ function makeNameSprite(text: string, color: string, baseH: number): THREE.Sprit
 // other node gets one. With no selection it falls back to the depth-band
 // behavior: the node must sit on the active depth band, and file nodes only
 // when Shift is held (Alt alone shows directory names only).
-function shouldShowLabel(
+export function shouldShowLabel(
   node: GraphNode,
   activeDepth: number,
   nodeDepth: number,
@@ -168,7 +180,7 @@ export function applyNodeLabelState(
   const want = shouldShowLabel(node, activeDepth, nodeDepth, showFileLabels, selectedIds);
   const existing = root.userData[LABEL_ENTRY] as FloatingLabelEntry | undefined;
   if (want) {
-    if (existing) return;
+    if (existing || labelsRegistry.size >= MAX_NAME_LABELS) return;
     const color = node.kind === 'dir' ? '#e6c07b' : '#dce4f0';
     const line = makeConnectorLine({ color, labelY: LABEL_Y, opacity: 0.7 });
     const label = makeNameSprite(node.name, color, settings.labelSize);

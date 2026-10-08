@@ -8,6 +8,7 @@ import { TERMINAL_CONFIG } from '../terminalConfig.js';
 import type { CreateOpts, Session } from './sessionTypes.js';
 import { addSession, sessionCount } from './sessionStore.js';
 import { buildSessionLaunchContext } from './launchContext.js';
+import { trackConoutWorker } from './conoutWorker.js';
 import {
   addLatticeBanner,
   scheduleInitialCommand,
@@ -113,6 +114,7 @@ export function createSession(
     killing: false,
   };
   addSession(session);
+  trackConoutWorker(term);
   console.log(
     `[terminal] created ${session.id} (cwd=${session.cwd}, shell=${session.shell}, pid=${term.pid})`,
   );

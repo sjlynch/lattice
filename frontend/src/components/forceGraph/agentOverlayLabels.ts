@@ -9,8 +9,10 @@ import {
   buildMeasuredLabelTexture,
   createLabelTextureCache,
   disposeLabelTextureCache,
+  labelTextureCacheBytes,
   releaseLabelTexture,
 } from './labelTexture';
+import { registerMemGauge } from '../../debug/memDiag';
 import {
   LABEL_OFFSET_X_FACTOR,
   LABEL_OFFSET_Y_FACTOR,
@@ -26,6 +28,7 @@ import { baseName } from './agentOverlayPathIndex';
 import type { Agent, LabelHost, Satellite } from './agentOverlayTypes';
 
 const agentLabelCache = createLabelTextureCache();
+registerMemGauge('graph.mem.agentLabelCanvases', () => labelTextureCacheBytes(agentLabelCache));
 
 // Build the label sprite for a file basename, in the agent color.
 function buildAgentLabel(text: string, color: string, labelSize: number): THREE.Sprite {

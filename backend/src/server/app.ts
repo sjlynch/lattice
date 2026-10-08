@@ -28,6 +28,7 @@ import { buildTerminalTabsRouter } from '../routes/terminalTabs.js';
 import { buildWorkflowsRouter } from '../routes/workflows.js';
 import { buildRestartDrainAdmissionGate, buildRestartDrainRouter } from '../routes/restartDrain.js';
 import { buildCallbackOutboxAck } from '../callbackOutbox/ack.js';
+import { buildDebugRouter } from '../routes/debug.js';
 
 export type BackendAppOptions = {
   defaultRoot: string;
@@ -119,6 +120,7 @@ export function mountRouteFactories(
   // callbackOutbox/ack.ts.
   app.use(buildCallbackOutboxAck(options.backendOrigin));
   app.use(buildHealthRouter(options.defaultRoot));
+  app.use(buildDebugRouter());
   app.use(buildSearchRouter(options.defaultRoot));
   app.use(buildSettingsRouter());
   app.use(buildGlobalSettingsRouter());

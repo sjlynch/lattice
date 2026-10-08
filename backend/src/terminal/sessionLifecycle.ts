@@ -4,6 +4,7 @@ import { TERMINAL_CONFIG } from '../terminalConfig.js';
 import { deleteSession } from './sessionStore.js';
 import type { Session } from './sessionTypes.js';
 import { broadcastToSubscribers } from './broadcast.js';
+import { releaseConoutWorker } from './conoutWorker.js';
 
 export function wireSessionPtyEvents(session: Session): void {
   session.pty.onData((data) => {
@@ -31,6 +32,8 @@ export function wireSessionPtyEvents(session: Session): void {
       }
     }
     deleteSession(session.id);
+    // node-pty never stops this pty's conout Worker thread itself (~10 MB each).
+    releaseConoutWorker(session.pty);
   });
 }
 

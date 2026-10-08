@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { MeasuredLabelTexture } from './labelTexture';
+import { createSpriteMaterialCache } from './spriteMaterialCache';
 
 // --- Module-owned shared caches (Part A) ------------------------------------
 // Toggling a metric/Alt overlay calls graph.refresh(), which rebuilds every
@@ -60,20 +61,18 @@ function cachedColor(hex: string): THREE.Color {
 }
 
 // Connector LineBasicMaterial cached by (color, opacity) — the only fields that
-// vary between callers — since nothing mutates it after creation.
-const lineMaterialCache = new Map<string, THREE.LineBasicMaterial>();
+// vary between callers — since nothing mutates it after creation. A
+// `createSpriteMaterialCache` so graph teardown disposes it: the Alt-label
+// lines are removed in place (only their cloned geometry is freed), so the
+// library never disposes these, and each renderer that drew one kept a
+// `dispose` listener closing over its whole (dead) WebGL state — one pinned
+// renderer per project switch / Retry after Alt labels were shown.
+const lineMaterialCache = createSpriteMaterialCache<string, THREE.LineBasicMaterial>();
 export function cachedLineMaterial(color: string, opacity: number): THREE.LineBasicMaterial {
-  const key = `${color}|${opacity}`;
-  let mat = lineMaterialCache.get(key);
-  if (!mat) {
-    mat = new THREE.LineBasicMaterial({
-      color: cachedColor(color),
-      transparent: true,
-      opacity,
-    });
-    lineMaterialCache.set(key, mat);
-  }
-  return mat;
+  return lineMaterialCache.get(
+    `${color}|${opacity}`,
+    () => new THREE.LineBasicMaterial({ color: cachedColor(color), transparent: true, opacity }),
+  );
 }
 
 // Connector geometry template cached by its (constant) endpoints. Every line in

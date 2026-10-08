@@ -1,5 +1,6 @@
 import { subscribeWs } from './wsTransport';
 import type { WsSubscription } from './wsTransport';
+import { registerMemGauge } from '../debug/memDiag';
 
 // Ref-counted multiplexer over `subscribeWs`: at most ONE live socket per
 // distinct `pathWithQuery`, shared by every caller. The frame is JSON.parsed
@@ -49,6 +50,7 @@ function replayEntry<T>(channel: SharedChannel<T>, msg: T): T | undefined {
 }
 
 const sharedChannels = new Map<string, SharedChannel<unknown>>();
+registerMemGauge('ws.sharedChannels', () => sharedChannels.size);
 
 export function subscribeWsShared<T>(
   pathWithQuery: string,

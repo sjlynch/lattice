@@ -26,6 +26,8 @@ import { startTerminalRegistryWatch } from '../terminalRegistry/watch.js';
 import { ensureCallbackScript, startCallbackOutboxLoop } from '../callbackOutbox.js';
 import { fireOwedPostMergeHooks } from '../recovery/owedPostMergeHooks.js';
 import { recoverSecurityReviews, sweepSecurityReviews } from '../opengrep/reviewRecovery.js';
+import { registerMemProbe, startMemDiag } from '../memDiag.js';
+import { readExecutorMemory } from '../memDiag/executorProbe.js';
 
 export async function startBackend(
   config: BackendServerConfig = getBackendServerConfig(),
@@ -217,6 +219,10 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // (exited ptys are ended so restore never relaunches them; busy transitions
   // are stamped for the interruption detector). See terminalRegistry/watch.ts.
   startTerminalRegistryWatch();
+  // Periodic `[mem]` console line + ~/.lattice/logs/mem-backend.jsonl
+  // (LATTICE_MEM_LOG_MS, 0 disables). See memDiag/CLAUDE.md.
+  registerMemProbe('executor', readExecutorMemory);
+  startMemDiag('backend');
   // Rewrite the Stop hooks' delivery script so every hook installed from here
   // on runs the current one. The outbox replay itself starts at the end of the
   // recovery chain above. See callbackOutbox/.

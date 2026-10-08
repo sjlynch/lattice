@@ -264,6 +264,9 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | POST | `/api/internal/restart-drain/cancel` | End a drain not followed by a restart (internal) |
 | GET | `/api/internal/restart-drain/lock-holders` | Is each run.lock holder parked on a live agent? (internal) |
 | GET | `/api/terminal-server/status` | Is the detached terminal-server current / stale / absent |
+| GET | `/api/debug/memory` | Memory debug snapshot: this process's sample + gauges, trend, heap spaces, last browser samples (`memDiag/`) |
+| POST | `/api/debug/heap-snapshot` | Write a V8 `.heapsnapshot` to `~/.lattice/logs/` (blocks the loop for seconds; explicit use only) |
+| POST | `/api/debug/client-memory` | A browser tab's periodic memory sample → `[mem] browser#…` console line |
 | WS | `/ws/terminal?id=&cwd=&cols=&rows=&initialCommand=` | xterm proxy via node-pty (with replay) |
 | WS | `/ws/terminal-activity?project=` | Busy harness ptys `{busy: serverId[]}` (sidebar spinner; machine-wide) |
 | WS | `/ws/terminal-tabs?project=` | Terminal-tab registry, live |

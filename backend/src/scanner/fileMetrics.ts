@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { analyzeFile, HealthCache, type HealthMetrics } from '../health/index.js';
 import { readForAnalysis } from './readForAnalysis.js';
+import { registerMemGauge } from '../memDiag/gauges.js';
 import {
   runHealthAnalysis,
   type AnalysisJob,
@@ -63,6 +64,7 @@ const STAT_BATCH = 32;
 // EVERY `/api/scan`, forever. Process-lifetime memo; an entry is dropped the
 // moment the file analyzes successfully or its (mtime,size) moves.
 const unanalyzable = new Map<string, { mtimeMs: number; size: number; loc: number | undefined }>();
+registerMemGauge('scanner.unanalyzable', () => unanalyzable.size);
 
 // Yield the event loop once, then re-check cancellation — the shared step
 // between batches (phase 1) and every YIELD_EVERY_N_FILES files (phase 3).

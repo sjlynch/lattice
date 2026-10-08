@@ -8,6 +8,12 @@ with `npm run dev` from the repo root (runs backend + frontend together).
 
 ## Browser memory troubleshooting
 
+First look at the `[mem]` lines Lattice prints every 5 minutes in the
+`npm run dev` console — one per process and per open browser tab, with a
+`RISING:` list for anything that climbed for ~30 minutes straight, and the full
+samples in `~/.lattice/logs/mem-*.jsonl`. `window.__latticeMem()` in DevTools
+prints every browser gauge. See `../backend/src/memDiag/CLAUDE.md`.
+
 For intermittent Chrome "Out of memory" failures, especially when taking a
 heap snapshot changes the symptom:
 

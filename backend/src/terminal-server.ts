@@ -25,6 +25,7 @@ import {
 import { watchParentProcess } from './terminalServer/parentWatch.js';
 import { createTerminalAdmission } from './terminalServer/admission.js';
 import { sessionCount } from './terminal/sessionStore.js';
+import { startMemDiag } from './memDiag.js';
 
 installTerminalProcessGuards();
 
@@ -116,6 +117,11 @@ const claudeConfigPruneInterval = setInterval(() => {
 claudeConfigPruneInterval.unref();
 
 wireTerminalShutdownSignals(shutdown);
+
+// Periodic `[mem]` sample → the crash ring / live mirror and
+// ~/.lattice/logs/mem-terminal-server.jsonl (stdio is ignored, so the backend
+// also reads GET /memory for its own line). See memDiag/CLAUDE.md.
+startMemDiag('terminal-server');
 
 // Self-terminate if the spawning backend disappears. Forwarded by the
 // main server's terminalServerLifecycle as `BACKEND_PARENT_PID`. Without

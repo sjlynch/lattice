@@ -5,6 +5,7 @@ import { attachNodeMotionDriver } from '../nodeMotionDriver';
 import { attachIdleController, createIdleController } from '../idleController';
 import { attachFrameDriver, onFrame } from '../sceneFrameDriver';
 import { disposeSharedGraphResources } from '../spriteMaterialCache';
+import { registerGraphMemGauges } from '../graphMemGauges';
 import { clearAllLabelRegistries } from './refresh';
 import { initializeForceGraphLifecycle } from './forceGraphInitializationLifecycle';
 import {
@@ -128,6 +129,7 @@ export function useForceGraphInitialization(
         configureRenderer(graph, nodeRefs.settingsRef.current.pixelRatio);
       },
       registerResources: (graph, owned) => {
+        owned.unregisterMemGauges = registerGraphMemGauges(graph);
         owned.teardownResize = createResizeObserver(graph, container);
 
         // Render-on-demand: 3d-force-graph runs a perpetual RAF render loop by

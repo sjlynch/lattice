@@ -4,6 +4,7 @@
 // matching one runs. Solution: noServer mode + a single dispatcher that
 // routes by pathname.
 
+import { registerMemGauge } from '../memDiag/gauges.js';
 import type http from 'node:http';
 import type { Duplex } from 'node:stream';
 import type { WebSocketServer } from 'ws';
@@ -56,6 +57,13 @@ export function upgradePathname(reqUrl: string | undefined): string | null {
 
 export function attachWebSockets(server: http.Server): void {
   const routes = buildWebSocketRoutes();
+  // Browser sockets across every endpoint, and the bytes queued to them.
+  registerMemGauge('ws.clients', () => routes.reduce((n, [, wss]) => n + wss.clients.size, 0));
+  registerMemGauge('ws.mem.buffered', () => {
+    let n = 0;
+    for (const [, wss] of routes) for (const ws of wss.clients) n += ws.bufferedAmount;
+    return n;
+  });
 
   server.on(
     'upgrade',

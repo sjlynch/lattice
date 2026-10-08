@@ -134,6 +134,7 @@ folder. Where a folder has a `CLAUDE.md`, read that instead of expecting detail 
 - `processGuards.ts` — swallows only the node-pty cleanup throw; anything else logs, writes a crash file and exits 1 (hard-exits if the console is stalled).
 - `crashLog.ts` — console ring, sync `~/.lattice/logs/crash-*.log`, Node diagnostic report, `live-*.log` mirror promoted to `*-nojs.log` next boot. Best-effort, never fatal. `crashLog/`: `format.ts` (pure), `liveMirror.ts` (live mirror + `-nojs` promotion), `retention.ts` (newest N per kind; `-nojs` has its own bucket).
 - `consoleSink.ts` — async, bounded (256 KB) console writes, so a stalled console (a Windows text selection) drops lines instead of freezing the process.
+- `memDiag.ts` / `memDiag/` — periodic `[mem]` console line + `~/.lattice/logs/mem-*.jsonl` for backend, terminal-server and browser tabs; `registerMemGauge` beside every long-lived collection; `/api/debug/*`. See `memDiag/CLAUDE.md`.
 
 ### Misc
 

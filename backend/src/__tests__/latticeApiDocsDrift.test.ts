@@ -168,6 +168,10 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   'POST /api/agent-activity/:token': 'HMAC-token activity hook (non-worktree session)',
   'POST /api/project-activity/:token': 'HMAC-token activity hook (project-instrumented session)',
   'POST /api/project-instrumentation': 'install/remove project Claude hooks on project open',
+  // Memory debugging (memDiag/): Lattice-internal diagnostics, not board API.
+  'GET /api/debug/memory': 'memory debug snapshot (memDiag)',
+  'POST /api/debug/heap-snapshot': 'writes a V8 heap snapshot (memDiag)',
+  'POST /api/debug/client-memory': 'browser tab memory sample (memDiag)',
 
   // Run types the human starts from the board. An agent spawning these would
   // be spawning nested agents behind the user's back.

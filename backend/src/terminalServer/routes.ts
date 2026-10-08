@@ -9,6 +9,7 @@ import type { TerminalShutdown } from './shutdown.js';
 import { randomUUID } from 'node:crypto';
 import { TERMINAL_PROTOCOL_VERSION } from '../terminalProtocol.js';
 import { createTerminalAdmission, type TerminalAdmission } from './admission.js';
+import { readMemGauges } from '../memDiag/gauges.js';
 
 export type RegisterTerminalRoutesOptions = {
   fingerprint: string;
@@ -64,6 +65,16 @@ export function registerTerminalRoutes(
 
   app.get('/sessions', requireAuth, (_req, res) => {
     res.json(listSessions());
+  });
+
+  // This process's memory + gauges for the backend's `[mem]` line (its own
+  // console goes nowhere: stdio is ignored). See ../memDiag/CLAUDE.md.
+  app.get('/memory', requireAuth, (_req, res) => {
+    const m = process.memoryUsage();
+    res.json({
+      'mem.rss': m.rss, 'mem.heapUsed': m.heapUsed, 'mem.external': m.external,
+      ...readMemGauges(),
+    });
   });
 
   const create = sessionHandler ?? createSessionHandler();

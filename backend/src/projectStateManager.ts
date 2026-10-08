@@ -15,6 +15,7 @@ import {
 } from './projectState/exitFlush.js';
 import { PersistScheduler } from './projectState/persistScheduler.js';
 import { runExclusive } from './serializeWrites.js';
+import { registerMemGauge } from './memDiag/gauges.js';
 
 export type ProjectStateSubscriber<TState> = (
   projectPath: string,
@@ -94,6 +95,10 @@ export class ProjectStateManager<
       writeStateNow: (projectPath, state) => this.writeStateNow(projectPath, state),
     });
     registerProjectStateStore(this);
+    // Per-store gauges, e.g. `state.tasks.projects` (resident project keys —
+    // nothing evicts them) and `state.tasks.listeners` (WS fan-out targets).
+    registerMemGauge(`state.${this.name}.projects`, () => this.cache.size);
+    registerMemGauge(`state.${this.name}.listeners`, () => this.listeners.size);
   }
 
   protected canonicalize(projectPath: string): string {

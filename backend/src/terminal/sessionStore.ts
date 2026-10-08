@@ -1,6 +1,18 @@
+import { registerMemGauge } from '../memDiag/gauges.js';
 import type { Session } from './sessionTypes.js';
 
 const sessions = new Map<string, Session>();
+
+function sumSessions(read: (s: Session) => number): number {
+  let n = 0;
+  for (const s of sessions.values()) n += read(s);
+  return n;
+}
+registerMemGauge('terminal.sessions', () => sessions.size);
+registerMemGauge('terminal.subscribers', () => sumSessions((s) => s.subscribers.size));
+registerMemGauge('terminal.mem.scrollback', () => sumSessions((s) => s.scrollback.size));
+// A kill whose pty never reported exit (should stay ~0).
+registerMemGauge('terminal.stuckKills', () => sumSessions((s) => (s.killing ? 1 : 0)));
 
 export function getSession(id: string): Session | undefined {
   return sessions.get(id);

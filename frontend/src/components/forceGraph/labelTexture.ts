@@ -84,6 +84,14 @@ export type LabelTextureOptions = {
 //   entry (`trimLabelTextureCache(cache, 0)`).
 export type LabelRegistryRelease = 'immediate' | 'batched' | 'teardown';
 
+// Canvas bytes held by a cache (in use + free) — the CPU half; the GPU holds
+// roughly the same again once uploaded. Memory-gauge use only (O(entries)).
+export function labelTextureCacheBytes(cache: LabelTextureCache): number {
+  let n = 0;
+  for (const b of cache.bytes.values()) n += b;
+  return n;
+}
+
 export function createLabelTextureCache(): LabelTextureCache {
   return {
     byKey: new Map<string, MeasuredLabelTexture>(),

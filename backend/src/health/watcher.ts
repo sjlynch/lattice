@@ -4,6 +4,7 @@
 // lives in ./watcher/setup.ts. One watcher per project root; multiple WS
 // subscribers can share the same watcher.
 
+import { registerMemGauge } from '../memDiag/gauges.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { createWatcher } from './watcher/setup.js';
 import { disposeIsolatedAnalyzer } from './watcher/isolatedAnalyze.js';
@@ -21,6 +22,7 @@ export type { HealthUpdate };
 // Concurrent first subscriptions share one build; scans can capture its event
 // revision even before construction has completed.
 const watchers = new Map<string, WatcherSlot>();
+registerMemGauge('health.watchedProjects', () => watchers.size);
 const scanPublication = new ScanPublication((root) => watchers.get(root));
 
 function ensureWatcher(projectRoot: string): Promise<ProjectWatcher> {

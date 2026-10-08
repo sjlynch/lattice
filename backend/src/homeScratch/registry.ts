@@ -49,6 +49,12 @@ export type OneOffRunRegistry<Run extends OneOffRunBase> = {
   list(): Run[];
 };
 
+// A finished run is normally dropped by the page that watched it (DELETE →
+// `forget`). A page reloaded or closed mid-run, or a run started through the
+// API/MCP, never sends that, so finished runs older than this are pruned on
+// the next `record` instead of accumulating for the process lifetime.
+export const DONE_RUN_RETENTION_MS = 6 * 60 * 60 * 1000;
+
 export function createOneOffRunRegistry<Run extends OneOffRunBase>(args: {
   logLabel: string;
   emitEvents?: boolean;
@@ -97,6 +103,13 @@ export function createOneOffRunRegistry<Run extends OneOffRunBase>(args: {
     },
 
     record(run) {
+      const cutoff = Date.now() - DONE_RUN_RETENTION_MS;
+      for (const [id, old] of runs) {
+        if (old.status === 'done' && (old.doneAt ?? 0) < cutoff) {
+          runs.delete(id);
+          notify({ type: 'forgotten', id, projectPath: old.projectPath });
+        }
+      }
       runs.set(run.id, run);
       persist(run.projectPath);
       notify({ type: 'recorded', run: cloneRun(run) });

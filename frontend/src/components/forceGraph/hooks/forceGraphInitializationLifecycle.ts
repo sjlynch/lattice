@@ -4,6 +4,7 @@ type Teardown = () => void;
 // The order below follows the existing unmount contract, rather than reversing
 // acquisition order (in particular, stop idle work before disconnecting resize).
 type InitializationResources = {
+  unregisterMemGauges?: Teardown;
   removeContextLost?: Teardown;
   removeContextRestored?: Teardown;
   offThrottleFrame?: Teardown;
@@ -61,6 +62,7 @@ export function initializeForceGraphLifecycle<Graph extends OwnedGraph>({
       }
     };
 
+    attempt(owned.unregisterMemGauges);
     attempt(owned.removeContextLost);
     attempt(owned.removeContextRestored);
     attempt(owned.offThrottleFrame);

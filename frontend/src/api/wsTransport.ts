@@ -1,4 +1,9 @@
 import { markSocketDown } from './wsConnectionHealth';
+import { registerMemGauge } from '../debug/memDiag';
+
+// Live subscribeWs subscriptions (one socket each) for the memory debug line.
+let liveSubscriptions = 0;
+registerMemGauge('ws.sockets', () => liveSubscriptions);
 
 // Auto-reconnecting WebSocket subscription helper. Used by every live
 // channel (tasks, merge-runs, workflows, workflow-runs).
@@ -109,8 +114,10 @@ export function subscribeWs<T>(
     };
   }
 
+  liveSubscriptions += 1;
   connect();
   return () => {
+    if (!cancelled) liveSubscriptions -= 1;
     cancelled = true;
     markSocketDown(healthToken, false);
     clearStableTimer();

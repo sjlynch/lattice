@@ -1,5 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { TerminalSpec } from '../../../TerminalsContext';
+
+// Most hidden panes kept mounted. Each mounted pane holds a 20 000-line xterm
+// buffer (~17 MB at 50 cols, ~65 MB maximized), a live `/ws/terminal` socket
+// and up to 8M chars of queued output, so an uncapped set grew with every tab
+// ever viewed. Past the cap the least recently ACTIVE eligible pane unmounts:
+// only a pane whose pty lives server-side (`serverId`, not restoring) and that
+// is not a startup terminal. Its pty keeps running; re-activating it remounts
+// and re-attaches with the server's scrollback replay (the same path a
+// project switch takes).
+export const MAX_BACKGROUND_PANES = 6;
 
 export function useMountedTerminalIds(
   activeId: string | null,
@@ -15,6 +25,9 @@ export function useMountedTerminalIds(
   // still keeps an xterm buffer and a live `/ws/terminal` socket, so deferring
   // mount until activation keeps Run-All from opening a socket, buffer and
   // scrollback replay per task the user never looks at.
+  // Activation order (id → sequence) for least-recently-active eviction.
+  const lastActiveRef = useRef(new Map<string, number>());
+  const activationSeqRef = useRef(0);
   const [mountedIds, setMountedIds] = useState<ReadonlySet<string>>(() => {
     const initial = new Set<string>();
     if (activeId && terminals.some((t) => t.id === activeId)) initial.add(activeId);
@@ -23,6 +36,9 @@ export function useMountedTerminalIds(
 
   useEffect(() => {
     const existingIds = new Set(terminals.map((t) => t.id));
+    const lastActive = lastActiveRef.current;
+    if (activeId && existingIds.has(activeId)) lastActive.set(activeId, ++activationSeqRef.current);
+    for (const id of lastActive.keys()) if (!existingIds.has(id)) lastActive.delete(id);
     setMountedIds((prev) => {
       let next: Set<string> | undefined;
       // Only the global list confirms removal. Project/panel switches and
@@ -68,6 +84,18 @@ export function useMountedTerminalIds(
       // command a second time. The Sidebar gates the pane on `!t.restore` too.
       for (const t of projectTerminals) {
         if (!t.serverId && !t.restore) add(t.id);
+      }
+
+      const specs = new Map(terminals.map((t) => [t.id, t]));
+      const startupIds = new Set(startupTerminalsList.map((t) => t.id));
+      const evictable = [...(next ?? prev)].filter((id) => {
+        const spec = specs.get(id);
+        return id !== activeId && !startupIds.has(id) && !!spec?.serverId && !spec.restore;
+      });
+      if (evictable.length > MAX_BACKGROUND_PANES) {
+        evictable.sort((a, b) => (lastActive.get(a) ?? 0) - (lastActive.get(b) ?? 0));
+        next ??= new Set(prev);
+        for (const id of evictable.slice(0, evictable.length - MAX_BACKGROUND_PANES)) next.delete(id);
       }
       return next ?? prev;
     });

@@ -170,9 +170,14 @@ that. Raising the constant therefore multiplies browser memory per pane.
   keep normal priority; `LATTICE_AGENT_PRIORITY=normal` opts out.
   `precreateSession` is the no-subscriber variant route handlers use to return a
   `serverId` before any WS attaches.
+- `conoutWorker.ts` — node-pty (`useConptyDll`) runs one conout Worker thread
+  per pty (~10 MB RSS, invisible to `heapUsed`) and never stops it on exit or
+  kill. `releaseConoutWorker` (from onExit) disposes it; `trackConoutWorker`
+  backs the `terminal.conoutWorkers` gauge, which must equal
+  `terminal.sessions`. Re-verify both if node-pty is upgraded.
 - `sessionLifecycle.ts` — `wireSessionPtyEvents` (pty `onData` → stamp
   `lastOutputAt` + scrollback.append + broadcast; pty `onExit` → broadcast
-  `exit`, close subscribers, `deleteSession`), plus `addLatticeBanner` and
+  `exit`, close subscribers, `deleteSession`, release the conout Worker), plus `addLatticeBanner` and
   `scheduleInitialCommand`. **The banner is human-only**: it is appended to the
   session SCROLLBACK (the browser's replay buffer), never written to the pty,
   so no harness can read it. Don't "fix" agent discovery here — that lives in

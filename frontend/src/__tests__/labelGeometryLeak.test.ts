@@ -6,7 +6,7 @@ import { DEFAULT_SETTINGS } from '../components/forceGraph/graphSettings.ts';
 import type { FloatingLabelEntry } from '../components/forceGraph/floatingLabelSprite.ts';
 import { spriteForLoc, locLabelRegistry } from '../components/forceGraph/locOverlay.ts';
 import { spriteForHealth, healthLabelRegistry } from '../components/forceGraph/healthOverlay.ts';
-import { applyNodeLabelState, labelsRegistry } from '../components/forceGraph/labelsOverlay.ts';
+import { applyNodeLabelState, labelsRegistry, MAX_NAME_LABELS } from '../components/forceGraph/labelsOverlay.ts';
 import { clearMetricLabelRegistry } from '../components/forceGraph/metricOverlayFactory.ts';
 import {
   clearAllLabelRegistries,
@@ -218,4 +218,21 @@ test('a batched clear keeps still-shown name labels for the rebuild, trims once 
     assert.equal(texture.image.width * texture.image.height, 0);
   }
   assert.equal(timers.scheduled.length, 0, 'teardown schedules no trim');
+});
+
+test('name labels in use are hard-capped (a select-all + Alt cannot allocate one texture per node)', (t) => {
+  const { scene } = overlayFixture(t);
+  const roots: THREE.Group[] = [];
+  for (let i = 0; i < MAX_NAME_LABELS + 50; i++) {
+    const root = new THREE.Group();
+    scene.add(root);
+    roots.push(root);
+    applyNodeLabelState(root, fileNode(`capped-${i}.ts`), settings, 1, 1, true);
+  }
+  assert.equal(labelsRegistry.size, MAX_NAME_LABELS);
+  // Freeing one label makes room for exactly one more.
+  applyNodeLabelState(roots[0], fileNode('capped-0.ts'), settings, 1, 2, true);
+  assert.equal(labelsRegistry.size, MAX_NAME_LABELS - 1);
+  applyNodeLabelState(roots.at(-1)!, fileNode(`capped-${MAX_NAME_LABELS + 49}.ts`), settings, 1, 1, true);
+  assert.equal(labelsRegistry.size, MAX_NAME_LABELS);
 });

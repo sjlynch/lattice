@@ -11,13 +11,23 @@ import { terminalServerAuthHeaders } from '../terminalServerAuth.js';
 // different intents.
 const SESSIONS_PROBE_TIMEOUT_MS = 3_000;
 
+// A response whose body is never read keeps its keep-alive socket (and
+// buffers) until GC finds it. Release it explicitly on every unread path.
+function discardBody(res: Response): void {
+  res.body?.cancel().catch(() => {});
+}
+
 export async function proxyListSessions(): Promise<unknown[]> {
   try {
     const res = await fetch(`${BASE}/sessions`, {
       headers: terminalServerAuthHeaders(),
       signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
     });
-    return res.ok ? ((await res.json()) as unknown[]) : [];
+    if (!res.ok) {
+      discardBody(res);
+      return [];
+    }
+    return (await res.json()) as unknown[];
   } catch {
     return [];
   }
@@ -35,7 +45,10 @@ export async function proxyListSessionsOrNull(): Promise<unknown[] | null> {
       headers: terminalServerAuthHeaders(),
       signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      discardBody(res);
+      return null;
+    }
     const data = await res.json();
     return Array.isArray(data) ? (data as unknown[]) : null;
   } catch {
@@ -90,7 +103,10 @@ export async function proxyCountSessions(): Promise<number | null> {
       headers: terminalServerAuthHeaders(),
       signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      discardBody(res);
+      return null;
+    }
     const data = await res.json();
     return Array.isArray(data) ? data.length : null;
   } catch {
@@ -115,6 +131,7 @@ export async function proxyKillSessionsByCwd(worktreePath: string): Promise<void
         signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
       },
     );
+    discardBody(res);
     if (!res.ok) {
       // A non-OK response means the route didn't kill anything — most likely
       // a route-ordering regression (`/sessions/:id` capturing `by-cwd`) or
@@ -159,6 +176,7 @@ async function killSessionOnce(id: string): Promise<boolean> {
         signal: AbortSignal.timeout(SESSIONS_PROBE_TIMEOUT_MS),
       },
     );
+    discardBody(res);
     // 404 is authoritative absence, unlike a transport error or 5xx. A retry
     // after a lost acknowledgement may find the PTY already removed.
     return res.ok || res.status === 404;

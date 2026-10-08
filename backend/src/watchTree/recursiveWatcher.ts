@@ -1,3 +1,4 @@
+import { registerMemGauge } from '../memDiag/gauges.js';
 import { promises as fsp, watch as fsWatch, type FSWatcher as NodeFSWatcher, type Stats } from 'node:fs';
 import path from 'node:path';
 import { EventEmitter } from 'node:events';
@@ -14,6 +15,16 @@ import {
   updateFileSnapshot,
 } from './snapshot.js';
 import type { SnapshotEntry, TreeWatcher, WatchTreeOptions } from './types.js';
+
+// Live watchers, for the memory gauges below (one per watched tree; each holds
+// a snapshot entry per path under its root).
+const liveWatchers = new Set<RecursiveTreeWatcher>();
+registerMemGauge('watch.trees', () => liveWatchers.size);
+registerMemGauge('watch.paths', () => {
+  let n = 0;
+  for (const w of liveWatchers) n += w.snapshotSize;
+  return n;
+});
 
 export class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
   private readonly snapshot = new Map<string, SnapshotEntry>();
@@ -40,6 +51,7 @@ export class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
     opts: WatchTreeOptions,
   ) {
     super();
+    liveWatchers.add(this);
     // The predicate runs inside fs.watch callbacks, where a throw is an
     // uncaughtException that kills the backend (a `\\?\`-prefixed root path on
     // Windows did exactly that). Guard it once here for every caller: an
@@ -309,7 +321,12 @@ export class RecursiveTreeWatcher extends EventEmitter implements TreeWatcher {
     return this.retries.size;
   }
 
+  get snapshotSize(): number {
+    return this.snapshot.size;
+  }
+
   async close(): Promise<void> {
+    liveWatchers.delete(this);
     this.closed = true;
     if (this.timer) clearTimeout(this.timer);
     this.timer = null;

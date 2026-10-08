@@ -9,6 +9,7 @@ import {
   restoreTasksFromBackupIfMissing as recoverRestoreTasksFromBackupIfMissing,
 } from './recovery.js';
 import type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
+import { registerMemGauge } from '../memDiag/gauges.js';
 
 export { TaskCacheManager } from './manager.js';
 export {
@@ -21,6 +22,16 @@ export type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './types.js';
 const projectsIndex = new ProjectsIndex();
 const migrations = new TaskMigrations(projectsIndex);
 const taskCache = new TaskCacheManager({ projectsIndex, migrations });
+
+// Boards are resident for the process lifetime once loaded (no eviction), and
+// boot recovery (`listReadyToMergeTasks` → `loadAllKnown`) loads every known
+// project's board — so these track the whole index, done/deleted tasks included.
+registerMemGauge('tasks.loadedProjects', () => [...taskCache.loadedTasks()].length);
+registerMemGauge('tasks.loadedTasks', () => {
+  let n = 0;
+  for (const list of taskCache.loadedTasks()) n += list.length;
+  return n;
+});
 
 export function subscribe(fn: TaskSubscriber): () => void {
   return taskCache.subscribe(fn);

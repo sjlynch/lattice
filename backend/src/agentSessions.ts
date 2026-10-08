@@ -15,6 +15,7 @@
 
 import { canonicalProjectPath } from './projectPath.js';
 import type { AgentHarness } from './harnesses.js';
+import { registerMemGauge } from './memDiag/gauges.js';
 
 export type AgentSession = {
   // Namespaced session id (`push:<id>`, `wf:<runId>:<step>`, `pmh:<id>`, or
@@ -46,6 +47,7 @@ type Listener = (projectPath: string, sessions: AgentSession[]) => void;
 
 const sessions = new Map<string, SessionRecord>();
 const listeners = new Set<Listener>();
+registerMemGauge('agentSessions.sessions', () => sessions.size);
 
 // Absolute safety net for lifecycle sessions whose completion callback never
 // fired. Measured from `lastSeen` (silence), NOT `startedAt` (age): an active

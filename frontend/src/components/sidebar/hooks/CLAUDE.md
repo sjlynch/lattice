@@ -63,10 +63,14 @@ owns shared tab mutations, scoping and registry reconciliation.
   xterm and WebGL ownership stays in the
   [view/connection layer](../../terminal/CLAUDE.md). Pruning history does not
   identify the cross-PC browser OOM cause.
-- **Mounted-pane cost:** the mounted set has no cap (`SidebarPanes` renders every
-  remembered ID; `useMountedTerminalIds` only prunes globally removed tabs). Each
-  mounted pane keeps its xterm `Terminal` and a live `/ws/terminal` socket and
-  keeps parsing output while hidden. Only the active pane holds a WebGL context
+- **Mounted-pane cost and cap:** each mounted pane keeps its xterm `Terminal`
+  and a live `/ws/terminal` socket and keeps parsing output while hidden, so
+  `useMountedTerminalIds` keeps at most `MAX_BACKGROUND_PANES` hidden panes
+  mounted, unmounting the least recently ACTIVE one past that. Only panes whose
+  pty lives server-side (`serverId`, not restoring) and that are not startup
+  terminals are evictable; re-activation remounts and re-attaches with the
+  server's replay. Gauges `xterm.terminals` / `xterm.pendingChars` /
+  `xterm.overflows` (`debug/memDiag.ts`) show the live cost. Only the active pane holds a WebGL context
   (`useActiveTerminalWebgl`). Rendering pauses only because `.sidebar-pane.hidden`
   in `styles/sidebar.css` adds `transform: translateX(-200%)`: it moves the pane
   outside the clipped `.sidebar-content`, so xterm's IntersectionObserver pauses

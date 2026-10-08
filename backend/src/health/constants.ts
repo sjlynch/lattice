@@ -104,6 +104,27 @@ function stripWindowsNamespacePrefix(p: string): string {
   return m[1] ? `\\\\${m[2]}` : m[2];
 }
 
+// `ignore` (v7) memoizes the result for every path it is asked about — and
+// each of its parent prefixes — in a private cache that only resets when rules
+// are added. The watchers' matchers live as long as their project and see
+// every unique path an fs event names (build output not in IGNORE_DIR_NAMES,
+// temp files with unique names), so that cache grew for the process lifetime.
+// Re-initialise it every IGNORE_CACHE_RESET_LOOKUPS lookups per matcher: a
+// rebuilt entry costs microseconds. Duck-typed: a matcher without
+// `_initCache` (another version, a test stub) is left alone.
+const IGNORE_CACHE_RESET_LOOKUPS = 20_000;
+const ignoreLookups = new WeakMap<object, number>();
+function boundIgnoreCache(gitignore: object): void {
+  const n = (ignoreLookups.get(gitignore) ?? 0) + 1;
+  if (n < IGNORE_CACHE_RESET_LOOKUPS) {
+    ignoreLookups.set(gitignore, n);
+    return;
+  }
+  ignoreLookups.set(gitignore, 0);
+  const reset = (gitignore as { _initCache?: unknown })._initCache;
+  if (typeof reset === 'function') reset.call(gitignore);
+}
+
 export function matchIgnoredSourcePath(
   filePath: string,
   projectRoot: string,
@@ -131,6 +152,7 @@ export function matchIgnoredSourcePath(
   // uncaughtException that kills the backend — so an unexpected shape is
   // "not ignored", never fatal.
   try {
+    boundIgnoreCache(gitignore);
     if (gitignore.ignores(rel)) return true;
     return isDirectory ? gitignore.ignores(`${rel}/`) : false;
   } catch {

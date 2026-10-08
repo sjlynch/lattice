@@ -123,6 +123,16 @@ export const FINGERPRINT_FILES = [
   'claudeTrust/maintenance.js',
   'claudeTrust/util.js',
   'mcp/claudeInject.js',
+  // node-pty conout Worker release (the per-pty thread node-pty never stops).
+  'terminal/conoutWorker.js',
+  // Periodic memory sampling + gauges (`startMemDiag`, GET /memory). The
+  // browser-sample half (memDiag/browser.js) is backend-only and NOT listed.
+  'memDiag.js',
+  'memDiag/format.js',
+  'memDiag/gauges.js',
+  'memDiag/logFile.js',
+  'memDiag/sample.js',
+  'memDiag/trend.js',
 ];
 
 export function computeTerminalFingerprint(): string {

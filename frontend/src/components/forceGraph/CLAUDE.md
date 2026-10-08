@@ -156,7 +156,13 @@ label physics in `labelPhysics/CLAUDE.md`.
   at `maxEntries: 256` AND `maxFreeBytes: LABEL_TEXTURE_FREE_BYTES_BUDGET`
   (8 MB of canvas pixels, width×height×4 recorded at draw time) for FREE
   entries only. Both caps evict the oldest free entry first; in-use entries
-  are never counted or evicted. The agent-label cache sets no byte budget.
+  are never counted or evicted — so `labelsOverlay.MAX_NAME_LABELS` (300) caps
+  name labels IN USE (a select-all + Alt otherwise allocated a ~150–300 KB canvas
+  + GPU texture per node), and `labelSync` strips before it adds so the budget
+  frees first. The agent-label cache uses the same byte budget. Connector line
+  materials are a `createSpriteMaterialCache` (disposed at graph teardown; an
+  undisposed one pinned the dead renderer). Gauges: `graphMemGauges.ts`
+  (`gl.*`, `graph.*`) and the label-cache byte gauges.
   Ownership coverage:
   [labelTextureCache.test.ts](../../__tests__/labelTextureCache.test.ts).
 - `labelSpriteResources` / `floatingLabelSprite` / `metricOverlayFactory` —

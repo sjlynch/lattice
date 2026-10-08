@@ -13,7 +13,7 @@
 
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type { GraphSettings } from './graphSettings';
-import { applyNodeLabelState } from './labelsOverlay';
+import { applyNodeLabelState, shouldShowLabel } from './labelsOverlay';
 import { mountedNodes, mountedRoot } from './mountedNodes';
 
 // Reconcile every mounted node's label against the current overlay state.
@@ -35,10 +35,15 @@ export function applyLabelsToGraph(
   // The selection only narrows the overlay while Alt is held; with Alt released
   // pass none so every label is stripped regardless of what's selected.
   const sel = enabled ? selectedIds : null;
-  for (const node of mountedNodes(graph)) {
-    const root = mountedRoot(node);
-    if (!root) continue;
-    const depth = nodeDepths.get(node.id) ?? 0;
-    applyNodeLabelState(root, node, settings, band, depth, showFileLabels, sel);
+  // Two passes: strip labels that should go first, so the MAX_NAME_LABELS
+  // budget they held is free before the second pass adds the new ones.
+  for (const adding of [false, true]) {
+    for (const node of mountedNodes(graph)) {
+      const root = mountedRoot(node);
+      if (!root) continue;
+      const depth = nodeDepths.get(node.id) ?? 0;
+      if (shouldShowLabel(node, band, depth, showFileLabels, sel) !== adding) continue;
+      applyNodeLabelState(root, node, settings, band, depth, showFileLabels, sel);
+    }
   }
 }

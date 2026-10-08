@@ -7,7 +7,7 @@ import type { Ctx, TerminalSpec } from '../terminal/terminalTypes';
 import type { RestoreSummary, RestoreTerminalsMode, TerminalRecord, TerminalTabsEvent } from '../api/types/terminalTabs';
 import { terminalBelongsToProject } from '../terminal/terminalScope.ts';
 import { SidebarPanes } from '../components/sidebar/SidebarPanes.tsx';
-import { useMountedTerminalIds } from '../components/sidebar/hooks/useMountedTerminalIds.ts';
+import { MAX_BACKGROUND_PANES, useMountedTerminalIds } from '../components/sidebar/hooks/useMountedTerminalIds.ts';
 import type { Panel } from '../components/sidebar/hooks/usePanelState';
 import { FakeWebSocket, installFakeWebSocket, installGlobal } from './domDoubles.ts';
 
@@ -491,4 +491,31 @@ test('project switches fence stale list, restore and socket callbacks, including
     await h.answer(currentRequest, { ...summary([]), adopted: 1 });
     await currentRestore;
   } finally { h.dispose(); }
+});
+
+test('hidden panes are capped: the least recently active server-backed pane unmounts first', () => {
+  const ids = Array.from({ length: MAX_BACKGROUND_PANES + 3 }, (_, i) => `t${i}`);
+  const h = harness([
+    spec({ id: 'startup', kind: 'startup', serverId: 'srv_startup' }),
+    ...ids.map((id) => spec({ id, serverId: `srv_${id}` })),
+  ]);
+  try {
+    // View every tab once, in order; t0 is the least recently active.
+    for (const id of ids) act(() => { h.ctx.setActiveId(id); });
+    const active = ids.at(-1)!;
+    const kept = ids.slice(-(MAX_BACKGROUND_PANES + 1));
+    assert.deepEqual(h.mountedIds, new Set(['startup', ...kept]),
+      'active + MAX_BACKGROUND_PANES hidden panes; startup terminals are exempt');
+    assert.ok(h.unmounts.includes('srv_t0') && h.unmounts.includes('srv_t1'),
+      'evicted panes unmount (the pty keeps running server-side)');
+    const before = h.mountedIds;
+    act(() => { h.ctx.setActiveId(active); });
+    assert.strictEqual(h.mountedIds, before, 'no change → same Set identity');
+    // Re-activating an evicted tab remounts it and evicts the next-oldest.
+    act(() => { h.ctx.setActiveId('t0'); });
+    assert.ok(h.mountedIds.has('t0'));
+    assert.ok(!h.mountedIds.has(kept[0]));
+  } finally {
+    h.dispose();
+  }
 });

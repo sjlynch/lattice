@@ -1,4 +1,5 @@
 import type { IDisposable, Terminal } from '@xterm/xterm';
+import { registerMemGauge } from '../../debug/memDiag';
 
 // Most unparsed output one pane may queue, in chars — in line with the
 // backend's 8 MB slow-client cut-off (backend/src/terminal/broadcast.ts). The
@@ -10,6 +11,18 @@ import type { IDisposable, Terminal } from '@xterm/xterm';
 export const MAX_PENDING_OUTPUT_CHARS = 8 * 1024 * 1024;
 
 type OutputStep = { data: string; replayed: boolean } | 'clear';
+
+// Memory gauges (debug/memDiag.ts): one queue per mounted pane, so this also
+// counts live xterm Terminals.
+const liveQueues = new Set<{ chars: () => number }>();
+let overflowCount = 0;
+registerMemGauge('xterm.terminals', () => liveQueues.size);
+registerMemGauge('xterm.pendingChars', () => {
+  let n = 0;
+  for (const q of liveQueues) n += q.chars();
+  return n;
+});
+registerMemGauge('xterm.overflows', () => overflowCount);
 
 // xterm answers terminal queries through onData, the same event as keystrokes.
 // Replaying a startup query into an already running TUI therefore inserts its
@@ -37,6 +50,9 @@ export function createTerminalOutput(term: Terminal, onOverflow?: () => void) {
     term.parser.registerDcsHandler({ intermediates: '$', final: 'q' }, () => replaying),
     ...[4, 10, 11, 12].map((id) => term.parser.registerOscHandler(id, (data) => replaying && data.split(';').includes('?'))),
   ];
+
+  const gauge = { chars: () => pendingChars };
+  liveQueues.add(gauge);
 
   const drop = () => {
     pending.length = 0;
@@ -87,12 +103,14 @@ export function createTerminalOutput(term: Terminal, onOverflow?: () => void) {
       // Only output stuck behind the chunk xterm is still parsing counts: a
       // pane that keeps up hands every chunk straight over.
       if (pendingChars > MAX_PENDING_OUTPUT_CHARS) {
+        overflowCount += 1;
         drop();
         onOverflow?.();
       }
     },
     dispose() {
       disposed = true;
+      liveQueues.delete(gauge);
       drop();
       for (const handler of handlers) handler.dispose();
     },

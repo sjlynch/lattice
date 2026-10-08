@@ -24,6 +24,7 @@ styled-components.
   backend-stamped paths with `activeFolder` through
   `terminal/terminalScope.ts`'s `normalizeDirPath` (or `sameProjectPath`), not `===`.
 - `storage/latticeLocalStorage.ts` — safe localStorage get/set/remove + the `lattice.graph*.<project>` key builders.
+- `debug/memDiag.ts` — browser half of the memory debug output (started from `main.tsx`): `registerMemGauge` (returns an unregister), a 5-min sample POSTed to `/api/debug/client-memory` so a `[mem] browser#…` line reaches the dev console, `window.__latticeMem()`. Register a gauge beside every long-lived collection / GPU resource. See `backend/src/memDiag/CLAUDE.md`.
 - `utils/terminalMap.ts` — `buildTerminalMap` (taskId → terminalId lookup for task-board focus buttons).
 - `workflowTemplates.ts` — built-in templates surfaced in the Workflows picker.
   Two rules: (1) every agent step **files tasks** — never write a template step
