@@ -57,10 +57,11 @@ export function useMergeRunSync(
     null,
   );
 
-  // Toasted error keys (runId + taskId + error) so each unique failure
+  // Toasted error keys (taskId + error) per run id, so each unique failure
   // only toasts once even though it appears in every subsequent progress
-  // event for the rest of the run.
-  const toastedRef = useRef<Set<string>>(new Set());
+  // event for the rest of the run. Only the newest few runs are kept (a key
+  // is long git stderr; the set grew across every run since folder open).
+  const toastedRef = useRef<Map<string, Set<string>>>(new Map());
 
   // Pending auto-clear timeout for the recent-run summary. Held in a ref so
   // an unmount / folder switch can cancel it instead of leaking a setState
@@ -72,17 +73,24 @@ export function useMergeRunSync(
     // doesn't briefly flash when the user opens project B.
     setMergeRun(null);
     setRecentRunSummary(null);
-    toastedRef.current = new Set();
+    toastedRef.current = new Map();
     if (!activeFolder) return;
     let cancelled = false;
     let receivedLiveState = false;
 
     function maybeToastErrors(run: MergeRun): void {
       if (!showError) return;
+      const runs = toastedRef.current;
+      let toasted = runs.get(run.id);
+      if (!toasted) {
+        toasted = new Set();
+        runs.set(run.id, toasted);
+        while (runs.size > 3) runs.delete(runs.keys().next().value!);
+      }
       for (const entry of run.errored) {
-        const key = `${run.id}:${entry.taskId}:${entry.error}`;
-        if (toastedRef.current.has(key)) continue;
-        toastedRef.current.add(key);
+        const key = `${entry.taskId}:${entry.error}`;
+        if (toasted.has(key)) continue;
+        toasted.add(key);
         buildErrorMessage(activeFolder, entry)
           .then((msg) => {
             if (!cancelled) showError(msg);

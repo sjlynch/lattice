@@ -240,3 +240,38 @@ test('cancel also clears a pending stability timer', () => {
   h.controller.handleOpen();
   assert.equal(h.pending.length, 0);
 });
+
+// --- park: a hidden pane that overflowed stops streaming until shown ---------
+
+test('a parked pane schedules no reconnect on close, and reconnects once on unpark', () => {
+  const h = makeHarness('srv-1');
+  h.controller.startConnecting();
+  h.controller.handleOpen();
+  h.controller.handleAttached();
+  h.controller.park();
+  assert.equal(h.pending.length, 0, 'park clears the stability timer');
+  h.controller.handleClose();
+  assert.equal(h.pending.length, 0, 'no retry is scheduled while parked');
+  assert.equal(h.controller.canConnect(), false);
+  assert.equal(h.counts.reconnect, 0);
+
+  h.controller.unpark();
+  assert.equal(h.counts.reconnect, 1, 'unpark reconnects (the server replays)');
+  assert.equal(h.controller.canConnect(), true);
+  h.controller.unpark();
+  assert.equal(h.counts.reconnect, 1, 'unpark is a no-op when not parked');
+});
+
+test('unpark after the pty ended or the pane unmounted does not reconnect', () => {
+  const h = makeHarness('srv-1');
+  h.controller.park();
+  h.controller.handleTerminated('exited', 0);
+  h.controller.unpark();
+  assert.equal(h.counts.reconnect, 0);
+
+  const g = makeHarness('srv-2');
+  g.controller.park();
+  g.controller.cancel();
+  g.controller.unpark();
+  assert.equal(g.counts.reconnect, 0);
+});

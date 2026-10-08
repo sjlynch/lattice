@@ -41,6 +41,7 @@ export function TerminalPane({
     initialCommand,
     serverId,
     projectPath,
+    active,
     onServerId,
     onStatus,
   });

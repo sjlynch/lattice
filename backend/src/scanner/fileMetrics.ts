@@ -65,6 +65,14 @@ const STAT_BATCH = 32;
 // moment the file analyzes successfully or its (mtime,size) moves.
 const unanalyzable = new Map<string, { mtimeMs: number; size: number; loc: number | undefined }>();
 registerMemGauge('scanner.unanalyzable', () => unanalyzable.size);
+// Keyed by absolute path and only cleared when that path is scanned again, so
+// deleted/renamed files would linger forever: cap it, oldest verdict first.
+const MAX_UNANALYZABLE = 5_000;
+function rememberUnanalyzable(file: string, verdict: { mtimeMs: number; size: number; loc: number | undefined }): void {
+  unanalyzable.delete(file);
+  unanalyzable.set(file, verdict);
+  if (unanalyzable.size > MAX_UNANALYZABLE) unanalyzable.delete(unanalyzable.keys().next().value!);
+}
 
 // Yield the event loop once, then re-check cancellation — the shared step
 // between batches (phase 1) and every YIELD_EVERY_N_FILES files (phase 3).
@@ -157,7 +165,7 @@ function createResultApplier(
         options.cache?.set(files[index], m.mtimeMs, m.size, analysis.metrics, analysis.imports);
       }
     } else if (m?.hasStat) {
-      unanalyzable.set(files[index], { mtimeMs: m.mtimeMs, size: m.size, loc });
+      rememberUnanalyzable(files[index], { mtimeMs: m.mtimeMs, size: m.size, loc });
     }
   };
 }

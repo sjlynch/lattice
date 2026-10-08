@@ -26,6 +26,10 @@ export type TerminalReconnectController = {
   handleAttached: () => void;
   handleTerminated: (status: TerminalStatus, exitCode?: number) => void;
   handleClose: () => void;
+  // Park: the owner is about to close the socket on purpose (a hidden pane that
+  // fell too far behind) — no reconnect until `unpark()`, which reconnects once.
+  park: () => void;
+  unpark: () => void;
   cancel: () => void;
 };
 
@@ -54,6 +58,9 @@ export function createTerminalReconnectController(
   // (idempotent). Lets a terminal that started life serverless still reconnect
   // indefinitely, since it captured a session id on first attach.
   let attachedOnce = false;
+  // A parked pane closed its socket deliberately to stop buffering output
+  // while hidden. It reconnects (and the server replays) when shown again.
+  let parked = false;
 
   const clearStableTimer = () => {
     if (stableTimer) {
@@ -75,7 +82,7 @@ export function createTerminalReconnectController(
     },
 
     canConnect() {
-      return !cancelled && !terminated;
+      return !cancelled && !terminated && !parked;
     },
 
     handleOpen() {
@@ -110,7 +117,7 @@ export function createTerminalReconnectController(
       // Clear the pending stability timer first: a close before it fires means
       // the connection never proved healthy, so the backoff must keep growing.
       clearStableTimer();
-      if (cancelled || terminated) return;
+      if (cancelled || terminated || parked) return;
       // A terminal we can re-attach to (has a serverId, or captured one via an
       // earlier `attached` this session) reconnects to its EXISTING pty —
       // idempotent and safe to retry forever. So ride out a transient outage
@@ -142,6 +149,19 @@ export function createTerminalReconnectController(
         retryTimer = null;
         callbacks.reconnect();
       }, delay);
+    },
+
+    park() {
+      parked = true;
+      clearRetryTimer();
+      clearStableTimer();
+    },
+
+    unpark() {
+      if (!parked) return;
+      parked = false;
+      if (cancelled || terminated) return;
+      callbacks.reconnect();
     },
 
     cancel() {

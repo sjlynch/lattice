@@ -162,6 +162,13 @@ export function useSecurityOverlay(
   }, [activeFolder, available, projectStatus, watchScan]);
 
   const latestId = previousScan?.id ?? projectStatus?.lastScan?.id;
+  // Background freshness reads (git-status changes, focus, the 30 s poll) each
+  // re-fetch the complete saved result, so they run only while someone looks
+  // at it: the overlay on or the findings panel open (`watchingRef`, synced
+  // below). Turning either on refreshes once (`refreshRef`); the mount-time
+  // restore read always runs so toggling on is instant.
+  const watchingRef = useRef(false);
+  const refreshRef = useRef<(() => void) | null>(null);
   useEffect(() => {
     if (!available || !activeFolder || !latestId) return;
     const controller = new AbortController();
@@ -194,15 +201,21 @@ export function useSecurityOverlay(
           setState((s) => s ? { ...s, error: `Could not refresh saved findings: ${err instanceof Error ? err.message : String(err)}` } : s);
       } finally { busy = false; if (!controller.signal.aborted) setRestoring(false); }
     };
-    const schedule = () => { clearTimeout(timer); timer = setTimeout(() => void refresh(), 1200); };
-    const onVisible = () => { if (document.visibilityState === 'visible') void refresh(); };
+    const schedule = () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => { if (watchingRef.current) void refresh(); }, 1200);
+    };
+    const onVisible = () => {
+      if (document.visibilityState === 'visible' && watchingRef.current) void refresh();
+    };
+    refreshRef.current = () => void refresh();
     // A git/tree change only checks freshness; it never starts a scan.
     const unsubscribe = typeof WebSocket === 'undefined' || !window.location ? () => {} : subscribeGitStatus(activeFolder, schedule);
     window.addEventListener('focus', onVisible);
     document.addEventListener('visibilitychange', onVisible);
     void refresh();
     const poll = setInterval(onVisible, 30_000);
-    return () => { controller.abort(); clearTimeout(timer); clearInterval(poll); unsubscribe();
+    return () => { refreshRef.current = null; controller.abort(); clearTimeout(timer); clearInterval(poll); unsubscribe();
       window.removeEventListener('focus', onVisible); document.removeEventListener('visibilitychange', onVisible); };
   }, [activeFolder, available, latestId]);
 
@@ -211,6 +224,7 @@ export function useSecurityOverlay(
   // Waiting must not apply Security's node visibility/recolor rules to a graph
   // with no findings yet. Keep the normal view until the snapshot is ready.
   const active = available && current?.active === true && result !== null;
+  watchingRef.current = current?.active === true || panelOpen;
   const files = useMemo(() => result ? securityFilesByPath(result) : null, [result]);
   const securityModeRef = useRef(false);
   const securityFilesRef = useRef<ReadonlyMap<string, OpengrepGraphFile> | null>(null);
@@ -237,6 +251,7 @@ export function useSecurityOverlay(
       return;
     }
     if (result) {
+      if (!active) refreshRef.current?.();
       setState((s) => s ? { ...s, active: !s.active } : s);
       try { localStorage.setItem(`lattice.security.${activeFolder}`, active ? 'off' : 'on'); } catch { /* optional storage */ }
       return;
@@ -245,7 +260,11 @@ export function useSecurityOverlay(
   }, [active, activeFolder, available, watchScan, result]);
 
   const onScan = useCallback((mode: 'full' | 'incremental') => watchScan(undefined, mode), [watchScan]);
-  const onShowFindings = useCallback((path?: string) => { setPanelFile(path ?? null); setPanelOpen(true); }, []);
+  const onShowFindings = useCallback((path?: string) => {
+    if (!watchingRef.current) refreshRef.current?.();
+    setPanelFile(path ?? null);
+    setPanelOpen(true);
+  }, []);
   const onCloseFindings = useCallback(() => setPanelOpen(false), []);
   const onRefresh = useCallback(async () => {
     const result = await fetchOpengrepGraphResult(activeFolder);

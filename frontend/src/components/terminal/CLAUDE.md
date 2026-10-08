@@ -52,7 +52,10 @@ CLAUDE.md) — different directory, don't conflate.
   the tab "Out of Memory". Past the cap the backlog is dropped and `onOverflow`
   fires; `useTerminalConnection` then closes the socket **only when a
   `serverId` is known**, so the reconnect controller reattaches by id and the
-  `attached` frame clears and replays the pane. A serverless terminal is never
+  `attached` frame clears and replays the pane — except a pane that is not the
+  active tab, which is **parked** (`controller.park()`: no reconnect) and
+  reattaches only when it becomes active again; reconnecting a hidden pane just
+  refilled the same queue. A serverless terminal is never
   closed for this (its reconnect could spawn a second pty); it gets a dim
   `terminalNotices.outputDropped` line instead. `beginReplay()` (an `attached`
   frame) drops the stale queue and enqueues the clear as a step, so it runs

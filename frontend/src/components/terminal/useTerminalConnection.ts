@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import type { RefObject } from 'react';
 import type { Terminal } from '@xterm/xterm';
 import { useSyncedRef } from '../../hooks/useSyncedRef';
@@ -23,6 +23,9 @@ type UseTerminalConnectionArgs = {
   initialCommand?: string;
   serverId?: string;
   projectPath?: string;
+  // The pane is the visible tab. A hidden pane whose output queue overflows is
+  // parked (socket closed, no reconnect) until it becomes active again.
+  active?: boolean;
   onServerId?: (id: string) => void;
   // Reports connection-health transitions so the sidebar tab can show an
   // indicator. Purely a notification — the hook's reconnect logic is unchanged.
@@ -35,6 +38,7 @@ export function useTerminalConnection({
   initialCommand,
   serverId,
   projectPath,
+  active = true,
   onServerId,
   onStatus,
 }: UseTerminalConnectionArgs) {
@@ -49,6 +53,9 @@ export function useTerminalConnection({
   // ref still feeds the latest id into a later reconnect so it re-attaches to
   // the existing pty by id rather than spawning a fresh one.
   const serverIdRef = useSyncedRef(serverId);
+  const activeRef = useSyncedRef(active);
+  // Reconnects a parked pane; set by the connection effect below.
+  const unparkRef = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     const term = termRef.current!;
@@ -61,8 +68,13 @@ export function useTerminalConnection({
     // reconnect controller reattaches by id and the `attached` frame clears and
     // replays the pane. A serverless terminal is never closed — its reconnect
     // could spawn a second pty — so it just notes the gap and carries on.
+    // A HIDDEN pane is parked instead of reattached: reconnecting at once just
+    // refills the same queue (a backgrounded browser tab throttles xterm's
+    // parser while sockets keep delivering), N hidden panes × 8M chars each.
+    // It reattaches — and the server replays — when the pane is shown.
     const output = createTerminalOutput(term, () => {
       if (serverIdRef.current && ws) {
+        if (!activeRef.current) controller.park();
         try {
           ws.close();
         } catch {
@@ -149,8 +161,10 @@ export function useTerminalConnection({
     // production-safe — a 0 ms task hop is imperceptible.
     controller.startConnecting();
     const connectTimer = setTimeout(connect, 0);
+    unparkRef.current = () => controller.unpark();
 
     return () => {
+      unparkRef.current = null;
       controller.cancel();
       clearTimeout(connectTimer);
       io.dispose();
@@ -173,4 +187,8 @@ export function useTerminalConnection({
     // change genuinely warrants reconnecting.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [cwd, termRef]);
+
+  useEffect(() => {
+    if (active) unparkRef.current?.();
+  }, [active]);
 }

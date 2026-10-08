@@ -118,7 +118,9 @@ so don't reorder calls inside or across them.
   toggles saved results (per-project localStorage view preference); separate
   Update changed files / Full scan actions POST. Polls the exact accepted id
   and refreshes colors without reheating the layout. Background focus/git-change/
-  30 s reads check freshness only. Owns category/severity filters and file/all
+  30 s reads check freshness only, and only while the overlay is on or the
+  findings panel is open (each re-fetches the complete result); turning either
+  on refreshes once. Owns category/severity filters and file/all
   findings-panel state; filtering preserves nodes and engine coverage.
   Shows a chip spinner and an ETA based on the previous scan.
   On refresh/project open, status discovers an already running scan and resumes

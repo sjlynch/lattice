@@ -558,3 +558,21 @@ test('batched links recapture config visibility when Security toggles over a pin
   await act(async () => { renderer.update(React.createElement(Harness, { active: false })); });
   assert.equal(batched.geometry.drawRange.count, 0, 'Health hides the config link again');
 });
+
+test('with Security off and its panel closed, focus reads no saved results; turning it on reads once', async (t) => {
+  const values = new Map<string, string>([['lattice.security.C:/projA', 'off']]);
+  const restoreStorage = installGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null,
+    setItem: (key: string, value: string) => values.set(key, value) });
+  t.after(restoreStorage);
+  const h = await setup(t, { ...installedStatus, project: { path: 'C:/projA', scanning: false, lastScan: result.scan } });
+  assert.equal(h.latest.security.active, false);
+  const reads = () => h.requests.filter((r) => /scans\/latest\?/.test(r.url)).length;
+  assert.equal(reads(), 1, 'the mount-time restore read');
+  await act(async () => { h.browserWindow.dispatchEvent(new Event('focus')); });
+  assert.equal(reads(), 1, 'a hidden overlay does not re-fetch the full result on focus');
+  await act(async () => { await h.latest.security.onToggle(); });
+  assert.equal(h.latest.security.active, true);
+  assert.equal(reads(), 2, 'turning Security on refreshes once');
+  await act(async () => { h.browserWindow.dispatchEvent(new Event('focus')); });
+  assert.equal(reads(), 3, 'while shown, focus checks freshness again');
+});

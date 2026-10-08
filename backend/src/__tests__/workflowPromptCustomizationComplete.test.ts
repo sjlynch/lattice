@@ -5,6 +5,7 @@ import { completeWorkflowPromptCustomization } from '../workflowPromptCustomizat
 import {
   getWorkflowPromptCustomization,
   MAX_FINISHED_CUSTOMIZATIONS,
+  MAX_RUNNING_CUSTOMIZATION_AGE_MS,
   storeWorkflowPromptCustomization,
 } from '../workflowPromptCustomizations/registry.js';
 import { preSpawnCustomizationSession } from '../workflowPromptCustomizations/sessionStarter.js';
@@ -29,7 +30,7 @@ function seedRunning(id: string): WorkflowPromptCustomization {
     originalPrompt: 'original',
     harness: 'claude',
     status: 'running',
-    createdAt: 1,
+    createdAt: Date.now(),
     command: 'claude',
     // Success path writes a best-effort audit copy to cwd — point it at a
     // real, writable dir so the write is harmless.
@@ -103,4 +104,12 @@ test('the registry prunes finished requests past MAX_FINISHED_CUSTOMIZATIONS and
   assert.equal(getWorkflowPromptCustomization(stillRunning.id)?.status, 'running');
   assert.equal(getWorkflowPromptCustomization(ids[0]), null, 'the oldest finished record is gone');
   assert.equal(getWorkflowPromptCustomization(ids[ids.length - 1])?.status, 'completed');
+});
+
+test('a running request older than MAX_RUNNING_CUSTOMIZATION_AGE_MS (its tab closed before Stop) is dropped', () => {
+  const abandoned = seedRunning('wpc_abandoned');
+  abandoned.createdAt = Date.now() - MAX_RUNNING_CUSTOMIZATION_AGE_MS - 1;
+  const fresh = seedRunning('wpc_fresh');
+  assert.equal(getWorkflowPromptCustomization(abandoned.id), null);
+  assert.equal(getWorkflowPromptCustomization(fresh.id)?.status, 'running');
 });
