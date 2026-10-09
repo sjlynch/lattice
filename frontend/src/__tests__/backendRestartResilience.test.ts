@@ -439,7 +439,7 @@ function jsonResponse(status: number, body: unknown) {
 test('a workflow start retries recovery 503 and ECONNREFUSED before allocating once', async (t) => {
   const timers = installManualTimers();
   t.after(() => timers.restore());
-  added = [];
+  added = [] as WorkflowRun[];
   errors = [];
   let posts = 0;
   let allocations = 0;
@@ -486,7 +486,7 @@ for (const error of ambiguousFailures) {
     test(`workflow ${status} before lost acknowledgement (${error.message}) is never replayed`, async (t) => {
       const timers = installManualTimers();
       t.after(() => timers.restore());
-      added = [];
+      added = [] as WorkflowRun[];
       errors = [];
       const acknowledgement = deferredVoid();
       const recent: RunMap = {};
@@ -528,7 +528,7 @@ for (const error of ambiguousFailures) {
       assert.deepEqual(await pending, { status: 'uncertain' });
       assert.equal(requests.length, 1);
       assert.equal(created.length, 1);
-      assert.deepEqual(added, [], 'no guessed ownership or resurrected run');
+      assert.deepEqual(added, [] as WorkflowRun[], 'no guessed ownership or resurrected run');
       assert.match(errors[0], /could not be confirmed/);
       if (status !== 'running') assert.equal(recent[original.id].status, status);
 
@@ -546,7 +546,7 @@ for (const error of ambiguousFailures) {
 test('a lost workflow start stops its queue without replaying or advancing the next entry', async (t) => {
   const timers = installManualTimers();
   t.after(() => timers.restore());
-  added = [];
+  added = [] as WorkflowRun[];
   errors = [];
   const posts: string[] = [];
   g.fetch = async (url: string) => {
@@ -572,7 +572,7 @@ test('a lost workflow start stops its queue without replaying or advancing the n
 for (const status of ['completed', 'errored', 'cancelled'] as const) {
   for (const viaSocket of [false, true]) {
     test(`acknowledged ${status} run keeps its terminal status from ${viaSocket ? 'WS' : 'HTTP'}`, async () => {
-      added = [];
+      added = [] as WorkflowRun[];
       errors = [];
       const finished = run('run-finished', 'wf1', { status });
       const recent = viaSocket ? { [finished.id]: finished } : {};

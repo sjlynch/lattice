@@ -240,7 +240,7 @@ for (const initialMode of ['local', 'nbody'] as const) {
     assert.deepEqual(a.map(({ vx, vz }) => ({ vx, vz })), oldVelocities, 'reattachment never revisits A');
     assert.ok(b.some(({ vx, vz }) => vx !== 0 || vz !== 0), 'reattached force operates on B');
 
-    for (const mode of [otherMode, initialMode, otherMode]) {
+    for (const mode of [otherMode, initialMode, otherMode] as const) {
       settings = { ...settings, repulsionMode: mode };
       await h.update(settings);
       const active = mock.forces.get('charge')!;

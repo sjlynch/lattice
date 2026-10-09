@@ -9,6 +9,9 @@ import { createInstancedNodes } from '../components/forceGraph/instancedNodes.ts
 import { materialFor } from '../components/forceGraph/sprites.ts';
 import { installCanvasDocument } from './domDoubles.ts';
 
+// three types Texture.image as unknown; the canvas doubles give it a size.
+const imageOf = (t: { image: unknown }) => t.image as { width: number; height: number };
+
 type SimNode = GraphNode & { x: number; y: number; z: number };
 type NodeMesh = THREE.InstancedMesh<THREE.BufferGeometry, THREE.MeshBasicMaterial>;
 type DisposeOwner = {
@@ -182,7 +185,7 @@ test('filter removal and disable release styles once and re-enable uses current 
     assert.equal(fresh.material.map, textures[i], 'cached texture reused');
     assert.deepEqual(Array.from(fresh.instanceMatrix.array.slice(12, 15)),
       i === 0 ? [10, 11, 12] : [20, 21, 22]);
-    assert.ok(textures[i].image.width > 0, 'sprite texture pixels remain usable');
+    assert.ok(imageOf(textures[i]).width > 0, 'sprite texture pixels remain usable');
   }
   assert.deepEqual(sharedDisposals, [0, 0, 0]);
 });

@@ -43,7 +43,6 @@ let restoreWindow: () => void;
 let restoreReact: () => void;
 let restoreActEnv: () => void;
 
-const g = globalThis as unknown as Record<string, unknown>;
 
 /** A Terminal stand-in covering the slice the connection hook touches. */
 function makeFakeTerminal(): Terminal {

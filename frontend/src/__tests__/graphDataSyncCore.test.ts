@@ -182,6 +182,7 @@ test('prepareGhostMerge adds ghosts for the backend-reported deleted paths', () 
         sha: 'deadbeef',
         shortSha: 'dead',
         subject: 'removed a file',
+        body: '',
         authorName: 'me',
         date: 0,
         changes: [{ path: 'gone.ts', status: 'D' }],

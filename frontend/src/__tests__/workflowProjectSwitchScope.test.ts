@@ -64,7 +64,7 @@ let saved: Record<string, unknown>;
 
 beforeEach(() => {
   FakeWebSocket.instances = [];
-  addedRuns = [];
+  addedRuns = [] as WorkflowRun[];
   recentRuns = {};
   saved = {
     IS_REACT_ACT_ENVIRONMENT: g.IS_REACT_ACT_ENVIRONMENT,
@@ -135,7 +135,7 @@ test("workflow list clears the previous project's saved workflows while the new 
 
   assert.deepEqual(
     latestWorkflows,
-    [],
+    [] as Workflow[],
     "project A's saved workflows must be hidden while project B is still loading",
   );
 
@@ -189,7 +189,7 @@ test("a delayed run response from the previous project is not inserted into the 
   const mapB = new Map([[wfB.id, wfB]]);
   const runAResponse = deferred<unknown>();
 
-  addedRuns = [];
+  addedRuns = [] as WorkflowRun[];
   recentRuns = {};
   g.fetch = (url: string) => {
     const raw = String(url);
@@ -229,7 +229,7 @@ test("a delayed run response from the previous project is not inserted into the 
   assert.deepEqual(resolvedRun, { status: 'failed' }, 'the stale project-A run result is ignored');
   assert.deepEqual(
     addedRuns,
-    [],
+    [] as WorkflowRun[],
     "project A's late run must not be added to project B's active run UI",
   );
 
@@ -255,7 +255,7 @@ test('a run completed over WS before /run resolves is returned as finished, not 
     status: 'completed',
     finishedAt: 10,
   };
-  addedRuns = [];
+  addedRuns = [] as WorkflowRun[];
   recentRuns = { [completedRun.id]: completedRun };
   g.fetch = () => Promise.resolve(responseJson({ run: fastRun }));
 

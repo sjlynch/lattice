@@ -37,7 +37,7 @@ function workflow(id: string, projectPath = A): Workflow {
   return {
     id, projectPath, name: id, createdAt: 0,
     steps: [{ id: `step-${id}`, title: 'Step', prompt: 'original', harness: 'claude', kind: 'agent' }],
-    variables: [{ name: 'user_instructions', value: '' }],
+    variables: [{ id: 'var-user-instructions', name: 'user_instructions', value: '' }],
   };
 }
 const json = (value: unknown) => ({ ok: true, status: 200, json: async () => value });

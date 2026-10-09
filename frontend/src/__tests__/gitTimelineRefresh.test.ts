@@ -12,7 +12,7 @@ function history(signature: string, count: number): GitHistoryResult {
     signature, isRepo: true, deletedPaths: [], uncommitted: { changes: [] },
     commits: Array.from({ length: count }, (_, i) => ({
       sha: `${signature}-${i}`, shortSha: `${signature}-${i}`, subject: 'fixture',
-      authorName: 'test', date: i, changes: [],
+      authorName: 'test', date: i, body: '', changes: [],
     })),
   };
 }
@@ -74,7 +74,7 @@ test('timeline coalesces HTTP/WS, preserves last-good history and range, and abo
     await act(async () => { pending[3].resolve(history('A3', 6)); });
     assert.equal(latest.history, null, 'old response is fenced even when fetch ignores abort');
     await act(async () => { pending[4].reject(new Error('first load failed')); });
-    assert.equal(latest.history?.isRepo, false, 'initial failure still resolves an empty timeline');
+    assert.equal((latest.history as GitHistoryResult | null)?.isRepo, false, 'initial failure still resolves an empty timeline');
     await act(async () => { notify('B1'); });
     await act(async () => { renderer!.unmount(); renderer = undefined; });
     assert.equal(pending[5].signal.aborted, true);

@@ -4,7 +4,7 @@ import type { DirListing } from '../api';
 import { loadDirectory, type LoadDirectoryDeps } from '../components/folderPicker/loadDirectory.ts';
 
 function listing(path: string): DirListing {
-  return { path, parent: null, entries: [{ name: 'child', path: `${path}/child` }] };
+  return { path, parent: null, roots: [], entries: [{ name: 'child', path: `${path}/child` }] };
 }
 
 type Deferred = {

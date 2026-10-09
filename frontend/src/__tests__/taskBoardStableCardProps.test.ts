@@ -148,7 +148,7 @@ test('handleRangeSelect keeps its identity across a board update with identical 
       React.createElement(SelectionHarness, {
         tasks: next,
         grouped: groupTasksByStatus(next),
-        getLaneSortMode: () => 'recent',
+        getLaneSortMode: () => 'recent' as const,
       }),
     );
   });
@@ -184,7 +184,7 @@ test('range select slices the lane in its visible sort order, using the latest b
       React.createElement(SelectionHarness, {
         tasks: next,
         grouped: groupTasksByStatus(next),
-        getLaneSortMode: () => 'manual',
+        getLaneSortMode: () => 'manual' as const,
       }),
     );
   });

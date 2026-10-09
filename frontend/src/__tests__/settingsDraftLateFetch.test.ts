@@ -184,6 +184,7 @@ test('pickSavableFetchedToggles: loaded → all, unloaded → only touched', () 
     restoreTerminalsOnOpen: 'always' as const,
     restoreNudgeAgents: true,
     restoreNudgeUserTabs: false,
+    keepWorkflowStepTerminals: true,
   };
   const none = {
     instrumentClaude: false,
@@ -192,6 +193,7 @@ test('pickSavableFetchedToggles: loaded → all, unloaded → only touched', () 
     restoreTerminalsOnOpen: false,
     restoreNudgeAgents: false,
     restoreNudgeUserTabs: false,
+    keepWorkflowStepTerminals: false,
   };
   assert.deepEqual(pickSavableFetchedToggles(values, none, true), values);
   assert.deepEqual(pickSavableFetchedToggles(values, none, false), {});

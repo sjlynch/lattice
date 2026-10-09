@@ -14,6 +14,9 @@ import {
 } from '../components/forceGraph/hooks/refresh.ts';
 import { installCanvasDocument, installManualTimers } from './domDoubles.ts';
 
+// three types Texture.image as unknown; the canvas doubles give it a size.
+const imageOf = (t: { image: unknown }) => t.image as { width: number; height: number };
+
 const settings = { ...DEFAULT_SETTINGS, metricLabels: true };
 
 function fileNode(name: string, metrics: Pick<GraphNode, 'loc' | 'health'> = {}): GraphNode {
@@ -95,7 +98,7 @@ test('clearAllLabelRegistries releases real overlay entries and excess name-labe
   const lineDisposals = watchDisposals(...lineMaterials.flat());
   for (const { disposals, texture } of all) {
     assert.deepEqual(disposals, [0, 0, 0], 'mounted resources have not been disposed');
-    assert.ok(texture.image.width > 0 && texture.image.height > 0);
+    assert.ok(imageOf(texture).width > 0 && imageOf(texture).height > 0);
   }
 
   clearAllLabelRegistries();
@@ -109,8 +112,8 @@ test('clearAllLabelRegistries releases real overlay entries and excess name-labe
   assert.ok(evicted.length > 0, 'name-registry releases make excess textures reclaimable');
   for (const { disposals, texture } of evicted) {
     assert.deepEqual(disposals, [1, 1, 1], 'eviction frees texture and paired material once');
-    assert.equal(texture.image.width, 0);
-    assert.equal(texture.image.height, 0);
+    assert.equal(imageOf(texture).width, 0);
+    assert.equal(imageOf(texture).height, 0);
   }
 
   clearAllLabelRegistries();
@@ -128,7 +131,7 @@ test('metric registry owners balance shared label references across separate cle
   const health = capture([...healthLabelRegistry][0]);
   assert.equal(loc.texture, health.texture, 'equal metric text/color shares its texture');
   assert.equal(loc.material, health.material, 'the two sprites share the paired material');
-  const dimensions = [loc.texture.image.width, loc.texture.image.height];
+  const dimensions = [imageOf(loc.texture).width, imageOf(loc.texture).height];
   assert.ok(dimensions.every((dimension) => dimension > 0));
 
   // Keep the overflow mounted in LOC, so its shared label is reclaimable only
@@ -146,7 +149,7 @@ test('metric registry owners balance shared label references across separate cle
   assert.equal(locLabelRegistry.size, 257, 'the sibling registry remains live');
   assert.deepEqual(health.disposals, [1, 0, 0], 'only the cleared owner releases its geometry');
   assert.deepEqual(loc.disposals, [0, 0, 0], 'the sibling keeps shared resources alive');
-  assert.deepEqual([loc.texture.image.width, loc.texture.image.height], dimensions);
+  assert.deepEqual([imageOf(loc.texture).width, imageOf(loc.texture).height], dimensions);
   for (const { disposals } of burst) assert.deepEqual(disposals, [0, 0, 0]);
 
   clearMetricLabelRegistry(locLabelRegistry);
@@ -154,8 +157,8 @@ test('metric registry owners balance shared label references across separate cle
   assert.equal(locLabelRegistry.size, 0);
   assert.deepEqual(loc.disposals, [1, 1, 1], 'the final owner makes the old shared label evictable');
   assert.deepEqual(health.disposals, [1, 1, 1]);
-  assert.equal(loc.texture.image.width, 0);
-  assert.equal(loc.texture.image.height, 0);
+  assert.equal(imageOf(loc.texture).width, 0);
+  assert.equal(imageOf(loc.texture).height, 0);
   for (const { disposals } of burst) assert.equal(disposals[0], 1);
 
   clearMetricLabelRegistry(healthLabelRegistry);
@@ -188,7 +191,7 @@ test('a batched clear keeps still-shown name labels for the rebuild, trims once 
   assert.equal(labelsRegistry.size, 0);
   for (const { disposals, texture } of names) {
     assert.deepEqual(disposals, [1, 0, 0], 'only the connector geometry is freed before the rebuild');
-    assert.ok(texture.image.width > 0 && texture.image.height > 0);
+    assert.ok(imageOf(texture).width > 0 && imageOf(texture).height > 0);
   }
   assert.equal(timers.scheduled.length, 1, 'one deferred trim');
   assert.equal(timers.scheduled[0].delay, LABEL_TRIM_DELAY_MS);
@@ -215,7 +218,7 @@ test('a batched clear keeps still-shown name labels for the rebuild, trims once 
   clearAllLabelRegistries();
   for (const { disposals, texture } of names) {
     assert.deepEqual(disposals.slice(1), [1, 1], 'teardown reclaims every released label once');
-    assert.equal(texture.image.width * texture.image.height, 0);
+    assert.equal(imageOf(texture).width * imageOf(texture).height, 0);
   }
   assert.equal(timers.scheduled.length, 0, 'teardown schedules no trim');
 });

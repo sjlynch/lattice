@@ -4,7 +4,7 @@ import React from 'react';
 import * as THREE from 'three';
 import TestRenderer, { act } from 'react-test-renderer';
 import type { ForceGraph3DInstance } from '3d-force-graph';
-import type { GraphNode, OpengrepGraphResult } from '../api';
+import type { GraphNode, OpengrepGraphFile, OpengrepGraphResult } from '../api';
 import { fetchOpengrepStatus, runOpengrepGraphScan, type OpengrepStatus } from '../api/opengrep.ts';
 import { useSecurityOverlay } from '../components/forceGraph/hooks/useSecurityOverlay.ts';
 import { useGraphFilter } from '../components/forceGraph/hooks/useGraphFilter.ts';
@@ -26,7 +26,18 @@ const result: OpengrepGraphResult = {
     { path: 'clean.json', severity: null, findings: 0, incomplete: false },
   ],
   shown: 1, errors: 0, partiallyParsed: 0, skippedRules: 0,
+  findings: [{
+    fingerprint: 'fp-a', shortFingerprint: 'fp-a', ruleId: 'rule.a', severity: 'ERROR', message: 'finding in a',
+    path: 'src/a.ts', line: 1, endLine: 1, col: 1, snippet: '', cwe: [], references: [],
+  }],
+  allFindings: [],
+  bySeverity: { ERROR: 1, WARNING: 0, INFO: 0 }, total: 1,
+  dropped: { belowFloor: 0, ignoredRules: 0, ignoredFingerprints: 0, duplicates: 0 },
+  filter: { severityFloor: 'INFO', ignoreRuleIds: [], ignoreFingerprints: [] },
+  caveats: { errors: [], partiallyParsed: [] },
+  freshness: { state: 'unknown', changedFiles: 0, configurationChanged: false, checkedAt: 0 },
 };
+result.allFindings = result.findings;
 const noPins = { health: false, loc: false, dead: false, worktree: false, labels: false };
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
@@ -119,7 +130,7 @@ test('only a chip click starts a scan; waiting keeps the graph visible and the c
   assert.equal(h.chip().findAll((n) => n.props.className === 'spinner graph-security-spinner').length, 0);
   assert.match(h.requests[1].url, /\/scans\/og_first\?/);
   assert.equal(new URL(h.requests[1].url, 'http://test').searchParams.get('format'), 'graph');
-  assert.equal(h.latest.securityFilesRef.current?.get('c:/proja/src/a.ts')?.severity, 'ERROR');
+  assert.equal((h.latest.securityFilesRef.current as ReadonlyMap<string, OpengrepGraphFile> | null)?.get('c:/proja/src/a.ts')?.severity, 'ERROR');
   assert.equal(h.chip().findAllByType('span').at(-1)?.children.join(''), '1');
   await h.update('C:/projA');
   assert.equal(h.requests.length, 3, 'completion enables one read-only freshness check; rerendering never starts a scan');
@@ -278,7 +289,7 @@ test('saved results restore on refresh, toggle without a scan, and expose a file
   const restoreStorage = installGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => values.set(key, value) });
   t.after(restoreStorage);
-  const h = await setup(t, { ...installedStatus, project: { path: 'C:/projA', scanning: false, lastScan: result.scan } });
+  const h = await setup(t, { ...installedStatus, project: { path: 'C:/projA', scanning: false, runningScan: null, lastScan: result.scan } });
   assert.equal(h.latest.security.active, true);
   assert.equal(h.requests.length, 1);
   assert.match(h.requests[0].url, /scans\/latest\?/);
@@ -296,7 +307,7 @@ test('saved results restore on refresh, toggle without a scan, and expose a file
 });
 
 test('cancelling an update retains the prior snapshot and a completed scan wins a late cancellation', async (t) => {
-  const h = await setup(t, { ...installedStatus, project: { path: 'C:/projA', scanning: false, lastScan: result.scan } });
+  const h = await setup(t, { ...installedStatus, project: { path: 'C:/projA', scanning: false, runningScan: null, lastScan: result.scan } });
   await act(async () => { void h.latest.security.onScan('incremental'); });
   assert.equal(h.latest.security.result?.scan.id, 'og_first');
   assert.equal(h.latest.securityModeRef.current, true);
@@ -564,7 +575,7 @@ test('with Security off and its panel closed, focus reads no saved results; turn
   const restoreStorage = installGlobal('localStorage', { getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => values.set(key, value) });
   t.after(restoreStorage);
-  const h = await setup(t, { ...installedStatus, project: { path: 'C:/projA', scanning: false, lastScan: result.scan } });
+  const h = await setup(t, { ...installedStatus, project: { path: 'C:/projA', scanning: false, runningScan: null, lastScan: result.scan } });
   assert.equal(h.latest.security.active, false);
   const reads = () => h.requests.filter((r) => /scans\/latest\?/.test(r.url)).length;
   assert.equal(reads(), 1, 'the mount-time restore read');

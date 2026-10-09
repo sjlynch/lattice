@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   panelForKind,
   shouldFallBackToTerminals,
+  type Panel,
 } from '../components/sidebar/hooks/panelState.ts';
 
 // Regression for: "terminal search filter isn't cleared on automatic sidebar
@@ -49,7 +50,7 @@ function filterAfterPanelChange(prev: string, next: string, filter: string): str
 }
 
 test('an automatic switch off the Merging panel clears the stale query', () => {
-  const before: string = 'merging';
+  const before: Panel = 'merging';
   // mergeTerminals hits 0 → shouldFallBackToTerminals fires → activePanel
   // becomes 'terminals'.
   const after = shouldFallBackToTerminals(before, 0, 0) ? 'terminals' : before;

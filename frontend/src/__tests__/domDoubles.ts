@@ -188,7 +188,9 @@ export class FakeWebSocket {
   onerror: (() => void) | null = null;
   onclose: (() => void) | null = null;
   closed = false;
-  constructor(public url: string) {
+  url: string;
+  constructor(url: string) {
+    this.url = url;
     FakeWebSocket.instances.push(this);
   }
   close() {

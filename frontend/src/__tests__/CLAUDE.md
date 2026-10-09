@@ -5,11 +5,18 @@ TS / React-state tests, not a browser or Vite integration suite. `npm test`
 from `frontend/` runs `node --import tsx --test src/__tests__/*.test.ts` (one
 level only; there is no HOME-isolation preload — no frontend test writes to
 disk). Run one file from `frontend/` with
-`node --import tsx --test src/__tests__/<name>.test.ts`. Type-check: `npx tsc -b`.
+`node --import tsx --test src/__tests__/<name>.test.ts`. Type-check: `npx tsc -b`
+(it includes these tests via `../../tsconfig.test.json`; `tsx` alone never type-checks).
 
 ## Conventions
 
 - Import assertions from `node:assert/strict` and test APIs from `node:test`.
+- Fixtures are typed with the real wire types (most re-exported from
+  `backend/src/shared/wireTypes.ts`): build complete objects, not partial ones —
+  a field the backend always sends but the fixture omits sends the code down a
+  path production never takes. `node:assert/strict`'s `equal`/`deepEqual` narrow
+  their first argument (`asserts actual is T`); if a later `act()` changes it,
+  assert against a typed value (`[] as WorkflowRun[]`) rather than casting the use.
 - No DOM under `node --test`: install globals through `domDoubles.ts`
   (`installGlobal`, `installWindow`/`withWindow`, `installCanvasDocument`,
   `stubClipboard`, `installManualTimers`, `FakeWebSocket`/`installFakeWebSocket`)

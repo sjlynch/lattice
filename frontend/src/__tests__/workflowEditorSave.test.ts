@@ -112,7 +112,7 @@ test('a mid-save VARIABLE edit supersedes (the mid-save edit is kept)', () => {
   const atSaveStart = editorFor(w);
   const current: EditorState = {
     ...atSaveStart,
-    variables: [{ name: 'custom_var', value: 'added mid-save' }],
+    variables: [{ id: 'var-custom', name: 'custom_var', value: 'added mid-save' }],
     dirty: true,
   };
   const { superseded } = nextEditorAfterSave(atSaveStart, current, w);

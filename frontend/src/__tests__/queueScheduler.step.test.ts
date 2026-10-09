@@ -27,7 +27,7 @@ test('full flow: duplicate wf1 entries run one after the other with captured ove
   assert.equal(q.starts[0].harnessOverride, 'claude');
 
   q.workflowStarted('q1', 'run1');
-  assert.deepEqual(q.starts, [], 'q2 must not start while q1 is active');
+  assert.deepEqual(q.startIds(), [], 'q2 must not start while q1 is active');
 
   q.runFinished('run1');
   assert.deepEqual(q.startIds(), ['q2']);
