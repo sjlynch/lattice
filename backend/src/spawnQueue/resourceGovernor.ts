@@ -1,24 +1,19 @@
 // Adaptive admission for fan-out spawns: hold new `batch` spawns (task runs,
-// workflow steps) while the machine is already saturated.
-//
-// `softCap` is a fixed number the user picks (`maxConcurrentAgents`), but what
-// a machine can sustain depends on the repo and the moment — on 2026-09-22 a
-// 50-agent cap on a large repo pinned the CPU at 100% (agents running test
-// suites, multi-GB worktree checkouts, Defender scanning every written file)
-// until the desktop froze. The governor keeps the cap as the ceiling and adds a
-// live brake beneath it:
+// workflow steps) while the machine is already saturated. `softCap`
+// (`maxConcurrentAgents`) stays the ceiling, but what a machine sustains depends
+// on the repo and the moment (a high cap on a large repo can pin the CPU until
+// the desktop freezes), so the governor adds a live brake beneath it:
 //
 //   - CPU: an exponentially-smoothed system utilization (≈20 s window) from
 //     os.cpus() deltas. Batch admission stops at ≥ CPU_BLOCK_PCT and resumes
 //     below CPU_RESUME_PCT (hysteresis, so it doesn't flap per poll).
 //   - Memory: batch admission stops while free RAM is under the floor.
-//   - Floor: with fewer than MIN_LIVE_AGENTS Lattice agents live the brake
-//     never applies — load from something outside Lattice can't starve it to
-//     zero. It counts AGENT sessions (`countAgentSessions` below, plus the
-//     queue's own in-flight reservations), never raw ptys: counting sidebar
-//     shells, a `npm run dev` startup terminal or another project's tabs let
-//     two open tabs on a low-RAM machine hold every Run All forever with no
-//     agent running — and nothing Lattice does would ever free that RAM.
+//   - Floor: with fewer than MIN_LIVE_AGENTS Lattice agents live the brake never
+//     applies — load from outside Lattice can't starve it to zero. It counts
+//     AGENT sessions (`countAgentSessions` below + the queue's in-flight
+//     reservations), never raw ptys: sidebar shells, a startup terminal or
+//     another project's tabs could hold every Run All forever with no agent
+//     running, and nothing Lattice does would free that RAM.
 //   - `priority` / `interactive` spawns (merge resolvers, push, user one-offs)
 //     are never held: they unblock work in flight or are explicit clicks.
 //

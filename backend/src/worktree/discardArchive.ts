@@ -1,36 +1,23 @@
-// Keep-for-the-user archive of a task worktree's UNCOMMITTED edits, taken
-// right before Lattice force-removes that worktree.
+// Keep-for-the-user archive of a task worktree's UNCOMMITTED edits, taken right
+// before Lattice force-removes that worktree: `git worktree remove --force`
+// silently deletes tracked modifications and untracked files, and the
+// unmerged-commit guard protects committed work only. Callers, format and
+// retention: worktree/snapshot/CLAUDE.md → "Discarded-worktree archives".
 //
-// Two paths discard a worktree that has no unmerged commits: a fresh ▶ Run's
-// reconcile (`reconcile.ts`, "Run starts fresh") and the boot orphan sweep
-// (`recovery/worktreeSweep.ts`). Both use `git worktree remove --force`, which
-// silently deletes tracked modifications and untracked files. The unmerged-
-// commit guard protects committed work only; this protects the rest.
-//
-// It reuses the copy-based snapshot machinery (`snapshot/`): the same status
-// parse (`git status --porcelain=v1 -z --untracked-files=all`), the same
-// containment filter, the same `mkdtemp` directory under
-// `~/.lattice/snapshots/<projectHash>/<ts>-discarded-worktree-<slug>-XXXX/`,
-// and the same copy routine (symlinks copied as links, never followed). Two
-// deliberate differences from a merge snapshot:
-//
-//   1. NOTHING in the worktree is reset or deleted here — the caller removes
-//      the whole worktree afterwards, and only when this returns `archived`
-//      or `clean`. Any failure (git status, containment drop, one failed
-//      copy, manifest write) returns `failed` and the caller KEEPS the
-//      worktree: losing work is exactly what this exists to prevent.
-//   2. The manifest is `_lattice-discarded-worktree.json`, NOT
-//      `_lattice-snapshot.json`, and the payload lives under `files/`. Boot
-//      `recoverPendingSnapshots` only acts on `_lattice-snapshot.json`, so an
-//      archive is never auto-restored into the project tree (it holds a
-//      worktree's edits, which were never the project checkout's) — and an
-//      older backend that predates this module sees no manifest either.
-//
-// Retention: the newest `DISCARDED_WORKTREE_ARCHIVE_KEEP` archives per project
-// are kept; older ones are removed after each new archive, but ONLY once they
-// are older than `DISCARDED_WORKTREE_ARCHIVE_MIN_AGE_MS` (guarded: strictly
-// inside the project's snapshot dir, not a reparse point, links stripped
-// first). Pending merge snapshots are never touched by that pruning.
+// Reuses the copy-based snapshot machinery (`snapshot/`) with two deliberate
+// differences from a merge snapshot:
+//   1. NOTHING in the worktree is reset or deleted here — the caller removes the
+//      whole worktree afterwards, only when this returns `archived` or `clean`.
+//      Any failure (git status, containment drop, one failed copy, manifest
+//      write) returns `failed` and the caller KEEPS the worktree: losing work is
+//      exactly what this exists to prevent.
+//   2. The manifest is `_lattice-discarded-worktree.json` (payload under
+//      `files/`), NOT `_lattice-snapshot.json`, so boot `recoverPendingSnapshots`
+//      (or an older backend) never auto-restores an archive into the project.
+// Retention keeps the newest `DISCARDED_WORKTREE_ARCHIVE_KEEP` per project and
+// prunes older ones only past `DISCARDED_WORKTREE_ARCHIVE_MIN_AGE_MS` (guarded:
+// strictly inside the project's snapshot dir, not a reparse point, links
+// stripped first); pending merge snapshots are never touched.
 
 import path from 'node:path';
 import fs from 'node:fs/promises';

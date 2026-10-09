@@ -1,30 +1,20 @@
 // Durable mirror of the one-off run registries (push runs, QA e2e runs,
-// post-merge hooks).
+// post-merge hooks). Their agents' ptys live in the DETACHED terminal-server and
+// survive a backend restart (routine while Lattice develops itself), so an
+// in-memory-only record left a still-working agent's `/done` / `/verdict` /
+// `/complete` callback hitting a backend that had never heard of it. Every
+// RUNNING record is mirrored to `~/.lattice/per-project/<hash>/<fileName>` and
+// re-adopted on boot by `../recovery/oneOffRunResume.ts`; finished records are
+// dropped, so the file disappears when nothing is running.
 //
-// Why this exists: those registries used to live ONLY in memory, while their
-// agents' ptys live in the DETACHED terminal-server, which survives a backend
-// restart. Lattice restarts itself routinely while it develops itself (`tsc -w`
-// + the dev runner on every merged `backend/src` change, a crash, a
-// processGuards fail-fast), so a restart during a push / QA / post-merge
-// session left a still-working agent whose callback (`/done`, `/verdict`,
-// `/complete`) then hit a backend that had never heard of it: a 404, a
-// terminal idling forever, a QA pass that never promoted its task, and a
-// post-merge hook the resumed merge run could not see (so it started a second
-// one, or the workflow Merge step's Phase C read "idle" while it ran).
-//
-// So every RUNNING record is mirrored to
-// `~/.lattice/per-project/<hash>/<fileName>` and re-adopted on boot by
-// `../recovery/oneOffRunResume.ts`. Finished records are dropped (nothing to
-// resume), so the file disappears when nothing is running.
-//
-// Same storage rules as `workflowRuns/persistence.ts`: HOME-scoped (never in
-// the project tree — see the `.git`-deletion defences in the root CLAUDE.md),
-// atomic temp→rename, writes serialized per project, and every failure is
-// best-effort — losing the mirror must never break a live run. Unlike the
-// workflow mirror there is no debounce: these records change a handful of
-// times per run (record, verdict, done), and a restart inside a debounce
-// window would resurrect a finished run as `running`, so each change is
-// written straight away (coalesced while a write is queued).
+// Same storage rules as `workflowRuns/persistence.ts`: HOME-scoped (never in the
+// project tree — see the `.git`-deletion defences in the root CLAUDE.md), atomic
+// temp→rename, writes serialized per project, and every failure best-effort —
+// losing the mirror must never break a live run. Unlike the workflow mirror there
+// is NO debounce: these records change a handful of times per run (record,
+// verdict, done), and a restart inside a debounce window would resurrect a
+// finished run as `running`, so each change is written straight away (coalesced
+// while a write is queued).
 
 import fs from 'node:fs/promises';
 import path from 'node:path';

@@ -1,29 +1,23 @@
-// Pi model DISCOVERY for Lattice's harness selectors.
+// Pi model DISCOVERY for Lattice's harness selectors. `pi --list-models` (Pi's
+// built-in OAuth catalog PLUS custom providers declared in
+// `~/.pi/agent/models.json`) is the non-hardcoded source: a provider added to
+// models.json appears here with zero Lattice code changes.
 //
-// `pi --list-models` prints every model Pi knows about — its built-in OAuth
-// catalog (e.g. openai-codex/gpt-5.5) PLUS any custom providers declared in
-// `~/.pi/agent/models.json` (e.g. a local vLLM server). That command is our
-// non-hardcoded detection source: adding a provider to models.json makes its
-// models appear here with zero Lattice code changes.
+// Exposed over GET /api/pi-models:
+//   - `models`: the full parsed list.
+//   - `menu`:   the curated subset shown as "Pi — X" rows in the harness
+//               dropdowns. Uncurated (no globalSettings.piModelMenu), it defaults
+//               to every model from a models.json-declared provider plus Pi's
+//               current default model — what the user actually configured, not
+//               every built-in entry.
 //
-// We expose two things to the UI (over GET /api/pi-models):
-//   - `models`: the full parsed list (for a future "model menu" curation UI).
-//   - `menu`:   the curated subset surfaced as "Pi — X" rows in the harness
-//               dropdowns. When the user hasn't curated a menu
-//               (globalSettings.piModelMenu), the default is every model from a
-//               models.json-declared provider plus Pi's current default model —
-//               so the dropdown shows what the user actually configured rather
-//               than all ~13 built-in entries.
+// Read-only: discovery never writes Pi config. Model SELECTION is per-spawn via
+// `--model` (worktree/commands.ts buildPiModelFlag); Pi's global defaults in
+// ~/.pi/agent/settings.json are never touched. Endpoint MANAGEMENT (reconcile +
+// probe, which DO write models.json) lives in ./reconcile.ts and ./probe.ts.
 //
-// Read-only: discovery never writes Pi config. Model SELECTION happens
-// per-spawn via the `--model` flag (see worktree/commands.ts buildPiModelFlag);
-// Pi's global defaults in ~/.pi/agent/settings.json are never touched. Endpoint
-// MANAGEMENT (reconcile + probe, which DO write models.json) lives in
-// ./reconcile.ts and ./probe.ts.
-//
-// This file is the stable public facade for the read-only side. The focused
-// implementation modules keep parsing/cache/file-reading/menu curation separate
-// while preserving historical exports from ./discovery.js and ../piModels.js.
+// Stable public facade for the read-only side; the focused modules behind it
+// keep the historical exports from ./discovery.js and ../piModels.js working.
 
 import { getGlobalSettings } from '../globalSettings.js';
 import { PI_MODELS_CONFIG } from './config.js';

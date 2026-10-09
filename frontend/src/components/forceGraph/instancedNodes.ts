@@ -1,43 +1,25 @@
-// Batched node rendering — collapses the library's one-`THREE.Sprite`-per-node
-// (mounted inside a per-node `Group`) into a handful of `THREE.InstancedMesh`es,
-// one per distinct base style present (≈5–50, vs N). This removes the bulk of
-// the per-frame draw calls / scene traversal that makes orbiting a *settled*
-// graph spike CPU — the other half of the problem batched links solved (see
+// Batched node rendering: the library's per-node `THREE.Sprite` (in a per-node
+// `Group`) collapses into one `InstancedMesh` per distinct base style (≈5–50 vs
+// N), removing most per-frame draw calls when orbiting a settled graph (links:
 // `instancedLinks.ts`).
 //
-// WHAT. For every visible, non-ghost node we draw its base shape into a shared
-// `InstancedMesh` keyed by `styleKey` (shape+colors). The mesh reuses the EXACT
-// same `CanvasTexture` the per-node sprite uses (from the `materialFor` cache),
-// drawn through a `MeshBasicMaterial` whose vertex shader is patched (one
-// `<project_vertex>` swap) to billboard each unit quad toward the camera in view
-// space — so the look (texture, color management, flipY, uv orientation, world
-// sizing) is identical to the sprite it replaces, with no atlas/colorspace
-// guesswork. Per-instance position is re-uploaded only on frames the layout
-// moved (shared `nodeMotionDriver` — engine tick OR a node drag, incl. a drag
-// after the layout settles — + one trailing settle frame, exactly like batched
-// links), so a pure orbit is static.
+// Each mesh reuses the EXACT `CanvasTexture` the per-node sprite uses
+// (`materialFor` cache) through a `MeshBasicMaterial` whose vertex shader is
+// patched (one `<project_vertex>` swap) to billboard each quad in view space —
+// identical look to the sprite, no atlas/colorspace guesswork. Positions upload
+// only on frames the layout moved (`nodeMotionDriver`: engine tick or drag, incl.
+// after settle) plus one trailing settle frame, so a pure orbit is static.
 //
-// PICK PROXY. We do NOT remove the per-node `Sprite`/`Group`. `nodeObjectFactory`
-// keeps mounting the base sprite but sets it `.visible = false` while batching is
-// on (see `batchedNodesRef`). three.js raycasting ignores `.visible` (it tests
-// only `object.layers`; `Sprite.raycast` has no visibility guard), so the
-// invisible sprite stays a hover/right-click PICK TARGET and every overlay that
-// hangs off the per-node Group — selection halo, change ring, worktree ring, Alt
-// labels — keeps anchoring to it unchanged. This is what keeps the change
-// minimal and the view modes intact.
+// PICK PROXY: we do NOT remove the per-node Sprite/Group; `nodeObjectFactory`
+// keeps it at `.visible = false` while batching (`batchedNodesRef`). Raycasting
+// ignores `.visible`, so it stays the hover/right-click target and the anchor for
+// halo, change/worktree rings and Alt labels.
 //
-// OVERLAYS. The recolor overlays (health `h` / loc `z` / dead `d`) recolor the
-// per-node sprite AND (for h/z) add label/connector children. Rather than mirror
-// their recolor precedence into per-instance colors, the instanced mesh simply
-// HIDES itself while any of those overlays is active (`isBaseView()` is false)
-// and `nodeObjectFactory` leaves the recolored sprite visible — so those modes
-// run on the proven per-node path unchanged. The instanced mesh only ever draws
-// the base (no-overlay) view, which is the orbit-cost steady state. Ghosts
-// (deleted-file discs) likewise keep their per-node sprite and are excluded here.
-//
-// Style meshes own their instance buffers and billboard materials; allocation
-// and disposal live in instancedNodeResources.ts. This controller owns the
-// shared quad through final teardown; sprite-cache textures are borrowed.
+// Recolor overlays (h/z/d) are not mirrored into instance colors: the mesh hides
+// while any is active (`isBaseView()` false) and those modes — and ghosts — stay
+// on the per-node sprite path. Style meshes own their instance buffers + billboard
+// materials (`instancedNodeResources.ts`); this controller owns the shared quad
+// through final teardown; sprite-cache textures are borrowed.
 
 import * as THREE from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';

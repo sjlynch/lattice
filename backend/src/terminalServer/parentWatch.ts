@@ -1,31 +1,22 @@
-// Self-terminate when the backend that spawned us is gone — but only once
-// that is safe.
-//
-// The terminal-server runs detached so its PTYs (and the Claude agents
-// inside them) survive backend dev restarts. The cost: if the backend
-// exits ungracefully (Ctrl+C in a parent shell, OS reboot interrupting,
-// a crash without /shutdown), nothing reaps the terminal-server — it
-// just keeps running with a dangling fingerprint that the *next* backend
-// boot will detect and shutdownStale, but the orphan eats RAM and a
-// port until then.
+// Self-terminate when the backend that spawned us is gone — but only once that
+// is safe. The terminal-server runs detached so its PTYs (and agents) survive
+// backend restarts; after an ungraceful backend exit nothing reaps it, and the
+// orphan holds RAM and a port until the next boot's shutdownStale.
 //
 // `BACKEND_PARENT_PID` is the parent of the backend that spawned this server
-// (`backend/scripts/dev.mjs` in dev, or whatever launched `node
-// dist/index.js` in prod). It stays the same across backend dist
-// restarts, so we don't terminate during normal tsc-w respawns. It does NOT
-// survive a dev soft restart (`r` in the `npm run dev` console), which replaces
-// the dev runner while this server — and its agents — live on; from then on the
-// parent is simply "gone" and only the contact/idle rule below applies.
+// (`backend/scripts/dev.mjs` in dev, whatever launched `node dist/index.js` in
+// prod). It stays the same across backend dist restarts, so normal tsc-w
+// respawns don't terminate us. It does NOT survive a dev soft restart (`r`),
+// which replaces the dev runner while this server and its agents live on; from
+// then on the parent is simply "gone" and only the contact/idle rule applies.
 //
-// Parent gone is NOT enough on its own (2026-09-22): stopping the dev runner
-// while a workflow was mid-flight made this watch shut the server down five
-// seconds later, killing every running agent mid-task — the one thing the
-// detached design exists to prevent. An idle orphan costs some RAM; a killed
-// agent costs its in-flight work. So once the parent is gone the watch keeps
-// polling and lets the caller decide each tick (`tryShutdown`): the server
-// only exits when no backend has contacted it recently (a newer backend
-// adopts an existing server without changing BACKEND_PARENT_PID) AND it has
-// no live or starting sessions.
+// Parent gone is NOT enough on its own: stopping the dev runner mid-workflow
+// would kill every running agent — the one thing the detached design exists to
+// prevent (an idle orphan costs RAM; a killed agent costs its work). So once the
+// parent is gone the watch keeps polling and lets the caller decide each tick
+// (`tryShutdown`): exit only when no backend has contacted it recently (a newer
+// backend adopts an existing server without changing BACKEND_PARENT_PID) AND it
+// has no live or starting sessions.
 
 const POLL_INTERVAL_MS = 5_000;
 

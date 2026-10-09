@@ -1,30 +1,21 @@
 // Tear down a worktree: kill any terminals running inside it (so Windows
 // releases file locks), then remove the worktree and branch via git.
 //
-// No raw `fs.rm` here anymore. Every prior `.git`-deletion incident on
-// this project traced back to a recursive filesystem delete (directly via
-// `fs.rm`, or indirectly via a lost `git stash --include-untracked`)
-// reaching something it shouldn't. So cleanup delegates the recursive
-// directory removal entirely to `git worktree remove --force`: git knows
-// exactly which directory the worktree is (from its registration), refuses
-// to remove the main worktree, and doesn't follow symlinks out. If that
-// command fails (typically a Windows lock that outlived the PTY kill), we
-// LEAVE the directory in place — an orphan under `~/.lattice/worktrees/`
-// is inert. If git still has it registered, the boot-time sweep
-// (`sweepOrphanedWorktrees` in recovery.ts) retries it later, branch and
-// all; if git already dropped the registration (its usual behaviour on a
-// part-failed remove), the files are residue for
-// `recovery/worktreeResidueSweep.ts` and the branch step runs now — nothing
-// would ever see that branch again otherwise. Worktrees now live outside the project
-// tree (`~/.lattice/worktrees/<hash>/…`), so even an orphan is structurally
-// incapable of affecting any project's `.git`.
+// No raw `fs.rm`: every `.git`-deletion incident traced to a recursive filesystem
+// delete, so recursive removal is delegated entirely to `git worktree remove
+// --force` (git knows the exact dir from its registration, refuses the main
+// worktree, doesn't follow symlinks out). If that fails (typically a Windows lock
+// that outlived the PTY kill) the directory is LEFT in place — an orphan under
+// `~/.lattice/worktrees/` is inert and, outside the project tree, can't affect
+// any project's `.git`. Still registered → boot `sweepOrphanedWorktrees` retries
+// it, branch and all; already unregistered (git's usual part-failed behaviour) →
+// the files are residue for `recovery/worktreeResidueSweep.ts` and the branch
+// step runs now, since nothing would ever see that branch again.
 //
-// Every git invocation here has a hard timeout — a hung process holding
-// the worktree dir open on Windows would otherwise wedge cleanup forever
-// and stall the run worker (which awaits cleanup mid-iteration).
-//
-// Path-safety bounds + reparse-point guard live in `cleanupSafety.ts`;
-// the in-worktree junction/symlink stripper lives in `reparsePoints.ts`.
+// Every git invocation has a hard timeout — a hung process holding the dir open
+// on Windows would otherwise wedge cleanup and stall the run worker awaiting it.
+// Path-safety bounds + reparse-point guard: `cleanupSafety.ts`; the in-worktree
+// junction/symlink stripper: `reparsePoints.ts`.
 
 import path from 'node:path';
 import { projectGit } from './projectGit.js';

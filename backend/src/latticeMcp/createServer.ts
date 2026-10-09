@@ -1,34 +1,23 @@
 // The Lattice task-board MCP server: 11 typed board tools over the HTTP API in
 // `routes/tasks/` (plus the three Opengrep tools — scan / findings / ignore —
 // over `routes/opengrep.ts`; ignore outside task worktrees only), pinned to ONE
-// project.
-//
-// Why a server and not just the HTTP docs: an agent reading LATTICE_API.md has
-// to remember to pass `project=`, to check the echoed `canonicalProject`, and —
-// the expensive one — that `GET /api/tasks` unfiltered is a megabyte of done
-// tasks. Typed tools remove all three: `project` is pinned by the client, the
-// canonical-project check is automatic, and the TOOL DESCRIPTIONS carry the
-// progressive-disclosure ladder (orient with `board_summary` → scan with
-// `list_tasks` → expand with `get_task` → find with `search_tasks`) where the
-// model actually reads it, at every call site, for free.
+// project. Typed tools beat the HTTP docs: `project` is pinned by the client,
+// the canonical-project check is automatic, and the TOOL DESCRIPTIONS carry the
+// progressive-disclosure ladder (`board_summary` → `list_tasks` → `get_task` →
+// `search_tasks`) where the model reads it — unfiltered `GET /api/tasks` is a
+// megabyte of done tasks.
 //
 // Design rules, all load-bearing:
 //   - NO tool takes a `project` argument. See `client.ts`.
-//   - NO tool invents a default the API already has. `list_tasks` forwards only
-//     the args it was given, so the API stays the single source of truth for
-//     "compact fields, active lanes, newest 100" — if that default changes
-//     server-side, the tool follows without a code change here.
-//   - Results are one text block of compact JSON. Agents parse it; a pretty
-//     print would cost tokens for nothing.
+//   - NO tool invents a default the API already has: `list_tasks` forwards only
+//     the args it was given, so the API stays the single source of truth.
+//   - Results are one text block of compact JSON (a pretty print costs tokens).
 //   - HTTP 413 comes back as a NORMAL result (see `client.ts`).
-//
-// Nothing in this module (or the `toolResult.ts` / `tools/` files it composes)
-// imports the rest of the backend beyond `client.ts` — the server runs as its
-// own short-lived process (`server.ts`), spawned by the harness, and must not
-// drag in the task cache, Express, or node-pty.
-//
-// The tools themselves live in `tools/`, one module per tier; this file only
-// fixes their ORDER (which the model sees) and the worktree-session cut.
+//   - Nothing here (or in `toolResult.ts` / `tools/`) imports the backend beyond
+//     `client.ts`: the server is its own short-lived, harness-spawned process
+//     (`server.ts`) and must not drag in the task cache, Express, or node-pty.
+// The tools live in `tools/`, one module per tier; this file only fixes their
+// ORDER (which the model sees) and the worktree-session cut.
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {

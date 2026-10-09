@@ -1,34 +1,22 @@
-// Pre-merge-run insurance: a `git bundle` snapshot of the entire object
-// graph + all refs, written to `~/.lattice/git-backups/<projectHash>/`.
-//
-// This does NOT prevent `.git` damage — the layered guards (worktrees out
-// of the project tree, the projectGit capability whitelist, the run
-// circuit-breaker) do that. It's the "even if all of that is wrong"
-// fallback: a bundle captures local-only branches and commits that a fresh
-// `origin` clone wouldn't have, so recovery becomes
+// Pre-merge-run insurance: a `git bundle` of the entire object graph + all refs
+// in `~/.lattice/git-backups/<projectHash>/`. It does NOT prevent `.git` damage
+// (the layered guards do); it's the "even if all of that is wrong" fallback that
+// keeps local-only branches/commits a fresh `origin` clone wouldn't have:
 //
 //     git init && git fetch <bundle> && git reset --hard <ref>
 //
-// instead of "re-clone from origin and lose whatever wasn't pushed". The
-// file is compact (deduplicated objects, no working tree) and we keep only
-// the most recent few per project.
+// A bundle is roughly the size of the repo's packs (gigabytes on a big repo, one
+// per merge run, and a workflow Merge step loops runs back to back), so
+// retention is bounded by bytes as well as count, old bundles are pruned BEFORE
+// the new one is written (never N+1 on disk), a bundle is skipped when the
+// volume can't hold it above the worktree free-space reserve, and back-to-back
+// runs share one bundle.
 //
-// "Compact" is relative: a bundle is roughly the size of the repo's packs, so
-// on a big repo each one is gigabytes (2026-09-22: 5 × 3.5 GB = 17 GB for one
-// project, a new one per merge run — and a workflow Merge step loops merge
-// runs back to back). Retention is therefore bounded by bytes as well as
-// count, old bundles are pruned BEFORE the new one is written (never N+1 on
-// disk), a bundle is skipped when the volume can't hold it above the
-// worktree free-space reserve, and back-to-back runs share one bundle.
-//
-// `git bundle create <file>` writes through `<file>.lock` and renames it on
-// success. A timeout kill (or a backend death mid-bundle) skips git's lockfile
-// cleanup, and on Windows the orphaned `pack-objects` child can keep writing
-// the whole pack into it — a multi-GB `<ts>.bundle.lock` per failed run that
-// the `.bundle`-only retention never saw (2026-09-25). So a failed bundle
+// `git bundle create <file>` writes through `<file>.lock`; a timeout kill or
+// backend death skips git's lockfile cleanup, and on Windows an orphaned
+// `pack-objects` can keep writing the whole pack into it. So a failed bundle
 // removes its `.lock` too, every backup first sweeps stale leftovers, and a
-// leftover that can't be deleted yet counts toward the byte budget while it
-// is on disk.
+// leftover that can't be deleted yet counts toward the byte budget.
 
 import path from 'node:path';
 import os from 'node:os';

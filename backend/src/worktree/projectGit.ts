@@ -1,29 +1,22 @@
-// Narrowed-capability git wrapper for the *project repo* — the user's
-// actual working directory, as opposed to a disposable Lattice worktree.
+// Narrowed-capability git wrapper for the *project repo* — the user's actual
+// working directory, as opposed to a disposable Lattice worktree. Every
+// `.git`-deletion incident was a recursive filesystem delete (never a git
+// command), so the defence is twofold: (1) never `fs.rm({recursive:true})`
+// anything that could be inside the project (worktrees live outside it — see
+// setup.ts), and (2) never let a *destructive* git subcommand touch the project
+// repo. This module enforces (2); see the root CLAUDE.md defences list.
 //
-// Audit of every `.git`-deletion incident on this project points at exactly
-// one mechanism: a recursive filesystem delete (directly via `fs.rm`, or
-// indirectly via a lost `git stash --include-untracked`) reaching content
-// it shouldn't. No *git command* has ever deleted `.git`. The defence we
-// want is therefore twofold:
-//   1. never run `fs.rm({recursive:true})` on anything that could be
-//      inside the project (handled by relocating worktrees out of the
-//      project tree — see setup.ts), and
-//   2. never let a *destructive* git subcommand touch the project repo.
+// Every git invocation against the project repo goes through `projectGit()`:
+//   - asserts `<repoRoot>/.git` still exists (fail fast, never let git walk up to
+//     a sibling repo's gitdir), and
+//   - validates argv against a whitelist. Anything not on it — `clean`, `stash`,
+//     `reset --hard`, `update-ref -d`, `branch -D` of a non-`lattice/` branch, a
+//     real (non-ff) `merge` in the project tree, `checkout <branch>`, `push`,
+//     `gc`, … — throws *before* git runs.
 //
-// This module enforces (2). Every git invocation against the project repo
-// is supposed to go through `projectGit()`. It:
-//   - asserts `<repoRoot>/.git` still exists (fail fast, never let git
-//     walk up to a sibling repo's gitdir), and
-//   - validates the argv against a whitelist. Anything not on the list —
-//     `clean`, `stash`, `reset --hard`, `update-ref -d`, `branch -D` of a
-//     non-`lattice/` branch, a real (non-ff) `merge` in the project tree,
-//     `checkout <branch>`, `push`, `gc`, … — throws *before* git runs.
-//
-// Disposable worktree checkouts deliberately do NOT go through here: their
-// blast radius is one task's scratch dir, and `mergeWorktreeInRepo` runs a
-// real `git merge` inside them, which this policy (correctly) forbids in
-// the project repo.
+// Disposable worktree checkouts deliberately do NOT go through here: their blast
+// radius is one task's scratch dir, and `mergeWorktreeInRepo` runs a real
+// `git merge` inside them, which this policy (correctly) forbids in the project.
 
 import { exec, type ExecOptions, type ExecResult } from './exec.js';
 import { assertGitDirIntact } from './state.js';

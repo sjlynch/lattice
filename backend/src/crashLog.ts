@@ -1,35 +1,21 @@
-// Persistent crash logging for the two long-lived Node processes (the backend
-// and the detached terminal-server).
-//
-// Before this, a crash left NOTHING behind: the backend's only output is the
-// console of the terminal the user runs `npm run dev` in, and the
-// terminal-server is spawned with `stdio: 'ignore'`, so its output goes nowhere
-// at all. When the backend died mid-session the evidence was gone — no stack,
-// no idea whether it was an exception, an OOM, or an external kill.
-//
-// What this adds, deliberately kept small:
+// Persistent crash logging for the two long-lived Node processes — the backend
+// (output only reaches the user's `npm run dev` console) and the detached
+// terminal-server (`stdio: 'ignore'`). Deliberately small:
 //   - a ring buffer of the last N console lines, so a crash file carries the
 //     context leading up to it rather than just the final stack;
 //   - `~/.lattice/logs/crash-<ts>-<n>-<label>.log` written SYNCHRONOUSLY from the
 //     fatal handler (an async write would not survive the process exiting);
-//   - Node's own diagnostic report on fatal errors, which captures a JS-heap
-//     OOM or a V8 fatal error — neither of which ever reaches an
-//     `uncaughtException` handler;
+//   - Node's diagnostic report on fatal errors — a JS-heap OOM or V8 fatal error
+//     never reaches an `uncaughtException` handler;
 //   - a note on any non-zero exit that didn't already write a crash file, so a
 //     bare `process.exit(1)` is still traceable;
-//   - a periodic mirror of the ring to `live-<label>-<pid>.log`, which is the
-//     ONLY record left by a death that runs no JavaScript at all. Everything
-//     above writes from a handler, and an OS-level kill reaches none of them —
-//     including Node's report, which is a V8 callback and so misses a native
-//     access violation. See crashLog/liveMirror.ts.
-//
-// Everything here is best-effort: logging must never itself take the process
-// down, so every filesystem call is wrapped.
-//
-// The pieces live in crashLog/: liveMirror.ts (the live file and its adoption
-// on the next boot), retention.ts (what we own and how much we keep), format.ts
-// (text helpers). This module owns the ring, the console tee, the crash-file
-// writer and the installer.
+//   - a periodic `live-<label>-<pid>.log` mirror of the ring — the ONLY record of
+//     a death that runs no JavaScript (an OS kill or native access violation
+//     reaches no handler, not even Node's report). See crashLog/liveMirror.ts.
+// Best-effort: logging must never itself take the process down, so every
+// filesystem call is wrapped. crashLog/ holds liveMirror, retention and format;
+// this module owns the ring, console tee, crash-file writer and installer
+// (crashLog/CLAUDE.md).
 
 import { Console } from 'node:console';
 import fs from 'node:fs';

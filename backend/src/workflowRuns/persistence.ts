@@ -1,27 +1,14 @@
-// Durable workflow-run state.
-//
-// Why this exists: a workflow run used to live ONLY in `state.ts`'s in-memory
-// `runs` map. The backend process that owns a run gets restarted routinely —
-// `tsc -w` + the dev runner on any `backend/src` change, a crash, a
-// processGuards fail-fast — and `scripts/dev.mjs` only defers a restart while a
-// per-project `run.lock` is held, which covers CONTROL steps (start/merge/push)
-// and nothing else. During a long **agent** step no lock is held, so a restart
-// there silently evaporated the run:
-//
-//   - `GET /api/workflow-runs/active` returned [] → the navbar run chip vanished
-//     (the observed symptom: "step 4 is in progress but the status is gone").
-//   - The step's agent kept working — its pty lives in the DETACHED
-//     terminal-server, which survives a backend restart — and when it finally
-//     POSTed `/api/workflow-runs/<id>/steps/<n>/complete`, `completeWorkflowStep`
-//     found no run and returned silently. Every remaining step (Start all open
-//     tasks / Merge / Push) never ran.
-//
-// So the run record is now mirrored to disk and re-adopted on boot (see
-// `../recovery/workflowRunResume.ts`). Only `running` runs are kept — a
-// finished run has nothing to resume, so the file shrinks back to empty.
+// Durable workflow-run state: the run record is mirrored to disk and re-adopted
+// on boot (`../recovery/workflowRunResume.ts`). The owning backend restarts
+// routinely (`tsc -w` + the dev runner, a crash, a processGuards fail-fast), and
+// the dev runner defers only while a `run.lock` is held — CONTROL steps only — so
+// during a long agent step an in-memory-only run evaporated: the run chip
+// vanished, and the still-working agent's `/steps/<n>/complete` found no run, so
+// no later step ever ran. Only `running` runs are kept (a finished run has
+// nothing to resume), so the file shrinks back to empty.
 //
 // Storage is HOME-scoped (`~/.lattice/per-project/<hash>/workflow-runs.json`),
-// never inside the project tree: same reasoning as tasks.json (see the
+// never inside the project tree (same reasoning as tasks.json — see the
 // `.git`-deletion defences in the root CLAUDE.md). Writes are debounced and
 // atomic (temp→rename), and every failure here is best-effort — losing the
 // mirror must never break a live run.

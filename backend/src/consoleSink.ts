@@ -1,35 +1,20 @@
 // A stalled console must never be able to freeze the backend.
 //
-// The failure this exists to prevent, observed 2026-08-20: the backend went
-// completely unresponsive — every project stuck on "Scanning…", `/api/health`
-// timing out, agent Stop-hook `curl`s hanging for hours, a merge run's
-// `run.lock` never released — while the process sat at 0% CPU with its TCP
-// listener still accepting connections. The cause was a *text selection* in the
-// `npm run dev` console window:
+// On Windows a QuickEdit text selection in the `npm run dev` console blocks
+// `WriteConsole`; Node makes TTY writes blocking on purpose (`tty.WriteStream`
+// `setBlocking(true)`), so `scripts/orchestrate.mjs` stops draining the
+// `[backend]` pipe; stdio pipe writes are synchronous on Windows too, so once
+// that 64KB buffer fills the backend's next `console.log` blocks its event loop
+// — every request, timer and hook callback with it, at 0% CPU. Nothing inside
+// the process can detect or undo it (`setBlocking(false)` doesn't help; the
+// block is inside the write syscall), so the write must leave the event loop.
 //
-//   1. Windows pauses all output to a console while a QuickEdit selection is in
-//      progress, so `WriteConsole` blocks until the user presses Esc.
-//   2. Node makes TTY writes blocking on purpose (`tty.WriteStream` does
-//      `this._handle.setBlocking(true)` — "prevents interleaved or dropped
-//      output"), so `scripts/orchestrate.mjs` blocked its own event loop there
-//      and stopped draining the `[backend]` pipe.
-//   3. Stdio pipe writes are synchronous on Windows too, so once that pipe's
-//      64KB buffer filled, the backend's next `console.log` blocked its event
-//      loop — every request, timer, socket and hook callback with it.
-//
-// Nothing above is recoverable from inside the process: `setBlocking(false)` on
-// the stdio handle does not help (measured), and the block happens inside the
-// write syscall, so there is no "is it stalled?" to test beforehand. The only
-// fix is to stop performing that write on the event loop at all.
-//
-// So console output goes through an async `fs.write()` — which libuv runs on
-// the thread pool — with at most one write in flight per fd, and a bounded
-// queue behind it. A stalled console now costs log lines, never liveness: the
-// queue fills, the oldest lines are dropped, and a note about how many is
-// printed once output flows again.
-//
-// Deliberately not dev-only: any consumer that stops reading (a `| tee` in a
-// paused shell, a full CI log pipe) is the same trap in production.
+// Console output therefore goes through an async `fs.write()` (libuv thread
+// pool), at most one write in flight per fd, with a bounded queue behind it: a
+// stalled console costs log lines, never liveness — the oldest lines drop and a
+// count is printed once output flows again. Deliberately not dev-only: any
+// consumer that stops reading (a `| tee` in a paused shell, a full CI log pipe)
+// is the same trap in production.
 
 import fs from 'node:fs';
 import { Writable } from 'node:stream';

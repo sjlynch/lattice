@@ -1,13 +1,7 @@
-// Shared z-layer render-order constants for the force-graph scene.
-//
-// Every sprite / ring / line in the file graph renders with `depthTest: false`
-// (see sprites.ts, halo.ts, changeRing.ts, agentOverlay*, …), so three.js paints
-// them purely in `renderOrder` order — renderOrder is the SOLE arbiter of who
-// sits on top, regardless of camera distance or scene-graph parentage. These
-// literals used to be scattered across a dozen modules, reconstructible only by
-// chasing cross-referencing comments ("Match the library's link renderOrder
-// (10)", "Match the sprite renderOrder (12)"). This collects the whole stack in
-// one place so the hierarchy is readable and editable at a glance.
+// Shared z-layer render-order constants for the force-graph scene. Every sprite /
+// ring / line renders with `depthTest: false`, so `renderOrder` is the SOLE
+// arbiter of who sits on top, regardless of camera distance or scene-graph
+// parentage.
 //
 // The full z-order, back (painted first) to front (painted last):
 //
@@ -21,12 +15,9 @@
 //   30  — worktree rings               WORKTREE_RING_RENDER_ORDER
 //   999 — floating-label fallback      FLOATING_LABEL_RENDER_ORDER
 //
-// The two agent-overlay layers shown above at 9 and 14 are NOT defined here —
-// they live in `agentOverlayConstants.ts` (AGENT_GROUP_RENDER_ORDER /
-// BEAM_RENDER_ORDER at 9, LABEL_RENDER_ORDER at 14, both deliberately outside
-// this stack since the overlay group draws below the file bodies but its labels
-// draw just above the agent node). They are listed above for context only; do
-// not duplicate or re-import them here.
+// The parenthesized agent-overlay layers (9, 14) live in
+// `agentOverlayConstants.ts` and are listed for context only — do not duplicate
+// or re-import them here.
 
 // three-forcegraph sets renderOrder = 10 on its per-link THREE.Line objects; the
 // batched LineSegments (instancedLinks.ts) matches it so links always draw behind

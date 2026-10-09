@@ -1,29 +1,25 @@
-// Graph activity for a Codex session the USER launches in an opened project —
-// the sidebar "+" → Codex tab, or a Codex startup terminal — the Codex analogue
-// of projectClaudeHooks.ts.
+// Graph activity for a Codex session the USER launches in an opened project (the
+// sidebar "+" → Codex tab, or a Codex startup terminal) — the Codex analogue of
+// projectClaudeHooks.ts.
 //
-// A Claude session in the project tree picks up Lattice's activity hooks from
-// the project's own `.claude/settings.local.json`. Codex has no such
-// per-project file Lattice can merge into without touching the repo (its cwd
-// `.codex/hooks.json` is a dedicated, often repo-tracked, file), so instead the
-// hooks ride the launch itself: per-invocation `--config hooks.<Event>=[…]`
-// inline-TOML overrides, resolved at the spawn chokepoint
-// (terminalServerClient/createSession.ts) and applied by the terminal-server
-// exactly like the managed MCP overrides. Nothing is written to the repo or to
-// `~/.codex/config.toml`. They post to the same `/api/project-activity/:token`
-// route the Claude hooks do, keyed by the hook body's `session_id` (Codex's
-// hook bodies are Claude-shaped — verified against 0.157: `SessionStart`,
-// `PreToolUse`/`PostToolUse` with `tool_name: "Bash"` + `tool_input.command`).
+// Codex has no per-project file Lattice can merge into without touching the repo
+// (its cwd `.codex/hooks.json` is dedicated, often repo-tracked), so the hooks
+// ride the launch: per-invocation `--config hooks.<Event>=[…]` inline-TOML
+// overrides, resolved at the spawn chokepoint (terminalServerClient/createSession.ts)
+// and applied by the terminal-server like the managed MCP overrides. Nothing is
+// written to the repo or `~/.codex/config.toml`. They post to the same
+// `/api/project-activity/:token` route as the Claude hooks, keyed by the body's
+// `session_id` (Codex hook bodies are Claude-shaped — verified on 0.157:
+// `SessionStart`, Pre/PostToolUse with `tool_name: "Bash"` + `tool_input.command`).
 //
-// Codex only runs a hook it hasn't reviewed with `--dangerously-bypass-hook-
-// trust`, so the launch also gets that flag — the same one every other
-// Lattice-spawned Codex already carries (agentCommandBuilder.ts). A config-layer
-// `hooks.<Event>` override replaces that event's hooks from the user's
-// `~/.codex/config.toml` for this session; a repo's `.codex/hooks.json` is a
-// separate source and still loads.
+// Codex runs an unreviewed hook only with `--dangerously-bypass-hook-trust`, so
+// the launch gets that flag too (as every Lattice-spawned Codex does —
+// agentCommandBuilder.ts). A config-layer `hooks.<Event>` override replaces that
+// event's hooks from the user's `~/.codex/config.toml` for this session; a repo's
+// `.codex/hooks.json` is a separate source and still loads.
 //
 // Scope: user/startup tabs only, cwd inside the project and not a Lattice
-// scratch/worktree dir — task agents, workflow steps, push/QA/post-merge runs
+// scratch/worktree dir — task agents, workflow steps and push/QA/post-merge runs
 // already get their own `.codex/hooks.json` activity hooks.
 
 import {

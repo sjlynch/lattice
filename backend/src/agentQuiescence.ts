@@ -1,31 +1,23 @@
-// Per-agent-session "is it still working?" tracker.
+// Per-agent-session "is it still working?" tracker, consumed by the workflow
+// Stop-hook completion gate (`workflowRuns/stopHookGate.ts`). Claude's `Stop`
+// hook is NOT a reliable "completely done" signal when the session uses the
+// Task tool: it fires early and more than once, sometimes while a subagent is
+// still running. Lattice already receives every PreToolUse/PostToolUse/
+// SubagentStart/SubagentStop hook (they drive the graph's beams + satellites), so
+// quiescence can be judged independently of the racy Stop.
 //
-// Claude's `Stop` hook is NOT a reliable "the agent is completely done"
-// signal when the session uses the Task tool (subagents): it fires early and
-// more than once, sometimes while a subagent is still running and seconds
-// before the session actually ends. (Reproduced against Claude Code 2.1.218;
-// see the workflow Stop-hook completion gate in
-// `workflowRuns/stopHookGate.ts`, which consumes this.) Lattice already
-// receives every one of a session's PreToolUse/PostToolUse/SubagentStart/
-// SubagentStop hooks (they drive the graph's focus beams + satellites), so we
-// can tell whether the session is quiescent independent of the racy Stop.
+// The minimal per-session state a completion gate needs:
+//   - liveSubagents — Task subagents in flight; a Stop while > 0 is premature.
+//     Tracked by Claude's `agent_id`, NOT a bare counter: interactive Claude Code
+//     also fires SubagentStop for internal helper agents that never had a
+//     SubagentStart, and as a counter each stray stop cancelled a real
+//     subagent's start, so a workflow step advanced (and was killed) mid-work.
+//   - lastSignalAt  — the last time we saw ANY signal (tool use, subagent
+//     start/stop, or a Stop fed in by the gate). Quietness is measured from here:
+//     a finished agent stops emitting, so a long-enough gap is safe to advance.
 //
-// This module keeps the minimal per-session state a completion gate needs:
-//   - liveSubagents — how many Task subagents are currently in flight. A Stop
-//     that arrives while this is > 0 is unambiguously premature. Tracked by
-//     Claude's `agent_id`, not as a bare counter: interactive Claude Code also
-//     fires SubagentStop for its own internal helper agents, which never had a
-//     SubagentStart (seen on 2.1.280, 2026-09-23). As a counter, each stray stop
-//     cancelled a real background subagent's start, the gate saw 0 live while
-//     two Explore agents were still working, and the workflow step advanced
-//     and was killed before its agent could file a single task.
-//   - lastSignalAt  — the last time we saw ANY signal for the session (a tool
-//     use, a subagent start/stop, or a Stop fire fed in by the gate). Quietness
-//     is measured from here: an agent that is genuinely finished stops emitting
-//     signals, so a long-enough gap means it is safe to advance.
-//
-// Deliberately generic (keyed by the caller's `agentId`) and side-effect-free
-// so it stays trivially unit-testable and reusable by any Stop-hook consumer.
+// Deliberately generic (keyed by the caller's `agentId`) and side-effect-free,
+// so it stays unit-testable and reusable by any Stop-hook consumer.
 
 import { registerMemGauge } from './memDiag/gauges.js';
 

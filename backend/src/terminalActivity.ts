@@ -1,35 +1,21 @@
 // "Is the agent in this terminal still working?" — the signal behind the
-// sidebar's per-tab spinner (`/ws/terminal-activity`).
+// sidebar's per-tab spinner (`/ws/terminal-activity`). Derived here, not in the
+// frontend: panes lazy-mount, so an un-clicked tab (the "Run All" case the
+// spinner exists for) has no WebSocket; only the terminal-server sees every pty.
+// It polls because the detached terminal-server has no event channel back; one
+// poll serves every browser tab and project, and runs only while subscribed.
 //
-// WHY IT LIVES HERE (and not in the frontend): the sidebar lazy-mounts a
-// `TerminalPane` only after a tab is first activated, so an un-clicked tab has
-// no WebSocket and the frontend sees none of its output. That is exactly the
-// case the spinner exists for — "Run All" spawns a dozen agent tabs and you want
-// to know which are still going WITHOUT opening each one. The only vantage point
-// that sees every pty is the terminal-server, so the answer is derived here.
-//
-// WHY IT POLLS: the ptys live in the DETACHED terminal-server process, which has
-// no event channel back into this one. One poll here serves every browser tab
-// and every project, and it only runs while at least one client is subscribed.
-//
-// Codex reports its explicit turn status in the terminal title. Printable
-// output cannot classify it: its welcome screen animates at an empty prompt.
-// Claude and Pi use the sustained printable-output heuristic below. The
-// terminal-server preserves lastOutputAt for existing liveness consumers.
-//
-// It is SUSTAINED output, not merely recent output. A full-screen TUI also
-// redraws for reasons that have nothing to do with the agent working, and the
-// sidebar itself provokes them: switching tabs blurs one xterm and focuses
-// another, which xterm reports to the pty as a focus escape (`ESC [ O` /
-// `ESC [ I`), and every harness answers with a redraw. Recency alone therefore
-// lit the spinner on the tab you just LEFT every time you opened a new one —
-// for the whole idle window, on an agent that had been parked at its prompt for
-// minutes. A redraw is one short burst; working is a continuous stream. See
-// TERMINAL_BUSY_MIN_RUN_MS.
+// Codex reports its explicit turn status in the terminal title (printable output
+// can't classify it: its welcome screen animates at an empty prompt). Claude and
+// Pi use SUSTAINED printable output, not merely recent output: a full-screen TUI
+// also redraws for non-work reasons — switching tabs sends xterm focus escapes
+// (`ESC [ O` / `ESC [ I`) and every harness redraws, so recency lit the tab you
+// just LEFT. A redraw is one short burst; working is a continuous stream (see
+// TERMINAL_BUSY_MIN_RUN_MS). The terminal-server preserves lastOutputAt for
+// existing liveness consumers.
 //
 // Only harness sessions are reported: a plain shell or a `npm run dev` startup
-// terminal streams output for as long as it lives and would pin the spinner on
-// forever.
+// terminal streams output for as long as it lives and would pin the spinner on.
 
 import { agentHarnessForCommand } from './harnesses.js';
 import { proxyListSessionsShared } from './terminalServerClient.js';

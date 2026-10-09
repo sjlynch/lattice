@@ -1,36 +1,27 @@
-// Merge to free disk when task runs are waiting on it.
-//
-// A ready_to_merge task keeps its worktree (a full checkout) until it merges,
-// so on a big repo parked tasks are what fills the disk — and the worktree
-// disk guard (worktree/diskSpace.ts) then holds every further run in the spawn
-// queue. When nothing else is going to merge them (a manual "Run All"), those
-// runs would wait forever. So a disk deferral asks for a merge run of the
-// project: the same `startMergeRun` the "Merge All" button uses. Each merged
-// task's worktree cleanup then wakes the deferred runs
-// (`notifyDiskSpaceFreed`).
+// Merge to free disk when task runs are waiting on it. Parked ready_to_merge
+// worktrees (full checkouts) are what fills a big repo's disk; the worktree disk
+// guard (worktree/diskSpace.ts) then holds every further run in the spawn queue
+// — forever, if nothing merges them. So a disk deferral asks for the same
+// `startMergeRun` "Merge All" uses; each merged task's cleanup wakes the
+// deferred runs (`notifyDiskSpaceFreed`).
 //
 // Deliberately narrow. It does nothing when:
 //   - `globalSettings.autoMergeOnLowDisk === false` (opt-out);
 //   - a merge run is already active for the project;
-//   - a workflow run is active for the project — its own Merge control step
-//     merges, and a second merge run would contend for the project run-lock;
+//   - a workflow run is active — its own Merge control step merges, and a
+//     second merge run would contend for the project run-lock;
 //   - a post-merge hook is still running (same 409 the Merge All route gives);
 //   - nothing is ready_to_merge (In Progress checkouts can only be waited out);
-//   - free space is under the merge floor (`MERGE_MIN_FREE_BYTES`) — such a run
-//     can only halt on its first task, while writing to a nearly full disk;
-//   - the Ready-to-Merge set is unchanged since the last run it started, i.e.
-//     that run moved nothing (disk-halted, or every task errored/conflicted).
-//     Re-running would do the same thing every throttle window forever, so it
-//     holds until the set changes, free space drops under the floor and comes
-//     back, or a backoff (15 min doubling to 2 h) expires.
-// Attempts are throttled per project, since every deferred run re-checks disk
-// on its backoff.
-//
-// Two triggers: a task run deferred for disk (the spawn path), and the
-// low-disk monitor below — free space under the reserve with nothing waiting.
-// The second exists because of 2026-09-24: 22 Ready-to-Merge worktrees sat on
-// a disk that other writers then filled to zero, and nothing merged them until
-// a merge run started with no space left and failed all 22.
+//   - free space is under `MERGE_MIN_FREE_BYTES` — such a run can only halt on
+//     its first task, while writing to a nearly full disk;
+//   - the Ready-to-Merge set is unchanged since the last run it started (that
+//     run moved nothing; re-running would repeat every throttle window) — held
+//     until the set changes, free space drops under the floor and comes back,
+//     or a backoff (15 min doubling to 2 h) expires.
+// Attempts are throttled per project (every deferred run re-checks disk on its
+// backoff). Two triggers: a task run deferred for disk, and the low-disk monitor
+// below — free space under the reserve with nothing waiting, so parked worktrees
+// get merged before other writers fill the disk and no merge can run at all.
 
 import { canonicalProjectPath, homeWorktreesDir } from './projectPath.js';
 import { getGlobalSettings } from './globalSettings.js';

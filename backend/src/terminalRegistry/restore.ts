@@ -1,14 +1,12 @@
-// Rebuild a project's terminal tabs after a backend restart, a browser
-// restart, a `Ctrl+C` of the dev server, or a reboot. Triggered on project
-// open (`POST /api/terminal-tabs/restore`) and by the sidebar's "Restore tabs"
-// button. Single-flighted per project — including while its relaunches are
-// still in flight, so an overlapping pass can never double-spawn a tab.
+// Rebuild a project's terminal tabs after a backend/browser restart, a `Ctrl+C`
+// of the dev server, or a reboot — on project open
+// (`POST /api/terminal-tabs/restore`) and via the sidebar's "Restore tabs"
+// button. Single-flighted per project, including while its relaunches are still
+// in flight, so an overlapping pass can never double-spawn a tab.
 //
-// Per candidate record — the non-ended ones, plus (only for an explicit
-// "Restore tabs" click, `retryFailed`) the ended-but-retryable ones: a tab
-// whose relaunch failed or whose cwd was missing gets another go once the user
-// asks, never on every project open (that re-reported the same drop forever).
-// In tab order:
+// Candidates: the non-ended records, plus — only for an explicit "Restore tabs"
+// click (`retryFailed`) — ended-but-retryable ones (relaunch failed / cwd
+// missing; retrying on every open re-reported the same drop forever). In tab order:
 //   1. its pty id is live                    → ADOPT (nothing to do)
 //   2. an unclaimed live AGENT pty in the same cwd running the same harness
 //                                            → ADOPT it (record lost its id)
@@ -16,20 +14,14 @@
 //   4. otherwise                             → RELAUNCH, if the owner allows:
 //        user  — cwd must still exist
 //        task  — task still in_progress + worktree present
-//        merge — never: a dead resolver is ended silently. The merge-run
-//                recovery (`resumeInterruptedMergeRuns` → respawn) and a
-//                re-clicked manual merge spawn their own resolver, and a
-//                relaunch racing either would put two Claudes on one conflict.
-//                A resolver pty that is still alive is adopted like any other.
-//        startup — never: the record is ended so useStartupTerminals reseeds
-//                a fresh one from the settings (a dead startup record would
-//                otherwise linger as a dead tab beside the fresh one)
+//        merge — never (ended silently): merge-run recovery and a re-clicked
+//                manual merge spawn their own resolver; a racing relaunch would
+//                put two Claudes on one conflict. A live resolver pty is adopted.
+//        startup — never: ended so useStartupTerminals reseeds a fresh one
 //        one-shot runs — never (their own recovery owns them) → ended
-//
-// Relaunches go through the spawn queue at batch priority so 40 tabs come
-// back gradually under `maxConcurrentAgents`; the summary returns at once and
-// each outcome lands as a `restored` / `restore-failed` event on
-// `/ws/terminal-tabs`. The relaunch itself lives in `restoreRelaunch.ts`.
+// Relaunches (`restoreRelaunch.ts`) go through the spawn queue at batch priority
+// (under `maxConcurrentAgents`); the summary returns at once and each outcome
+// lands as a `restored` / `restore-failed` event on `/ws/terminal-tabs`.
 
 import fs from 'node:fs/promises';
 import { agentHarnessForCommand } from '../harnesses.js';

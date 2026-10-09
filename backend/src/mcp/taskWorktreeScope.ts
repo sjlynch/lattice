@@ -1,40 +1,25 @@
 // Task-worktree MCP scope: a task agent (run/resume) or a merge-conflict
-// resolver working in a task's worktree gets ONLY Lattice's own `lattice` MCP
-// server, not every server the project enabled. Per-project setting
-// `taskAgentsLatticeMcpOnly` (default ON). The point is process count: each
-// idle stdio server is a `cmd /c` + conhost + node/uv tree (~100–180 MB), per
-// agent, so a "Run All" of eight agents with Playwright + Blender on was
-// ~3 × 8 idle servers doing nothing.
+// resolver in a task's worktree gets ONLY Lattice's own `lattice` MCP server
+// (per-project `taskAgentsLatticeMcpOnly`, default ON) — each idle stdio server
+// is a ~100–180 MB process tree per agent. Contract: mcp/CLAUDE.md →
+// "Task-worktree scope".
 //
 // Decided at the spawn chokepoint (`terminalServerClient/createSession.ts`
 // `resolveHarnessSpawnBody`) from three facts, ALL required:
-//   1. the spawn site said so — `CreateSessionOptions.mcpScope = 'task-worktree'`
-//      (task run/resume, the manual + merge-run WORKTREE resolvers; never the
-//      stash/snapshot resolvers, which run at the project root);
+//   1. `CreateSessionOptions.mcpScope = 'task-worktree'` (task run/resume, the
+//      manual + merge-run WORKTREE resolvers; never the stash/snapshot
+//      resolvers, which run at the project root);
 //   2. the project setting is on;
 //   3. the cwd is under `~/.lattice/worktrees/` — a hard guard so the restricted
-//      set can never be applied at a project root, where the Claude reconcile
-//      writes the user's own persisted `projects[<root>].mcpServers`.
-//
-// Per harness:
-//   - Claude: the resolved (lattice-only) set also goes to the usual
-//     `projects[<cwd>].mcpServers` reconcile, AND the command gets
-//     `--strict-mcp-config --mcp-config=<file>` so user-scope (`~/.claude.json`
-//     top-level) and project `.mcp.json` servers are ignored too. Added in the
-//     BACKEND, like `--session-id`: a stale terminal-server executor would
-//     ignore a new wire field. The file lives in home scratch, so a relaunch
-//     (`claude --resume`) finds it — and a relaunch re-enters the chokepoint
-//     with the persisted scope anyway, rewriting it.
-//   - Codex: the `-c` MCP overrides carry only the lattice server, preceded by
-//     `mcp_servers.<name>.enabled=false` for each server the user's own
-//     `config.toml` files define. (`-c mcp_servers={}` does NOT work: Codex
-//     merges the whole `-c` layer over config.toml, so an empty table removes
-//     nothing — verified on codex-cli 0.155.1. A disable for a name Codex does
-//     not know fails startup with "invalid transport", so only names actually
-//     found in a config file are disabled.)
-//   - Pi: `.pi/mcp.json` gets only the lattice server. pi-mcp-adapter also
-//     merges global/user MCP files Lattice does not own, with no off switch, so
-//     Pi is only restricted for Lattice-managed servers.
+//      set never lands at a project root, where the Claude reconcile writes the
+//      user's own persisted `projects[<root>].mcpServers`.
+// Claude also gets `--strict-mcp-config --mcp-config=<file>`, appended in the
+// BACKEND (a stale terminal-server executor ignores new wire fields); the file
+// is in home scratch so `claude --resume` finds it. Codex's `-c` overrides carry
+// only lattice, after `enabled=false` for each server the user's `config.toml`
+// files name (`-c mcp_servers={}` removes nothing; disabling an unknown name
+// fails startup). Pi restricts only Lattice-managed servers (pi-mcp-adapter
+// merges user MCP files with no off switch).
 
 import crypto from 'node:crypto';
 import fs from 'node:fs/promises';

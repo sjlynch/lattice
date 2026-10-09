@@ -1,44 +1,24 @@
 // Pure decision layer for re-adopting a persisted workflow run after a backend
-// restart. Kept free of IO so the policy is unit-testable; the IO wrapper lives
-// in `../recovery/workflowRunResume.ts`.
+// restart — IO-free so the policy is unit-testable; the IO wrapper is
+// `../recovery/workflowRunResume.ts`. Phase rules: workflowRuns/CLAUDE.md →
+// "Surviving a restart".
 //
-// The three outcomes exist because a restart lands a run in one of three very
-// different states:
+//   readopt    — AGENT step whose pty is alive (ptys live in the detached
+//                terminal-server): restoring the record is enough; its /complete
+//                then advances the run as if nothing happened.
+//   redispatch — CONTROL step (start/merge/push): it ran inside the backend, so
+//                no callback is coming. Control steps are re-runnable (the
+//                property `resumeInterruptedMergeRuns` relies on) — run it again.
+//   error      — agent step whose session is gone: we can't know whether it
+//                finished, and silently re-running or advancing are both worse
+//                than an errored run the user can act on (never left hanging).
+//   advance    — RUN TESTS ('test') step whose session is gone: it never stops
+//                the workflow (D4), so the step is noted and the run moves on.
+//                (Otherwise it re-adopts / re-dispatches exactly like 'agent'.)
 //
-//   readopt    — the current step is an AGENT step whose pty is still alive.
-//                PTYs live in the detached terminal-server and survive a
-//                backend restart, so the agent is still working and will POST
-//                /complete when it stops. Restoring the run record is all that
-//                is needed: the callback then advances the run exactly as if
-//                nothing had happened. THIS is the case that strands a run
-//                today (observed: a 7-step workflow lost at step 4/7 while its
-//                Documentation agent was still running).
-//   redispatch — the current step is a CONTROL step (start/merge/push). Those
-//                execute inside the backend process, so the restart killed the
-//                worker outright and no callback is ever coming. They are
-//                written to be re-runnable (Start re-scans Open tasks, Merge
-//                re-scans Ready-to-Merge, Push re-scans + respawns), which is
-//                the same property `resumeInterruptedMergeRuns` relies on — so
-//                run the step again.
-//   error      — the current step is an agent step whose session is gone. The
-//                agent exited while nobody was listening; we cannot know
-//                whether it finished its work, and silently re-running a
-//                completed 20-minute refactor step (or silently advancing past
-//                an unfinished one) are both worse than telling the user. Mark
-//                the run errored so the UI surfaces a failed run they can act
-//                on instead of one that hangs forever.
-//
-//   advance    — a RUN TESTS ('test') step whose session is gone. Run tests is
-//                an agent step (readopt / pending-redispatch exactly like
-//                'agent'), but it never stops the workflow (D4): instead of
-//                erroring, the step is noted ("its terminal did not survive a
-//                restart") and the run moves on. Re-running it is the next
-//                workflow's job.
-//
-// `stepSessionAlive: null` means "the terminal-server could not be probed" —
-// deliberately treated as readopt, not error: a transient probe failure must
-// never kill a healthy run (same "can't tell ≠ empty" rule the spawn queue and
-// the recovery sweeps follow).
+// `stepSessionAlive: null` ("terminal-server could not be probed") readopts,
+// never errors: a transient probe failure must not kill a healthy run (the same
+// "can't tell ≠ empty" rule the spawn queue and recovery sweeps follow).
 
 import path from 'node:path';
 import type { WorkflowStepKind } from '../workflows.js';

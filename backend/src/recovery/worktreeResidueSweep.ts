@@ -1,46 +1,25 @@
-// Reclaim residue left under `~/.lattice/worktrees/<hash>/` by a
-// `git worktree remove --force` that failed part-way.
+// Reclaim residue under `~/.lattice/worktrees/<hash>/` from a part-failed
+// `git worktree remove --force`: on Windows a locked file (a pnpm hard link to a
+// running `esbuild.exe` / `rollup.*.node`, a dev server that outlived its pty)
+// stops git AFTER it dropped the registration and `.git` file, leaving a dir
+// neither `cleanupWorktreeForTask` nor `sweepOrphanedWorktrees` ever revisits. A
+// locked entry sorting before `.git` leaves the `.git` FILE pointing at a gone
+// admin dir — residue too.
 //
-// On Windows git cannot delete a file that is locked — a pnpm hard link to a
-// running `esbuild.exe` / `rollup.*.node` (any vite/esbuild process anywhere on
-// the machine pins those in EVERY checkout), or a file held by a dev server /
-// vitest started from the worktree that outlived its pty. `git worktree
-// remove` stops at the first such file ("Invalid argument"), reports failure,
-// and — git's documented behaviour — has already deleted the worktree's
-// registration and `.git` file. Everything sorting after the locked file
-// survives: `packages/`, `src/`, … not just `node_modules`. The directory is
-// now invisible to `git worktree list`, so neither `cleanupWorktreeForTask`
-// (which preserves unregistered directories) nor `sweepOrphanedWorktrees`
-// (which walks registrations) ever looks at it again: 573 such directories
-// piled up for one project by 2026-09-22.
-//
-// git deletes in directory order, so when the locked entry sorts BEFORE `.git`
-// (something under `.claude/` or `.codex/`) the `.git` FILE survives while the
-// admin dir `<commonDir>/worktrees/<id>` it points at is already gone. That
-// marker names nothing any more, so it counts as residue too (below).
-//
-// Deliberately narrow — the only thing removed is a direct child of the
-// project's home worktrees dir that
+// Deliberately narrow — removes only a direct child of a KNOWN project's home
+// worktrees dir that
 //   - git has no registration for (re-read immediately before the delete),
 //   - no in_progress / ready_to_merge / queued task records as its worktree,
 //   - no live pty sits in,
 //   - is not a reparse point and has no `.git` marker — or only a `.git` FILE
 //     whose `gitdir:` names a `<commonDir>/worktrees/<id>` of THIS repo that no
-//     longer exists, while the common dir itself is intact (re-checked
-//     immediately before the delete), and
-//   - has not been touched for RESIDUE_MIN_AGE_MS (git's failed remove touched
-//     it, so this measures time since the failure).
-// i.e. it is no checkout at all: git already gave it up, and cleanup archived
-// its uncommitted edits before calling `git worktree remove`. Removal is
-// guarded like every other scratch delete (reparse-point check + internal
-// junction pruning first). Nothing outside `~/.lattice/worktrees/<hash>/` of a
-// KNOWN project is ever considered — hash dirs of unknown projects and the
-// legacy in-project `<repo>/.lattice/worktrees` are left alone.
-//
-// A file that is still locked makes `fs.rm` fail after deleting around it; the
-// dir then backs off (in memory, exponential) before the next attempt. Passes
-// run at boot (`sweepOrphanedWorktrees`), every 30 min and on a disk wait
-// (`worktreeResidueSweepLoop.ts`).
+//     longer exists, while the common dir is intact (re-checked before delete),
+//   - is untouched for RESIDUE_MIN_AGE_MS (since git's failed remove).
+// i.e. no checkout at all (cleanup archived its edits before the remove).
+// Deletes are guarded like every scratch delete (reparse-point check + junction
+// pruning first); a still-locked dir backs off in memory. Never touches unknown
+// projects' hash dirs or legacy `<repo>/.lattice/worktrees`. Schedule + rules:
+// recovery/CLAUDE.md → "Worktree residue sweep".
 
 import fs from 'node:fs/promises';
 import path from 'node:path';

@@ -1,35 +1,18 @@
-// Timeline change-rings used to be updated via `graph.refresh()`, which
-// re-runs `nodeThreeObject` for *every* node — for a 1000-file project that
-// meant 1000+ fresh sprite allocations on every scrubber notch that flipped
-// the change set, even though a single commit usually touches a handful of
-// files.
+// Timeline change rings as a delta, not `graph.refresh()` (which rebuilds every
+// node's sprite on each scrubber notch that flips the change set).
+// `applyChangeRingDelta` diffs the previous change map against the next and, for
+// only the affected paths, toggles the change-ring sibling child through
+// `__threeObj` (`setNodeChangeRing`): O(|changed|) mutations plus one O(N)
+// path→object scan. Mirrors `selectionHaloSync` and `labelSync`.
 //
-// `applyChangeRingDelta` instead diffs the previous change map against the
-// next one, walks only the affected rel-paths, reaches through the library's
-// `__threeObj` binding, and toggles the change-ring sibling child via
-// `setNodeChangeRing`. Cost is O(|changed paths|) ring mutations plus one
-// O(N) node scan to resolve paths → mounted objects — the expensive part (the
-// per-node sprite/texture rebuild) is gone. Mirrors `selectionHaloSync` and
-// `labelSync`.
-//
-// It also flips ghost-node visibility for the same affected paths: a deleted
-// file's ghost disc is built once by `nodeObjectFactory`, but it should only
-// show while its path is in the active change map. The full-refresh path used
-// to re-run `nodeVisibility` for that; with the refresh gone, the delta does
-// it directly for the paths whose presence changed (see `useGraphFilter` — its
+// It also flips ghost (deleted-file) disc visibility for those paths — a ghost
+// shows only while its path is in the active change map (`useGraphFilter`'s
 // accessor still reads the live map for genuine refreshes / data swaps).
-//
-// A ghost's LINK has to move with it. `linkVisibility` is only consulted by the
-// library's digest — which is exactly what this delta exists to avoid — so
-// hiding the ghost disc on its own left the line to its parent directory still
-// drawn: a connector dangling into empty space once the scrubber moved past the
-// deletion commit. Both link renderers are therefore synced alongside the node:
-// the library's per-link object (`__lineObj`) directly, and the batched
-// `LineSegments` (which captured its visible set at its last rebuild) via a
-// re-capture. Conversely, a ghost the delta can't *show* — because some earlier
-// `graph.refresh()` ran while it was out of the window, and the digest drops
-// filtered-out nodes from the scene entirely — falls back to a refresh, since
-// there's no mounted object left to toggle back on.
+// `linkVisibility` is only consulted by the digest this delta avoids, so a
+// ghost's link is synced with it in both renderers — `__lineObj` directly, the
+// batched `LineSegments` via re-capture — or its connector dangles. A ghost the
+// delta can't show (an earlier refresh dropped it from the scene while filtered
+// out) falls back to a refresh. Rules: forceGraph/CLAUDE.md → "Scene & data".
 
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import type * as THREE from 'three';

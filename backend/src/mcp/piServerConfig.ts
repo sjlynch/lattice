@@ -1,33 +1,26 @@
-// Pi config shaping: turn a resolved catalog entry into a `pi-mcp-adapter`
-// server config (the `mcpServers` value written to `<cwd>/.pi/mcp.json`) plus
-// the secret env the child pty carries. Pure — no I/O. The Pi analogue of
+// Pi config shaping: a resolved catalog entry → a `pi-mcp-adapter` server config
+// (the `mcpServers` value written to `<cwd>/.pi/mcp.json`) plus the secret env
+// the child pty carries. Pure — no I/O. The Pi analogue of
 // `claudeServerConfig.ts` / `codexServerConfig.ts`.
 //
-// Mechanism (see mcp/CLAUDE.md + the migration in plans/): Pi has no native MCP.
-// Lattice loads the third-party `pi-mcp-adapter` (a private, Lattice-owned
-// install — never the user's global Pi config) which auto-discovers standard MCP
-// config files, `<cwd>/.pi/mcp.json` among them (`{"mcpServers":{…}}`). Both the
-// extension shim and the config file are dropped into the Lattice-spawned Pi
-// session's cwd (cwd-exact discovery, like the pi-subagents shim). No command
-// rewriting is needed.
+// Pi has no native MCP: Lattice loads `pi-mcp-adapter` (a private, Lattice-owned
+// install — never the user's global Pi config), which auto-discovers
+// `<cwd>/.pi/mcp.json`; the shim and config are dropped into the spawned Pi
+// session's cwd (cwd-exact discovery), so no command rewriting is needed. See
+// mcp/CLAUDE.md.
 //
-// Secret transport:
-//   - stdio secret env → VALUE rides only in the pty env (returned here as
-//     `env`) and is OMITTED from the JSON file. The adapter's `resolveEnv` copies
-//     the child's `process.env` before applying per-server `env`, so the MCP
-//     child inherits it (same as before).
-//   - HTTP header secret → the adapter DOES interpolate `${VAR}` / `$env:VAR` in
-//     `headers` (and `env`, `url`, `bearerToken`, `cwd`). So a secret header is
-//     written as a `${VAR}` REFERENCE (never the literal) with the VALUE in the
-//     pty env — lifting the prior `pi-mcp-extension` limitation where secret
-//     headers had to be dropped.
+// Secret transport — a secret VALUE is never written to the JSON file:
+//   - stdio secret env → the value rides only in the pty env (returned as `env`);
+//     the adapter's `resolveEnv` copies the child's `process.env` before
+//     per-server `env`, so the MCP child inherits it.
+//   - HTTP header secret → written as a `${VAR}` REFERENCE (the adapter
+//     interpolates `${VAR}` / `$env:VAR` in `headers`, `env`, `url`,
+//     `bearerToken`, `cwd`) with the value in the pty env.
 //
-// `directTools: true` registers each server's tools as individual Pi tools
-// (alongside `read`/`bash`/…) rather than behind the adapter's single `mcp()`
-// proxy — parity with the direct-tool exposure Lattice Pi sessions had before,
-// and the most reliable path for an autonomous agent (no need to know the proxy
-// convention). `lifecycle: 'eager'` so servers connect at session start and
-// their tool metadata is available immediately (a cold worktree has no cache).
+// `directTools: true` registers each server's tools as individual Pi tools, not
+// behind the adapter's single `mcp()` proxy — most reliable for an autonomous
+// agent (no proxy convention to know). `lifecycle: 'eager'` connects at session
+// start so tool metadata is available immediately (a cold worktree has no cache).
 
 import type { McpServerEntry } from './catalog.js';
 import { platformizeCommand } from './claudeInject.js';

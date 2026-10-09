@@ -1,61 +1,26 @@
-// Reference-counted controller around 3d-force-graph's pauseAnimation /
-// resumeAnimation. The library otherwise runs a continuous RAF render loop
-// even with a fully settled scene — burning 20–30% CPU on a focused tab.
+// Reference-counted render-on-demand gate around 3d-force-graph's
+// pauseAnimation/resumeAnimation — the library otherwise renders every frame of
+// a settled scene (20–30% CPU). Rules: forceGraph/CLAUDE.md → "Render loop".
 //
-// Animation runs while any "reason" is held:
-//   - `engine`        : the d3 force simulation is still hot. Acquired on
-//                       data load / physics reheat, released by
-//                       `graph.onEngineStop`.
-//   - `interact`      : the user is moving / clicking / scrolling on the
-//                       canvas. Auto-released after a short idle.
-//   - `refresh`       : `graph.refresh()` was just called — drives a few
-//                       frames so the new `nodeThreeObject` results paint
-//                       and the raycaster re-evaluates hover.
-//   - `labelPhysics`  : an overlay (LOC / health / labels) is running its
-//                       per-frame repulsion loop. Acquired/released by the
-//                       owning hook.
-//   - `agents`        : the Agent Presence Layer (Claude presence nodes +
-//                       focus beams) has self-driven motion to paint — a node
-//                       easing, the hover line settling, or a beam fading. Held
-//                       by `useAgentOverlay` ONLY while `AgentOverlay.tick`
-//                       reports motion, NOT for an agent's whole lifetime, so a
-//                       settled-but-still-running agent lets the loop idle. (It
-//                       used to be held while any agent existed — the
-//                       render-on-demand regression this file's contract now
-//                       guards against.)
-//   - `halo`          : the selection-halo pulse is animating. Held by
-//                       `useSelectionHaloPulse` while (and only while) a
-//                       selection exists, so the shared ring material can be
-//                       re-tinted each frame; released when the selection
-//                       clears so the loop suspends.
+// The loop runs while any reason is held:
+//   - `engine`: sim hot; acquired on data load/reheat, released by `onEngineStop`.
+//   - `interact`: pointer activity on the canvas; auto-released after idle.
+//   - `refresh`: a few frames after `graph.refresh()` so new `nodeThreeObject`s
+//     paint and hover re-raycasts.
+//   - `labelPhysics`: an overlay's per-frame repulsion loop (owning hook).
+//   - `agents`: APL motion. `useAgentOverlay` holds it ONLY while
+//     `AgentOverlay.tick` reports motion, never for an agent's lifetime (that
+//     kept a settled agent's scene rendering).
+//   - `halo`: selection-halo pulse; held only while a selection exists.
+// A hidden tab or collapsed (0×0) container pauses regardless. When only the
+// slow reasons (`agents`/`labelPhysics`/`halo`) are held, the loop is
+// duty-cycled to ~SLOW_FPS via pause/resume, fed by `notifyFrameRendered`
+// (wired to the scene frame driver at init).
 //
-// Tab visibility is a negative gate: when the tab is hidden the loop is
-// fully paused regardless of held reasons. So is a collapsed (0×0) container —
-// the graph hidden behind a full-width terminal sidebar.
-//
-// Frame-rate throttle: when the ONLY held reasons are the slow self-animations
-// (`agents`, `labelPhysics`, and/or the selection-halo `halo` pulse) — i.e. no
-// `engine` warmup, `interact`, or `refresh` tail demanding full responsiveness
-// — the loop is duty-cycled down to ~SLOW_FPS via pause/resume. Those
-// eases/fades/pulses read fine at a reduced rate,
-// so this roughly halves the full-scene render cost while an agent is active or
-// a label overlay is held, without affecting interaction or layout warmup. Fed
-// one frame at a time by `notifyFrameRendered` (wired to the scene frame
-// driver at init).
-//
-// This file is the orchestrator; the moving parts live in focused siblings:
-//   - `idleControllerReasons.ts`  — the reference-counted reason ledger.
-//   - `idleControllerLoop.ts`     — the pause/resume duty-cycle scheduler
-//                                    (the load-bearing RAF-recursion + deferred
-//                                    -pause semantics).
-//   - `idleControllerEngine.ts`   — the `engine` reason + its safety timer.
-//   - `idleControllerInteract.ts` — the `interact` reason + pointer DOM wiring.
-// The orchestrator holds the tab-visibility gate, the trivial counter reasons
-// (`labelPhysics` / `agents`) and the `refresh` tail, and wires it all together.
-//
-// The controller is attached to the graph instance as `__idleController`
-// so utilities like `clearLabelsAndRefresh` and the overlay RAF loops can
-// reach it without threading another ref through every hook.
+// Split: `idleControllerReasons` (ledger), `idleControllerLoop` (duty-cycle
+// scheduler; load-bearing RAF-recursion + deferred-pause semantics), `…Engine`
+// (+ safety timer), `…Interact` (+ pointer wiring). Attached to the graph as
+// `__idleController` so `clearLabelsAndRefresh` / overlay RAF loops reach it.
 
 import type { ForceGraph3DInstance } from '3d-force-graph';
 import { createReasonLedger } from './idleControllerReasons';

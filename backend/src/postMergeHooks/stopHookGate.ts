@@ -1,30 +1,21 @@
-// Quiescence gate for the Claude Stop-hook post-merge-hook completion callback.
+// Quiescence gate for the Claude Stop-hook post-merge-hook completion callback
+// (the post-merge analogue of `workflowRuns/stopHookGate.ts`).
 //
-// Why this exists: a post-merge hook is an arbitrary full agent task (it may
-// use the Task tool / subagents), and its Claude session reports completion via
-// the `Stop` hook POSTing `/api/post-merge-hooks/:id/complete`. But Claude's
-// `Stop` hook is NOT a reliable "session fully done" signal when the agent uses
-// subagents — it fires early and repeatedly (reproduced against Claude Code
-// 2.1.218; see `agentQuiescence.ts` + the workflow analogue in
-// `workflowRuns/stopHookGate.ts`). A premature Stop used to finish the hook
-// immediately: the merge run's `waitForPostMergeHook` waiter resolved, the run
-// reported `completed`, and the workflow Merge step's Phase C observed the hook
-// as no longer running and advanced — so the frontend sequential queue
-// dispatched the next workflow's step 1 on top of the still-working post-merge
-// agent. This is exactly the overlap the workflow-step quiescence gate prevents,
-// just extended to post-merge hooks.
+// A post-merge hook is an arbitrary full agent task that may use subagents, and
+// then Claude's `Stop` hook fires early and repeatedly (`agentQuiescence.ts`).
+// Finishing on a premature Stop resolves the merge run's `waitForPostMergeHook`,
+// lets a workflow Merge step's Phase C advance, and lets the frontend queue
+// dispatch the next workflow on top of the still-working post-merge agent.
 //
-// The fix, applied only to the Stop-hook-sourced completion (the model's own
-// explicit curl `source=model-explicit-curl`, Pi's `session_shutdown` extension,
-// and Codex's `Stop` hook are deliberate end-of-work signals and keep finishing
-// immediately): don't finish on the Stop itself. Instead wait until the session
-// is QUIESCENT — no subagents in flight and no signal of any kind (tool use,
-// subagent start/stop, or a later Stop) for a short settle window. Because the
-// real Stop always arrives last and premature Stops are followed by more
-// activity and/or the final Stop, the quiet window lands on the genuine end of
-// the hook. `agentQuiescence.ts` supplies the per-session liveSubagents /
-// lastSignalAt this reads; the agent-activity route feeds it from the same
-// hooks that already drive the graph (extended to the `pmh:` agent id).
+// So the Stop-hook-sourced completion doesn't finish on the Stop itself: it waits
+// until the session is QUIESCENT — no subagents in flight and no signal of any
+// kind (tool use, subagent start/stop, a later Stop) for a short settle window.
+// The real Stop always arrives last and premature Stops are followed by more
+// activity, so the quiet window lands on the genuine end. Deliberate end-of-work
+// signals keep finishing immediately: the model's explicit curl
+// (`source=model-explicit-curl`), Pi's `session_shutdown` extension and Codex's
+// `Stop` hook. The agent-activity route feeds `agentQuiescence.ts` from the same
+// hooks that drive the graph (extended to the `pmh:` agent id).
 
 import { finishPostMergeHook, getPostMergeHook, patchPostMergeHook } from './registry.js';
 import { postMergeHookAgentId } from './stopHook.js';

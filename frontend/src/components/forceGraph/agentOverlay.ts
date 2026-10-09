@@ -1,44 +1,23 @@
-// The **Agent Presence Layer (APL)** — scene-level overlay for active Claude
-// agents (both in-worktree task agents and non-worktree sessions). This file is
-// the drawing/orchestration half; `hooks/useAgentOverlay.ts` is the lifecycle +
-// render-on-demand half. Vocabulary: a "presence node" (one per live agent), a
-// "focus beam" (node → a file it's touching, on a TTL), and the "hover line"
-// (the steady height the nodes float at above the graph).
+// The **Agent Presence Layer (APL)** façade — scene overlay for live agents
+// (in-worktree task agents and non-worktree sessions). `hooks/useAgentOverlay.ts`
+// is the lifecycle + render-on-demand half and owns the RAF that calls `tick`.
+// Vocabulary + rules: forceGraph/CLAUDE.md → "Agent Presence Layer".
 //
-// Each live agent draws a free-floating "Claude node" (see claudeNodeSprite)
-// that hovers ABOVE the file graph at a stable height: its X/Z ease toward
-// the centroid of the files it's currently touching (so it sits over the
-// region it's working in) while its Y is pinned just above the top of the
-// graph and low-pass filtered so it doesn't bob. A camera-scaled label next
-// to the node shows the file it's reading/editing.
+// A presence node per agent floats above the graph: X/Z ease toward the centroid
+// of the files it's touching; Y sits on the "hover line" just above the graph
+// top, low-pass filtered so it doesn't bob. Focus beams (node → touched file)
+// fade on a TTL — except the LAST file viewed/edited, whose beam + label persist
+// for the session so a thinking agent still shows what it touched. A stopped
+// session removes node, label and beams. Nodes live in `graph.scene()`, not
+// `graphData()`, so agents never reheat the sim or distort the DAG.
 //
-// The LAST file an agent viewed/edited stays lit — its beam never expires and
-// its label stays on screen — for the whole life of the session, so a node
-// always shows what it most recently touched even while the agent is thinking.
-// Older (no-longer-current) files fade out on a TTL, so several recently-
-// touched files can stay lit at once, but the current one persists. When the
-// session stops the agent is removed entirely (node + label + beams cleared)
-// until it becomes active again.
-//
-// The nodes live directly in `graph.scene()` rather than `graphData()` — so
-// an agent appearing/finishing never reheats the d3 simulation or distorts
-// the DAG. `useAgentOverlay` owns the RAF that calls `tick`.
-//
-// This file is now a thin façade: it holds the shared mutable state
-// (`AgentOverlayCtx`) and delegates each method to a focused sibling module so
-// the public API below stays stable while the logic lives in cohesive units:
-//   - agentOverlayContext.ts    — the shared mutable state + scene group
-//   - agentOverlayConstants.ts  — tunables + render orders
-//   - agentOverlayTypes.ts      — SimNode / Beam / Agent / AgentDescriptor
-//   - agentOverlayPathIndex.ts  — path normalization, path→node index, bounds
-//   - agentOverlayReconcile.ts  — live-agent reconciliation/registry + disposal
-//   - agentOverlayActivity.ts   — focus-beam add/demote (TTL) policy
-//   - agentOverlaySatellites.ts — subagent-satellite lifecycle + placement
-//   - agentOverlayBeams.ts      — beam three.js create / dispose / geometry + fade
-//   - agentOverlayBeamMath.ts   — per-frame centroid + geometry beam passes
-//   - agentOverlayTick.ts       — per-frame tick math (easing / labels / beams)
-//   - agentOverlayLabels.ts     — agent file-label build / update / clear
-//   - agentOverlayPlacement.ts  — parked-position + hover-height math
+// This file holds the shared state (`AgentOverlayCtx`) and delegates to
+// `agentOverlay<Name>.ts`: Context (state + scene group), Constants (tunables,
+// render orders), Types, PathIndex (path normalization, path→node, bounds),
+// Reconcile (registry + disposal), Activity (beam add/demote TTL policy),
+// Satellites (subagents), Beams (three.js lifecycle + fade), BeamMath (per-frame
+// centroid/geometry), Tick (easing/labels/beams), Labels, Placement (parked
+// position + hover height).
 
 import type * as THREE from 'three';
 import type { ForceGraph3DInstance } from '3d-force-graph';

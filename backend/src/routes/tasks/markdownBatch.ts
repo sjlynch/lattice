@@ -1,6 +1,8 @@
 // Markdown ↔ tasks grammar. Shared by /api/tasks/batch (legacy create),
 // PATCH /api/tasks/:id, /append-summary, GET ?format=markdown, and
-// POST /api/tasks/upsert.
+// POST /api/tasks/upsert. Exists because a shell heredoc passes markdown through
+// literally, while a JSON array of multi-line descriptions needs every
+// backslash, quote and newline escaped.
 //
 // Grammar:
 //   <!-- lattice: project=..., hash=..., status=... -->     (optional frontmatter)
@@ -9,26 +11,17 @@
 //   # Next task title
 //   description...
 //
-// The metadata block `{key=value, ...}` accepts `,` or whitespace as the
-// separator between fields. Only the first level-1 heading (`#` not `##`)
-// starts a new task; subheadings inside a description are body content.
-// Lines inside fenced code blocks (``` or ~~~) are body even if they look
-// like headings. Lines before the first heading (after the optional
-// frontmatter) are ignored.
+// The metadata block `{key=value, ...}` accepts `,` or whitespace as the field
+// separator. Only a level-1 heading (`#` not `##`) starts a new task;
+// subheadings and lines inside fenced code blocks (``` or ~~~) are body. Lines
+// before the first heading (after the optional frontmatter) are ignored.
 //
-// Escaping: a description line that would otherwise read as structure — a
-// `# ` heading (a new task) or a fence marker that never closes (it would
-// swallow every later task) — is serialized with ONE leading backslash
-// (`\# Plan`, `\```js`), and the parser strips one backslash from any line
-// outside a fence that matches `\*(# |```|~~~)`. Lines already starting with
-// backslashes before such a marker get one more, so the mapping is exact and
-// GET ?format=markdown → POST /upsert is a no-op. Documents without escapes
-// parse exactly as before.
-//
-// Why this exists: building a JSON array of tasks with multi-line
-// descriptions in a shell is brutal — every backslash, quote, and newline
-// needs escaping. A heredoc with single-quoted EOF passes markdown through
-// literally, no escaping at all.
+// Escaping: a description line that would read as structure — a `# ` heading or
+// a fence marker that never closes (it would swallow every later task) — is
+// serialized with ONE leading backslash (`\# Plan`, `\```js`); the parser strips
+// one backslash from any line outside a fence matching `\*(# |```|~~~)`, and a
+// line already backslashed gets one more, so the mapping is exact and
+// GET ?format=markdown → POST /upsert is a no-op.
 
 export interface ParsedTaskBlock {
   /** From `{id=...}` in the heading metadata block. */

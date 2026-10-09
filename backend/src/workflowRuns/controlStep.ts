@@ -1,36 +1,23 @@
-// Headless control-flow steps for autonomous workflow runs.
+// Headless control-flow steps for autonomous workflow runs. Unlike agent steps
+// (spawn a harness, advance on its Stop hook's /complete), control steps spawn
+// no agent and run server-side against Lattice's own task pipeline:
+//   - 'start': every Open task → In Progress and run (the Task Board "Run All"
+//     path), one terminal tab per task. (controlSteps/start.ts)
+//   - 'merge': wait for In Progress to drain (Phase A), then merge runs until
+//     Ready-to-Merge is empty (Phase B). (controlSteps/merge.ts)
+//   - 'push': wait for Ready-to-Merge to drain, then spawn a push session (the
+//     Task Board cloud-icon path). (controlSteps/push.ts)
+// This file is the dispatcher (run-lock lifecycle + kind→worker routing); lane
+// waits and progress helpers live in controlSteps/shared.ts.
 //
-// Agent steps (the existing kind) spawn a Claude/Pi/Codex in a terminal and
-// advance when the Stop hook calls /api/workflow-runs/.../complete. Control
-// steps are different: they don't spawn an agent at all. They run server-side
-// against Lattice's own task pipeline:
-//
-//   - 'start' moves every Open task to In Progress and runs each (same code
-//     path as the Task Board "Run All" button). One terminal tab is emitted
-//     per task so the user can watch / intervene. (controlSteps/start.ts)
-//   - 'merge' waits for In Progress to drain (Phase A), then triggers merge
-//     runs until Ready-to-Merge is empty (Phase B). (controlSteps/merge.ts)
-//   - 'push' waits for Ready-to-Merge to drain, then spawns a push session
-//     (same code path as the Task Board cloud icon). (controlSteps/push.ts)
-//
-// This file is the thin dispatcher: it owns the per-project run-lock lifecycle
-// and the kind→worker routing. The lane-wait subscription and progress
-// notification helpers live in controlSteps/shared.ts; each per-kind worker
-// lives in its own controlSteps/<kind>.ts module.
-//
-// Each control step acquires the per-project run-lock for its kind-specific
-// worker so dev.mjs defers backend restarts while it's waiting, and a manual
-// merge run can't race against the workflow. The lock is released BEFORE we
-// call completeStep so the next step (often another control step) can
-// acquire its own lock without racing the previous step's release. The
-// release → advance hand-off is covered by a restart-drain transition instead
-// (see runControlStepWorker and ../restartDrain/), so a dev-runner restart
-// that sees the lock vanish still waits for the advance to land.
-//
-// The orchestrator (workflowRuns.ts) dispatches to executeControlStep for
-// non-agent steps. We take a `completeStep` callback rather than importing
-// completeWorkflowStep directly to avoid the circular import — the
-// orchestrator passes itself in.
+// Each step holds the per-project run-lock so dev.mjs defers backend restarts
+// while it waits and a manual merge run can't race the workflow. The lock is
+// released BEFORE `completeStep` so the next (often control) step can acquire
+// its own without racing; the release → advance hand-off is covered by a
+// restart-drain transition instead (`runControlStepWorker`, ../restartDrain/),
+// so a restart that sees the lock vanish still waits for the advance to land.
+// `completeStep` is passed in by the orchestrator (workflowRuns.ts) to avoid a
+// circular import.
 
 import {
   acquireProjectRunLock,

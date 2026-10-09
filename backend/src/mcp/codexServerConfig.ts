@@ -1,30 +1,24 @@
-// Codex config shaping: turn a single resolved catalog entry into a Codex
-// per-invocation `-c "mcp_servers.<id>={…}"` inline-TOML override plus the
-// secret env the child pty must carry. Pure — no I/O. The Codex analogue of
-// `claudeServerConfig.ts`.
+// Codex config shaping: a single resolved catalog entry → a per-invocation
+// `-c "mcp_servers.<id>={…}"` inline-TOML override plus the secret env the child
+// pty must carry. Pure — no I/O. The Codex analogue of `claudeServerConfig.ts`.
 //
-// Why inline-TOML `-c` overrides and not a written `~/.codex/config.toml`:
-// exactly the reasoning behind `terminal/codexTrust.ts`'s trust override — a
-// server enabled for a Lattice-orchestrated Codex agent must not silently
-// appear in Codex sessions the user launches elsewhere. Codex's documented
-// `--config key=value` (value parsed as TOML) lets us ADD servers for one
-// invocation without touching the user's global config.
+// Inline `-c` overrides, never a written `~/.codex/config.toml` (same reasoning
+// as `terminal/codexTrust.ts`'s trust override): a server enabled for a
+// Lattice-orchestrated Codex agent must not silently appear in Codex sessions
+// the user launches elsewhere.
 //
-// Secret transport (verified against codex-cli 0.144.1):
-//   - stdio secret env  → listed by NAME in `env_vars`; the VALUE rides only in
-//     the child pty env (returned here as `env`), never in the argv/TOML.
-//   - HTTP secret header → mapped in `env_http_headers` (header → env-var NAME);
-//     bearer token → `bearer_token_env_var`. Same rule: names in argv, values
-//     in pty env.
+// Secret transport (verified against codex-cli 0.144.1) — names in argv, VALUES
+// only in the child pty env (returned as `env`), never in the argv/TOML:
+//   - stdio secret env   → listed by NAME in `env_vars`;
+//   - HTTP secret header → `env_http_headers` (header → env-var NAME); bearer
+//     token → `bearer_token_env_var`.
 // Static (non-secret) env / headers are emitted inline in `env` / `http_headers`.
 //
 // The dotted `mcp_servers.<id>=…` form MERGES one key into the user's table,
-// leaving the user's own servers alone. (A whole-table `mcp_servers={…}` does
-// not replace config.toml's table either — Codex merges the `-c` layer over it —
-// which is why the task-worktree scope disables user servers by name instead;
-// see taskWorktreeScope.ts.) Generated ids are namespaced `lattice_*` and underscore-only —
-// dashed / quoted dotted segments are unreliable through the Windows PowerShell
-// path (see the plan §4).
+// leaving their own servers alone (a whole-table `mcp_servers={…}` doesn't
+// replace it either — hence taskWorktreeScope.ts disables user servers by name).
+// Generated ids are namespaced `lattice_*` and underscore-only: dashed / quoted
+// dotted segments are unreliable through the Windows PowerShell path (plan §4).
 
 import type { McpServerEntry } from './catalog.js';
 import { platformizeCommand } from './claudeInject.js';

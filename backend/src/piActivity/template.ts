@@ -1,48 +1,26 @@
-// Pi's graph-activity reporter — the Pi analogue of the Claude activity hooks
-// (claudeStopHook.ts `renderClaudeHooksConfig`) and the Codex ones
-// (codexStopHook.ts). Pi has no settings-driven command hooks, but it auto-loads
-// any `<cwd>/.pi/extensions/*.ts` (cwd-exact; Lattice spawns Pi with
-// `--approve`, so the project-local extension is trusted), and its extension API
-// emits `tool_execution_start` / `tool_execution_end` with the tool's arguments.
+// Pi's graph-activity reporter — the Pi analogue of the Claude
+// (`claudeStopHook.ts` `renderClaudeHooksConfig`) and Codex (`codexStopHook.ts`)
+// activity hooks. Pi has no command hooks but auto-loads
+// `<cwd>/.pi/extensions/*.ts` (cwd-exact; trusted because Lattice spawns Pi with
+// `--approve`) and emits `tool_execution_start` / `_end` with the tool's args.
+// Modes, shared globals and the byte-exact output rule: piActivity/CLAUDE.md.
 //
-// The generated `.pi/extensions/lattice-activity.ts` turns those into the SAME
-// Claude-shaped hook body the activity routes already decode
-// (`hook_event_name` PreToolUse/PostToolUse, `tool_name`, `tool_input`,
-// `cwd`), so nothing server-side is Pi-specific:
-//   - read / edit / write → `tool_input.file_path` = the tool's `path`
-//   - bash                → `tool_input.command` (paths guessed + confirmed by
-//                           the route, as for Codex — see hookFiles.ts)
-//
-// Subagents: `@tintinweb/pi-subagents` runs each subagent as its own in-process
-// Pi session that loads the same cwd extensions, on an IN-MEMORY session
-// manager (no session file). Lattice's own Pi sessions are always persisted
-// (pinned `--session-id`), so "no session file" identifies a subagent: the
-// extension then tags its events `agent_id: pi-<sessionId>` — the Claude
-// convention for a subagent's tool use — so its beams hang off a satellite, and
-// posts SubagentStart / SubagentStop on that session's start / shutdown. (A
-// missed stop is reaped by the graph's idle TTL.)
-//
-// Every POST is fire-and-forget with a short timeout: a handler never delays a
-// tool call, and a backend that is down or restarting just loses a beam. The
-// POSTs are SERIALIZED, though (each waits for the previous one to settle), so
-// they reach the route in event order the way Claude's and Codex's hook
-// commands do: concurrent requests could land a turn's last PostToolUse after
-// its Stop, and any non-Stop event cancels the post-Stop removal
-// (projectClaude/lifecycle.ts), leaving the node up until the idle TTL. The
-// queue lives on `globalThis` so a pi-subagents subagent's re-evaluated module
-// (which posts under the parent's session_id) shares it.
-//
-// Project mode (`projectSession`): the same extension at the PROJECT ROOT, for
-// a `pi` the user runs in a sidebar tab — the Pi analogue of the project's
-// `.claude/settings.local.json` hooks (projectClaudeHooks.ts). It posts to
-// `/api/project-activity/:token`, which keys the node by the body's
-// `session_id`, so every body carries the top-level session's id. The node
-// follows turns (projectClaude/lifecycle.ts): a turn's start / tool use creates
-// it and its Stop (`agent_settled`) takes it down shortly after, while the
-// session's start/shutdown post SessionStart/SessionEnd.
-// Pi loads extensions with `moduleCache: false`, so a pi-subagents subagent
-// re-evaluates this module: the parent's id is handed over on `globalThis`
-// (same process) rather than a module variable.
+// The generated `lattice-activity.ts` posts the SAME Claude-shaped hook body the
+// activity routes already decode (`hook_event_name`, `tool_name`, `tool_input`,
+// `cwd`), so nothing server-side is Pi-specific: read/edit/write →
+// `tool_input.file_path`; bash → `tool_input.command` (paths guessed + confirmed
+// by the route, as for Codex — hookFiles.ts). The less obvious parts:
+//   - "No session file" identifies a `@tintinweb/pi-subagents` subagent, because
+//     Lattice's own Pi sessions are always persisted (pinned `--session-id`); it
+//     posts as `agent_id: pi-<sessionId>` (beams on a satellite; a missed stop is
+//     reaped by the graph's idle TTL).
+//   - POSTs are fire-and-forget but SERIALIZED: a PostToolUse landing after its
+//     Stop cancels the post-Stop removal (projectClaude/lifecycle.ts).
+//   - The queue and the parent's session id live on `globalThis`: Pi loads
+//     extensions with `moduleCache: false`, so a subagent re-evaluates this module.
+//   - Project mode (`projectSession`, a sidebar `pi` at the project root — cf.
+//     projectClaudeHooks.ts) posts to `/api/project-activity/:token`, keyed by
+//     the top-level `session_id` every body carries.
 
 export function renderPiActivityExtension(
   activityUrl: string,

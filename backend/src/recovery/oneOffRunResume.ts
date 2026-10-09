@@ -1,44 +1,23 @@
-// Boot-time re-adoption of one-off agent runs (push runs, QA e2e runs,
-// post-merge hooks) interrupted by a backend restart.
+// Boot step 3a: re-adopt one-off agent runs (push runs, QA e2e runs,
+// post-merge hooks) whose pty survived a backend restart in the detached
+// terminal-server — sibling of `workflowRunResume.ts`. Invariants + module map:
+// recovery/oneOffRunResume/CLAUDE.md.
 //
-// Sibling of `workflowRunResume.ts`, for the same reason: each of these runs a
-// throwaway agent whose pty lives in the DETACHED terminal-server and survives
-// a backend restart, while its run record lived only in this process's memory.
-// After a restart the agent's callback (`/api/push-runs/:id/done`,
-// `/api/qa-runs/:id/verdict` + `/done`, `/api/post-merge-hooks/:id/complete`)
-// hit an unknown id and 404'd, its terminal idled forever, a QA pass never
-// promoted its task, and a resumed merge run could not see the still-running
-// post-merge hook — so it fired a second one, or the workflow Merge step's
-// Phase C read "idle" while the orphan kept working.
-//
-// The registries now mirror their running records to
-// `~/.lattice/per-project/<hash>/{push-runs,qa-runs,post-merge-hooks}.json`
-// (`../homeScratch/persistence.ts`). This reads them BEFORE the HTTP server
-// listens — so the first callback (or a replay from the callback outbox) finds
-// its record — and per record:
-//
-//   pty alive (or the terminal-server can't be probed — "can't tell" is never
-//   "gone") → RE-ADOPT: restore the record, re-register its orange presence
-//     node, and for a post-merge hook restore the one-running-per-project
-//     state (so the resumed merge run / Phase C / the UI await it rather than
-//     start a second), mark its quiescence state unknown (see
-//     `agentQuiescence.ts` `markAgentReadopted`) and re-arm the bounded wait a
-//     merge would have given it.
-//   pty gone → restore it anyway and settle it as LOST after
-//     `LOST_SETTLE_GRACE_MS`, unless its callback lands first. A Stop hook
-//     that fired while the backend was down is replayed by the callback
-//     outbox shortly after listen; settling immediately would record "lost"
-//     for a run that actually finished. Lost = push: done + `lost` (a waiting
-//     workflow Push step fails instead of reporting success); QA: done, with
-//     any verdict it had already reported still applied (a confident PASS
-//     still promotes qa → done); post-merge hook: finished `errored`, which
-//     releases its waiters. The scratch dir itself is reclaimed by the boot
-//     sweeps that run right after this (they keep only live-pty dirs).
-//
-// Every re-adopted record also joins a small liveness watch: a pty that dies
-// later without calling back is settled the same way (the pre-restart process
-// had its own waiters — the merge gate's bounded wait, the Push step's timeout
-// — and this is the restarted process's equivalent).
+// Reads the `{push-runs,qa-runs,post-merge-hooks}.json` mirrors BEFORE the HTTP
+// server listens, so the first callback (or outbox replay) finds its record — an
+// unknown id 404s and the agent's terminal idles forever. Per record:
+//   - pty alive, or the terminal-server can't be probed ("can't tell" is never
+//     "gone") → RE-ADOPT: restore the record + presence node; a post-merge hook
+//     also regains its one-running-per-project state (a resumed merge run /
+//     Phase C await it, never start a second), `markAgentReadopted`
+//     (agentQuiescence.ts) and the bounded wait a merge would have given it.
+//   - pty gone → restore, then settle LOST after `LOST_SETTLE_GRACE_MS` unless
+//     its callback lands first (the outbox replays a Stop fired while the backend
+//     was down). Lost = push `lost` + done (a waiting Push step fails); QA done
+//     with any reported verdict still applied; hook finished `errored`.
+// Re-adopted records join a liveness watch that settles a pty dying later
+// without a callback the same way. Runs before the boot scratch sweeps, which
+// keep only live-pty dirs.
 
 import { pushAdapter, qaAdapter, postMergeHookAdapter } from './oneOffRunResume/adapters.js';
 import { proxyListSessionsOrNull } from '../terminalServerClient.js';

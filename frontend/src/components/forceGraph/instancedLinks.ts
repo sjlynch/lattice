@@ -1,34 +1,18 @@
-// Batched link rendering — collapses the library's one-`THREE.Line`-per-link
-// into a single `THREE.LineSegments`.
+// Batched link rendering — the library's one-`THREE.Line`-per-link (E draw calls
+// every rendered frame, ~half the scene objects, even for a pure orbit of a
+// settled graph) collapses into a single `THREE.LineSegments`.
 //
-// WHY. `three-forcegraph` creates an individual object per link (a `Line` when
-// `linkWidth === 0`, a cylinder `Mesh` otherwise) and adds each to the scene —
-// so a tree with E links costs E draw calls *every rendered frame*. The graph
-// is a containment tree (E ≈ N), so links are ~half of all scene objects. While
-// the engine is settled the per-link geometry isn't even being recomputed
-// (`tickFrame` only updates positions while `engineRunning`), yet a plain camera
-// orbit still re-submits all E+N draw calls per frame — the "rotating spikes CPU
-// to ~85%" symptom. Batching the links into one object turns those E draw calls
-// into 1.
+// `linkThreeObject` is swapped for an empty `Object3D` (no geometry → no draw
+// call, and `tickFrame` skips its geometry update), and every visible link is
+// drawn here with two vertices. Positions re-upload only on frames nodes moved —
+// keyed off the shared `nodeMotionDriver` (engine tick OR node drag) plus one
+// settling frame — never during a pure orbit. Not `isEngineHot()` (misses drags)
+// nor `onEngineTick` alone (a drag after settle never re-ticks below
+// `d3AlphaMin`). Links carry no overlays and aren't pick targets (raycast
+// disabled), so nothing depends on the removed per-link objects. Flat 1px lines;
+// the `batchedLinks` setting keeps the cylinder look available.
 //
-// WHAT. We suppress the library's per-link objects by swapping `linkThreeObject`
-// for an empty `Object3D` (no geometry → no draw call, and `tickFrame` skips its
-// geometry update for a non-Line/Mesh object), and draw every visible link
-// ourselves as a single `LineSegments` with two vertices per link. Positions are
-// re-uploaded to the GPU only on frames where node positions actually moved —
-// keyed off the shared `nodeMotionDriver` (engine tick OR a node drag) plus the
-// one settling frame after — never during a pure orbit, so orbiting a settled
-// graph is one static draw call. (An earlier version gated on the idle
-// controller's `isEngineHot()`; that misses drags entirely. Gating on
-// `onEngineTick` alone then missed a drag AFTER the layout settled — the engine
-// refuses to re-tick below `d3AlphaMin`, so `onEngineTick` never fires; the
-// drag's `onNodeDrag` callback in the motion driver covers that case.) Links
-// carry no overlays and aren't pick targets (raycast
-// disabled), so nothing else in the view depends on the per-link objects we
-// remove. Flat 1px lines (the `linkWidth: 0` look); opt-in via the `batchedLinks`
-// setting so the cylinder look stays available.
-//
-// OWNERSHIP. This controller owns link capture, hydration and motion scheduling;
+// This controller owns link capture, hydration and motion scheduling;
 // instancedLinkResources.ts owns the graph-local geometry, buffers and material.
 
 import * as THREE from 'three';

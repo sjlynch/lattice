@@ -1,29 +1,20 @@
-// POST /api/tasks/:id/merge-aborted — resolver Claude gave up, OR the user
+// POST /api/tasks/:id/merge-aborted — the resolver Claude gave up, OR the user
 // clicked the Resolving-strip "Cancel" button to abandon a stuck resolution.
 //
-// Originally trusted the resolver to have already run `git merge --abort`
-// and just cleared the conflict flag — but a resolver that curled this
-// without aborting first (or that aborted in some other unexpected state)
-// would leave MERGE_HEAD set with conflict:false, the orphan-mid-merge
-// state that used to wedge the next /merge attempt. Now we abort ourselves
-// if needed; preflight also auto-recovers, so this is belt + braces. The
-// abort + conflict-clear + resolver-pty kill are shared with the merge-run
-// liveness backstop via recoverAbandonedResolverTask.
+// We run `git merge --abort` ourselves if needed rather than trusting the
+// resolver to have: MERGE_HEAD left set with conflict:false is the
+// orphan-mid-merge state that wedges the next /merge (preflight also
+// auto-recovers — belt + braces). Abort + conflict-clear + resolver-pty kill are
+// shared with the merge-run liveness backstop (`recoverAbandonedResolverTask`).
 //
-// Clearing task.conflict here is what makes a cancel authoritative: a late
-// /merged from a resolver that's still running (or never noticed it was
-// abandoned) is gated on task.conflict and becomes a no-op. We ALSO kill the
-// resolver pty so it stops working on the abandoned resolution entirely.
-//
-// AND we release any merge-run worker parked on this task's conflict waiter.
-// During a backend merge run a conflicting task parks the worker on an untimed
-// waiter (registerConflictWaiter). A give-up resolver aborts + curls THIS
-// route; its later Stop-hook /complete is gated on the now-cleared task.conflict
-// so it's a no-op and never signals. Without signalConflictWaiter here the run
-// worker would await forever — never releasing the cross-process project
-// run-lock and 409-ing every later /merge, merge-run, and workflow Merge step
-// for the project until a backend restart. The aborted task is left at plain
-// ready_to_merge to be retried on the next merge-all (so, unlike /complete and
+// Clearing task.conflict is what makes a cancel authoritative: a late /merged
+// (or Stop-hook /complete) from a still-running resolver is gated on it and
+// becomes a no-op; the resolver pty is killed too. For the same reason we MUST
+// `signalConflictWaiter`: a merge-run worker parked on this task's untimed
+// conflict waiter (`registerConflictWaiter`) would otherwise await forever —
+// never releasing the cross-process project run-lock and 409-ing every later
+// /merge, merge run and workflow Merge step until a backend restart. The aborted
+// task stays plain ready_to_merge for the next merge-all (unlike /complete and
 // /merged, we deliberately do NOT restart a fresh run for it).
 
 import type { Request, Response } from 'express';

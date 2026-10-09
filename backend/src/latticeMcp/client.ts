@@ -1,31 +1,26 @@
-// The thin HTTP layer under the Lattice MCP server's tools. Every tool call
-// funnels through `LatticeClient.call`, which:
+// The thin HTTP layer under the Lattice MCP server's tools. Every tool call goes
+// through `LatticeClient.call`, which:
 //   1. builds the URL against `LATTICE_API_URL` with `project` PINNED from
-//      `LATTICE_PROJECT` — so no tool ever takes a `project` argument and an
-//      agent can't aim a write at the wrong board,
-//   2. sends/parses JSON,
-//   3. asserts the response envelope's `canonicalProject` matches the pinned
-//      project (see `assertCanonicalProject`), and
+//      `LATTICE_PROJECT` — no tool takes a `project` argument, so an agent can't
+//      aim a write at the wrong board;
+//   2. sends/parses JSON;
+//   3. asserts the envelope's `canonicalProject` matches the pinned project
+//      (`assertCanonicalProject`);
 //   4. classifies the outcome into the small union `createServer.ts` maps onto
 //      MCP results.
 //
-// The classification is the interesting part, because the three failure shapes
-// need three DIFFERENT MCP results:
-//   - HTTP 413 is NOT an error. It is the progressive-disclosure teaching
-//     response (the board summary + the suggestions that narrow the query), and
-//     the agent has to READ it. An `isError` result invites a retry of the same
-//     oversized call instead.
-//   - A connection failure is an error whose only useful content is "this URL
-//     didn't answer; Lattice may not be running" — the agent should stop
-//     calling board tools, not narrow its query. It is only reported after a
-//     bounded retry (see RETRY_BUDGET_MS): when Lattice works on its own repo
-//     the backend restarts after merges, and a board call landing in that
-//     window used to fail outright and tell the agent to give up.
-//   - Any other non-2xx is an error carrying the status + body so the agent can
-//     tell a 400 (its own bad argument) from a 404/500.
-//
-// No MCP types are imported here on purpose: this module stays a plain HTTP
-// client so it can be unit-tested (and reasoned about) without a transport.
+// The three failure shapes need three DIFFERENT MCP results:
+//   - HTTP 413 is NOT an error: it's the progressive-disclosure teaching response
+//     (board summary + narrowing suggestions) the agent must READ; an `isError`
+//     result invites a retry of the same oversized call.
+//   - A connection failure is an error saying only "this URL didn't answer;
+//     Lattice may not be running" (stop calling board tools), reported only after
+//     a bounded retry (RETRY_BUDGET_MS): the backend restarts after merges when
+//     Lattice works on its own repo, and that window must not make an agent quit.
+//   - Any other non-2xx is an error carrying status + body, so the agent can tell
+//     a 400 (its own bad argument) from a 404/500.
+// No MCP types are imported on purpose: a plain HTTP client stays unit-testable
+// without a transport.
 
 import { canonicalProjectPath } from '../projectPath.js';
 

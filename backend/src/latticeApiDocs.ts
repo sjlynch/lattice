@@ -1,31 +1,23 @@
-// Drops the agent-facing API cheatsheet into <project>/.lattice/ so AI agents
-// running inside Lattice-spawned terminals can discover the HTTP API without
-// any per-machine setup, harness-specific config, or pollution of the user's
-// repo or shell. Agents are pointed at it by the always-on system-prompt
-// preamble the backend injects at every spawn
-// (harnessSystemPrompts/latticePreamble.ts), which names LATTICE_API.md by its
-// absolute path.
+// Drops the agent-facing API cheatsheet into <project>/.lattice/ so agents in
+// Lattice-spawned terminals discover the HTTP API with no per-machine setup,
+// harness-specific config, or pollution of the user's repo or shell. The
+// always-on system-prompt preamble (harnessSystemPrompts/latticePreamble.ts)
+// names LATTICE_API.md by its absolute path.
 //
 // TWO files, because the preamble target is read WHOLE every time an agent is
 // asked anything about Lattice:
-//   - LATTICE_API.md          — a short index (~4 KB): the literal values, the
-//                               board concepts, the hard rules, the
-//                               cheapest-first read tiers, and five core
-//                               recipes. This is the one the preamble names.
+//   - LATTICE_API.md          — a short index (~4 KB): literal values, board
+//                               concepts, hard rules, cheapest-first read tiers,
+//                               five core recipes. The one the preamble names.
 //   - LATTICE_API_RECIPES.md  — everything else (~13 KB): the full endpoint
-//                               table and the batch / markdown round-trip /
-//                               bulk / transition / run+merge recipes. Linked
-//                               from the index via {{RECIPES_PATH}} and read
-//                               only when one of those is actually needed.
+//                               table + batch / markdown round-trip / bulk /
+//                               transition / run+merge recipes. Linked from the
+//                               index via {{RECIPES_PATH}}, read only when needed.
 //
-// Conservative creation: only writes if `<project>/.lattice/` already
-// exists, so non-Lattice projects (and the user's $HOME) aren't seeded
-// with stray folders.
-//
-// Version-aware regeneration: a hash of the current content is stamped
-// into the first line of each file. If the on-disk file's hash doesn't match,
-// we rewrite — so existing projects pick up doc improvements on the next
-// pty spawn instead of being stuck with whatever shipped first.
+// Writes only if `<project>/.lattice/` already exists, so non-Lattice projects
+// (and the user's $HOME) aren't seeded with stray folders. A content hash is
+// stamped into each file's first line and a mismatch triggers a rewrite, so
+// projects pick up doc changes on the next pty spawn.
 
 import crypto from 'node:crypto';
 import fs from 'node:fs';

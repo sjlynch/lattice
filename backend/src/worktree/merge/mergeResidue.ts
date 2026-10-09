@@ -1,14 +1,8 @@
-// Keep a task worktree mergeable after a `git merge` that died part-way.
-//
-// On 2026-09-24 a 22-task merge run hit a full disk. Each worktree-side
-// `git merge <main>` had already written main's version of the files it
-// updates — and, for files both sides changed, git's three-way result, or a
-// zero-byte file where the write itself hit ENOSPC — before it failed to write
-// the index ("sha1 file '…/index.lock' write error. Out of diskspace"). No
-// MERGE_HEAD is left behind, so nothing recognised the state: the worktree just
-// looked like it had uncommitted edits, and every later attempt refused with
-// "Your local changes … would be overwritten by merge". 12 of the 22 worktrees
-// were stuck that way.
+// Keep a task worktree mergeable after a `git merge` that died part-way (e.g.
+// ENOSPC writing the index): git has already written main's versions, three-way
+// results or zero-byte files into the worktree but left no MERGE_HEAD, so the
+// state just looks like uncommitted edits and every later attempt refuses with
+// "Your local changes … would be overwritten by merge".
 //
 // Two layers:
 //   - `restoreFailedMergeWrites` — right after a worktree merge fails WITHOUT
@@ -17,12 +11,12 @@
 //     dirty before it started. Exact; nothing the agent left is involved.
 //   - `clearMergeBlockingChanges` — before a merge, any uncommitted change to a
 //     path main changed since the branch's merge base would make git refuse the
-//     merge. That is the residue above when the restore itself failed (or the
-//     backend died mid-merge), and occasionally an agent's own uncommitted
-//     edit. Either way it was never going to be merged — Lattice merges the
-//     branch's COMMITS — so copy every uncommitted change into the
-//     keep-for-the-user archive (`../discardArchive.ts`) and then restore just
-//     the blocking paths. A failed archive changes nothing and reports an error.
+//     merge: the residue above when the restore itself failed (or the backend
+//     died mid-merge), occasionally an agent's own uncommitted edit. It was never
+//     going to be merged (Lattice merges the branch's COMMITS), so copy every
+//     uncommitted change into the keep-for-the-user archive
+//     (`../discardArchive.ts`), then restore just the blocking paths. A failed
+//     archive changes nothing and reports an error.
 //
 // Lattice-managed files (LATTICE_TASK.md, hook shims, …) are left to
 // `runWorktreeMerge`'s own shelve/reset handling.
