@@ -69,5 +69,6 @@ importing them by relative path.
 - `sharedFolderBoundary` — everything reachable from `shared/` imports only relative paths (the frontend bundles it).
 - `deadExports` — an export of `backend/src`/`frontend/src` that nothing references fails; delete it rather than allowlisting.
 - `moduleLayout` — no `x/index.ts` facades (a domain's facade is the root `x.ts`).
+- `importCycles` — no runtime import cycle in `backend/src` / `frontend/src` beyond its short known list (a cycle dies at boot with "Cannot access X before initialization" once top-level code reads a binding). Break new ones with a leaf module or `import()`.
 - `docBudget` — every `CLAUDE.md` in the repo stays under its byte budget (12 KB; 20 KB for the root and package indexes).
 - `docPaths` — every backtick-quoted file path in a `CLAUDE.md` exists (suffix match), or is a name the code writes at runtime. Move a file → fix the docs that name it.
