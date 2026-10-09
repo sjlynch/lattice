@@ -32,7 +32,7 @@ import {
   ROOT,
   note,
 } from './orchestrate/config.mjs';
-import { stdoutSink } from './orchestrate/consoleSink.mjs';
+import { stdoutSink, useUtf8ConsoleCodePage } from './orchestrate/consoleSink.mjs';
 import {
   CONSOLE_HELP,
   CONSOLE_HINT,
@@ -53,6 +53,10 @@ import { createDepsWatcher, runNpmInstall } from './depsWatch.mjs';
 import { shutdownTerminalServer } from '../backend/scripts/dev/backendLifecycle.mjs';
 import { describeExitCode } from '../backend/scripts/dev/exitStatus.mjs';
 import { describeRunLocks, heldRunLocks } from '../backend/scripts/dev/restartPolicy.mjs';
+
+// Normally a no-op (devLoop.mjs already switched the console to UTF-8 for the
+// session); here too so a soft restart (`r`) applies it under an older devLoop.
+process.on('exit', useUtf8ConsoleCodePage());
 
 note('starting backend...');
 // The runner's stdin is our control pipe (soft stop, deps re-check) — the

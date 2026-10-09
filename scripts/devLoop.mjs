@@ -16,9 +16,15 @@ import { fileURLToPath } from 'node:url';
 
 import { shutdownTerminalServer } from '../backend/scripts/dev/backendLifecycle.mjs';
 import { note } from './orchestrate/config.mjs';
+import { useUtf8ConsoleCodePage } from './orchestrate/consoleSink.mjs';
 import { afterPreflight, relaunchAfterOrchestrator } from './orchestrate/devControl.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+// The console sink writes raw UTF-8 bytes; make the console decode them as
+// UTF-8 for this whole session (soft restarts included) and put the user's
+// code page back on every exit path (they all end in process.exit).
+process.on('exit', useUtf8ConsoleCodePage());
 
 let current = null;
 let interrupted = false;

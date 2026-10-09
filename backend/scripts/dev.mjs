@@ -55,8 +55,14 @@ import {
   SOFT_STOP,
   readLines,
 } from '../../scripts/orchestrate/devControl.mjs';
+import { useUtf8ConsoleCodePage } from '../../scripts/orchestrate/consoleSink.mjs';
 
 const BACKEND_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+
+// Run standalone (`npm run dev` in backend/), the backend inherits this console
+// and its console sink writes raw UTF-8 bytes: decode them as UTF-8 until exit.
+// Under the root dev loop stdout is a pipe and this is a no-op.
+process.on('exit', useUtf8ConsoleCodePage());
 
 // ---- Control channel ----
 //

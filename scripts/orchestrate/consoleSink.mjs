@@ -1,4 +1,6 @@
+import { spawnSync } from 'node:child_process';
 import fs from 'node:fs';
+import path from 'node:path';
 
 // Console writes that can't stall the orchestrator's event loop.
 //
@@ -117,3 +119,41 @@ export function createSink(fd) {
 
 export const stdoutSink = createSink(1);
 export const stderrSink = createSink(2);
+
+const UTF8_CODE_PAGE = '65001';
+
+// Bytes written to fd 1 also skip libuv's UTF-8 → UTF-16 conversion
+// (WriteConsoleW), so a Windows console decodes them with its OUTPUT CODE PAGE
+// — 437 on a US install — and every non-ASCII character came out as mojibake
+// (`·` in the `[mem]` line as `┬╖`, `—`, vite's `➜`). The dev loop switches the
+// console to UTF-8 for its lifetime and calls the returned function on exit to
+// put the user's code page back. `chcp` must SHARE this console: never
+// `windowsHide`, which gives the child a hidden console of its own (the change
+// then lands there). A no-op off Windows, off a TTY, or when the current code
+// page can't be read.
+export function useUtf8ConsoleCodePage({
+  platform = process.platform,
+  isTTY = process.stdout.isTTY === true,
+  chcp = runChcp,
+} = {}) {
+  if (platform !== 'win32' || !isTTY) return () => {};
+  const original = chcp([])?.match(/(\d+)/)?.[1];
+  if (!original || original === UTF8_CODE_PAGE) return () => {};
+  chcp([UTF8_CODE_PAGE]);
+  let restored = false;
+  return () => {
+    if (restored) return;
+    restored = true;
+    chcp([original]);
+  };
+}
+
+function runChcp(args) {
+  try {
+    const exe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'chcp.com');
+    const out = spawnSync(exe, args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 5000 });
+    return typeof out.stdout === 'string' ? out.stdout : null;
+  } catch {
+    return null;
+  }
+}

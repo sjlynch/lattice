@@ -75,6 +75,15 @@ runner is `backend/scripts/dev.mjs` (`backend/scripts/CLAUDE.md`).
   after 25 ms) — never the back (splits a line) and never dropped
   (`devConsoleSinkWriteErrors.test.ts`). The backend's copy:
   `backend/src/consoleSink.ts`.
+- **Raw bytes need a UTF-8 console**: `fs.write` skips libuv's UTF-8 → UTF-16
+  conversion, so Windows decodes the bytes with the console code page (437 on
+  a US install → every `·`/`—`/`➜` was mojibake). `useUtf8ConsoleCodePage()`
+  (here) switches the console to 65001 for the life of `../devLoop.mjs` (and a
+  standalone `backend/scripts/dev.mjs`) and restores the user's page on exit;
+  `../orchestrate.mjs` calls it too (a no-op under a current devLoop) so a soft
+  restart applies it. A caller that finds 65001 already set restores nothing.
+  Its `chcp` must share the console — never `windowsHide` (that child gets a
+  hidden console of its own and the switch lands there).
 - **`devLog.mjs` exists because deaths go unrecorded otherwise**: it keeps
   each child's output tail in memory and appends it to `dev-runner.log` on an
   abnormal exit — a `taskkill`, OS OOM-kill, native fault or vite crash

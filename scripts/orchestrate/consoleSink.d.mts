@@ -7,3 +7,10 @@ export function createSink(fd: number): { write(text: string): void };
 
 export const stdoutSink: { write(text: string): void };
 export const stderrSink: { write(text: string): void };
+
+/** Switch a Windows console to UTF-8 (65001); returns the restore function. */
+export function useUtf8ConsoleCodePage(deps?: {
+  platform?: string;
+  isTTY?: boolean;
+  chcp?: (args: string[]) => string | null;
+}): () => void;
