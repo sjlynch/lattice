@@ -27,7 +27,10 @@ The two sides of the wire:
   `../terminalServerClient/`) is the HTTP client — `proxyCreateSession`,
   `proxyListSessions`/`Count`/`…OrNull`, `proxyKillSession[sByCwd]`,
   `proxyShutdown`. `../terminalServerLifecycle.ts` owns spawn/respawn/health
-  (`BASE`, `ensureTerminalServer`) and the fingerprint check.
+  (`BASE`, `ensureTerminalServer`) and the fingerprint check. Each ConPTY spawn
+  blocks this process's event loop (~150 ms), so a spawn burst can miss the
+  500 ms health probe: `ensureTerminalServer` re-probes a timeout for up to
+  10 s rather than failing the spawn (it failed every restored Claude tab).
   `../terminalServerStatus.ts` reports it read-only (`GET
   /api/terminal-server/status` → `current`/`stale`/`absent`/`unavailable` +
   the session count a `stale` update is waiting on) for the navbar's

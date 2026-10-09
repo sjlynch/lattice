@@ -95,7 +95,7 @@ instead of expecting detail here.
 - `terminalServerAuth.ts` — persisted bearer token guarding the executor's mutating HTTP routes (`x-lattice-terminal-token`).
 - `persistedSecretFile.ts` — load-or-create for `~/.lattice` secrets (terminal token, `agentTokenSecret`): regenerates only on ENOENT (exclusive `wx` create) or an unusable value — **never overwrite a secret you couldn't read** (running executors / baked hook tokens still hold it).
 - `terminalFingerprint.ts` — hash of the executor's source bytes; every file the executor imports must be in `FINGERPRINT_FILES`.
-- `terminalServerLifecycle.ts` — spawn / respawn / health probe of the executor .
+- `terminalServerLifecycle.ts` — spawn / respawn / health probe of the executor. Only a refused connection is absence; a probe timeout (executor busy spawning ptys) is re-probed for up to 10 s — never a spawn beside it, never an instant spawn failure.
 - `terminalServerStatus.ts` — read-only `current|stale|absent|unavailable` for the navbar "update pending" chip; never triggers the upgrade itself.
 - `terminalServerClient.ts` / `terminalServerClient/` — backend HTTP client for the executor (probes, kills, the `POST /sessions` spawn chokepoint). See its `CLAUDE.md`.
 - `terminalProxy.ts` — public façade over lifecycle + client + `terminalWsRelay.ts`; its kill wrappers end terminal-registry records.

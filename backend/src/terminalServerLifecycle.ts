@@ -13,7 +13,9 @@ export const EXPECTED_TERMINAL_FINGERPRINT = computeTerminalFingerprint();
 export type TerminalProbe =
   | { kind: 'ready'; info: TerminalServerInfo }
   | { kind: 'absent' }
-  | { kind: 'unavailable'; error: string };
+  // `transient`: the listener didn't answer in time (timeout / reset) — a busy
+  // executor, not a wrong one. Identity / protocol failures are not transient.
+  | { kind: 'unavailable'; error: string; transient?: true };
 export type ProbeResult = 'ok' | 'stale' | 'dead' | 'unknown';
 
 // Refusal proves absence; timeouts, resets and HTML prove only uncertainty.
@@ -42,6 +44,7 @@ type LifecycleDeps = {
   fetch: typeof fetch; launch: () => ChildProcess;
   sleep: (ms: number) => Promise<void>; now: () => number;
   base: string; fingerprint: string; startupTimeoutMs: number; shutdownTimeoutMs: number;
+  busyRetryMs: number;
 };
 
 /** Injected lifecycle fixtures never spawn or kill a real terminal server. */
@@ -50,7 +53,7 @@ export function createTerminalLifecycle(overrides: Partial<LifecycleDeps> = {}) 
     fetch: (...args) => fetch(...args), launch: launchTerminalServer,
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)), now: Date.now,
     base: BASE, fingerprint: EXPECTED_TERMINAL_FINGERPRINT,
-    startupTimeoutMs: 5000, shutdownTimeoutMs: 3000, ...overrides,
+    startupTimeoutMs: 5000, shutdownTimeoutMs: 3000, busyRetryMs: 10_000, ...overrides,
   };
   let starting: Promise<TerminalServerInfo> | null = null;
   let lastDeferred = '';
@@ -81,7 +84,25 @@ export function createTerminalLifecycle(overrides: Partial<LifecycleDeps> = {}) 
       } };
     } catch (error) {
       return connectionRefused(error) ? { kind: 'absent' }
-        : { kind: 'unavailable', error: error instanceof Error ? error.message : String(error) };
+        : { kind: 'unavailable', error: error instanceof Error ? error.message : String(error), transient: true };
+    }
+  }
+
+  // Each Windows ConPTY spawn blocks the executor's event loop (~150 ms), so a
+  // burst — a restore pass relaunching every tab after a restart, Run All —
+  // can hold it past the 500 ms health timeout. Failing the spawn then ended
+  // restored tabs as `restore-failed` (never retried on open) and would fail
+  // task runs the same way. So a transient failure is re-probed with backoff
+  // for up to `busyRetryMs`. Only ever re-probes: uncertainty is not absence,
+  // so nothing is launched beside a busy executor.
+  async function probeThroughBusy(): Promise<TerminalProbe> {
+    const deadline = deps.now() + deps.busyRetryMs;
+    let delay = 200;
+    for (;;) {
+      const status = await probe();
+      if (status.kind !== 'unavailable' || !status.transient || deps.now() >= deadline) return status;
+      await deps.sleep(Math.min(delay, Math.max(1, deadline - deps.now())));
+      delay = Math.min(delay * 2, 2000);
     }
   }
 
@@ -134,7 +155,7 @@ export function createTerminalLifecycle(overrides: Partial<LifecycleDeps> = {}) 
   }
 
   async function performEnsure(): Promise<TerminalServerInfo> {
-    let status = await probe();
+    let status = await probeThroughBusy();
     if (status.kind === 'unavailable') throw new Error(`Terminal server unavailable: ${status.error}`);
     if (status.kind === 'ready') {
       const info = status.info;
@@ -147,7 +168,7 @@ export function createTerminalLifecycle(overrides: Partial<LifecycleDeps> = {}) 
         }
         return info;
       }
-      status = await probe();
+      status = await probeThroughBusy();
       if (status.kind === 'ready') return status.info;
       if (status.kind === 'unavailable') throw new Error(`Terminal server unavailable after idle upgrade: ${status.error}`);
     }
