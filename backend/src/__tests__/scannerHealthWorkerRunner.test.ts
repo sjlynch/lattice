@@ -273,7 +273,10 @@ test('runHealthAnalysis (real worker): a hung file is killed by the watchdog whi
       {
         onResult: (o) => outcomes.push(o),
         moduleUrls: { analyzeUrl: fixtureUrl, readUrl: fixtureUrl },
-        stallMs: 150,
+        // The stall budget also covers a cold worker's startup + first file;
+        // 150 ms let the watchdog kill the healthy a.ts under the parallel
+        // suite. The hang is infinite, so any finite budget proves the kill.
+        stallMs: 1_000,
       },
     );
     assert.deepEqual(res.unhandled, [], 'the scan completed despite the hang');
