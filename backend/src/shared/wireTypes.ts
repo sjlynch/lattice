@@ -14,3 +14,70 @@ export type {
   TerminalOwner,
   TerminalRecord,
 } from '../terminalRegistry/types.js';
+export type {
+  ProjectGitProbe,
+  ProjectGitState,
+  ProjectInitPreview,
+  ProjectInitResult,
+} from '../projectInit/types.js';
+export type {
+  GitCommit,
+  GitCommitChange,
+  GitFileStatus,
+  GitHistoryResult,
+  GitUncommitted,
+} from '../gitHistory/types.js';
+export type {
+  HarnessSystemPromptEditorEntry,
+  HarnessSystemPromptKind,
+} from '../harnessSystemPrompts/defs.js';
+export type {
+  InstructionTemplateEditorEntry,
+  InstructionTemplateToken,
+} from '../instructionTemplates/defs.js';
+export type {
+  DeadCodeStatus,
+  HalsteadMetrics,
+  HealthLanguage,
+  HealthMetrics,
+  HealthSmell,
+  HealthSmellId,
+  HealthUpdate,
+} from '../health/types.js';
+export type {
+  PostMergeHookEvent,
+  PostMergeHookRun,
+  PostMergeHookStatus,
+} from '../postMergeHooks/types.js';
+export type { EnvKind, EnvNoteInfo } from '../worktree/envDetect/catalog.js';
+export type {
+  MergeRun,
+  MergeRunErrorEntry,
+  MergeRunEvent,
+  MergeRunStatus,
+} from '../mergeRuns/types.js';
+export type { PushRun, StartPushRunResult } from '../pushRuns/types.js';
+export type { QaRun, StartQaRunResult } from '../qaRuns/types.js';
+export type { DirEntry, DirListing, DirRoot } from '../fsbrowse/types.js';
+export type { PiMenuEntry, PiModelInfo, PiModelsResult } from '../piModels/types.js';
+export type {
+  Workflow,
+  WorkflowRunHarnessOverride,
+  WorkflowStep,
+  WorkflowStepHarness,
+  WorkflowStepKind,
+  WorkflowStepTool,
+  WorkflowVariable,
+} from '../workflows/types.js';
+export type {
+  StartWorkflowPromptCustomizationInput,
+  WorkflowPromptCustomization,
+  WorkflowPromptCustomizationStatus,
+  WorkflowPromptTemplateId,
+} from '../workflowPromptCustomizations/types.js';
+export type {
+  WorkflowRun,
+  WorkflowRunEvent,
+  WorkflowRunStatus,
+  WorkflowStepExecution,
+} from '../workflowRuns/types.js';

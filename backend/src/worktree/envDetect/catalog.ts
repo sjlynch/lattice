@@ -25,6 +25,19 @@ export type DetectedEnv = {
   installCmd: string;
 };
 
+// A detected env plus its "fresh worktree, don't reinstall" note, as served by
+// GET /api/project-env (built in notes.ts / envDetect.ts).
+export type EnvNoteInfo = DetectedEnv & {
+  /** The built-in note Lattice would inject for this env. */
+  defaultNote: string;
+  /**
+   * What actually gets injected: the user's override if they set one in
+   * `UserSettings.worktreeEnvNotes`, else `defaultNote`. An empty string
+   * means the user suppressed the note for this env.
+   */
+  effectiveNote: string;
+};
+
 type ManagerResolution = {
   manager: string;
   installCmd: string;

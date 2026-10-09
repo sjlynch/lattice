@@ -1,15 +1,7 @@
-import type { DetectedEnv } from './detectors.js';
+import type { DetectedEnv } from './catalog.js';
 
-export type EnvNoteInfo = DetectedEnv & {
-  /** The built-in note Lattice would inject for this env. */
-  defaultNote: string;
-  /**
-   * What actually gets injected: the user's override if they set one in
-   * `UserSettings.worktreeEnvNotes`, else `defaultNote`. An empty string
-   * means the user suppressed the note for this env.
-   */
-  effectiveNote: string;
-};
+// Declared in catalog.ts (node-free) so the frontend can re-export it.
+export type { EnvNoteInfo } from './catalog.js';
 
 // The built-in note for a detected env. Single paragraph, no internal
 // newlines — so it composes cleanly into a markdown blockquote.

@@ -35,7 +35,7 @@ added here grows with every file in every project ever opened in the process.
 | `revision.ts` | `WatcherRevision`: per-path publication tokens and project-wide scan revision/pending-event tracking. |
 | `scanPublication.ts` | `ScanPublication`: capture scan ownership, copy live cache, conditionally seed watcher maps/cache/root inputs. |
 | `isolatedAnalyze.ts` | Shared warm `IsolatedAnalyzer`, serial job queue, stall watchdog, failure/cooldown policy and disposal. |
-| `types.ts` | `ProjectWatcher`, `Subscriber`, and the `HealthUpdate` union (`updated`, `removed`, `rescan`). |
+| `types.ts` | `ProjectWatcher`, `Subscriber`; re-exports the `HealthUpdate` union (`updated`, `removed`, `rescan`), declared node-free in `../types.ts` for the frontend. |
 
 ## Event and scan flow
 

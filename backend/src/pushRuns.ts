@@ -2,7 +2,7 @@
 // registry, home-scoped scratch paths, instruction rendering, Stop-hook setup,
 // session materialization, and guarded cleanup stay independently reviewable.
 
-export type { PushRun, PushSession } from './pushRuns/types.js';
+export type { PushRun, PushSession, StartPushRunResult } from './pushRuns/types.js';
 export {
   findCompletedPushRunForWorkflowStep,
   findRunningPushRunForWorkflowStep,

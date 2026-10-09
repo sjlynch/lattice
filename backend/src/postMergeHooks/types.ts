@@ -36,6 +36,13 @@ export type PostMergeHookRun = {
   stopBusy?: boolean;
 };
 
+// Lifecycle events fanned out by registry.ts (and over `/ws/post-merge-hooks`,
+// whose endpoint also sends a connect-time `idle`).
+export type PostMergeHookEvent =
+  | { type: 'started'; run: PostMergeHookRun }
+  | { type: 'progress'; run: PostMergeHookRun }
+  | { type: 'finished'; run: PostMergeHookRun };
+
 export type PostMergeHookSession = {
   id: string;
   cwd: string;

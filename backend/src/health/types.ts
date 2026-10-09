@@ -138,6 +138,22 @@ export type HealthMetrics = {
   smellCount: number;
 };
 
+// One `/ws/health` message from the file watcher (health/watcher/).
+export type HealthUpdate = {
+  type: 'updated';
+  filePath: string;
+  metrics: HealthMetrics;
+} | {
+  type: 'removed';
+  filePath: string;
+} | {
+  // Structural tree/config changes that cannot be represented as a single
+  // metrics patch. Frontend subscribers should refresh /api/scan.
+  type: 'rescan';
+  reason: 'config' | 'directory';
+  path: string;
+};
+
 export const TINY_FILE_LOC_THRESHOLD = 30;
 
 export const SMELL_LABELS: Record<HealthSmellId, string> = {

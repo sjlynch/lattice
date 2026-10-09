@@ -1,6 +1,6 @@
-// Wire shapes for "turn this folder into a git repo". The frontend declares
-// the same types against the same contract, so a field rename here is a
-// breaking change on the wire — not a local refactor.
+// Wire shapes for "turn this folder into a git repo". The frontend re-exports
+// them (shared/wireTypes.ts), so keep this module node-free; a field rename is
+// still a breaking change on the wire — not a local refactor.
 
 export type ProjectGitState =
   /** `<project>/.git` exists (dir OR file) → a normal Lattice project. */

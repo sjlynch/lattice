@@ -6,152 +6,28 @@
 // `/ws/workflow-runs` is constructed from a `WorkflowRunEvent` here.
 
 import { canonicalProjectPath } from '../projectPath.js';
-import type { Workflow, WorkflowStepHarness, WorkflowStepKind } from '../workflows.js';
+import type { WorkflowRun, WorkflowRunEvent } from './types.js';
 import { scheduleWorkflowRunPersist, writeWorkflowRunsNow } from './persistence.js';
-import { cloneWorkflowDefinition } from './definition.js';
+import { snapshot } from './snapshot.js';
 import { createEmitter } from '../emitter.js';
 
-export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
+// Callers import snapshot from here too (it lives in the leaf snapshot.ts so
+// persistence.ts needn't import this module).
+export { snapshot };
 
-export type WorkflowStepExecution = {
-  stepId: string;
-  phase: 'pending' | 'spawning' | 'running' | 'completing' | 'completed' | 'skipped' | 'errored' | 'cancelled';
-  sessionId?: string;
-  stopReceived?: WorkflowRun['stopReceived'];
-  error?: string;
-};
-
-export type WorkflowRun = {
-  id: string;
-  workflowId: string;
-  workflowName: string;
-  projectPath: string;
-  status: WorkflowRunStatus;
-  startedAt: number;
-  finishedAt?: number;
-  totalSteps: number;
-  // Compatibility anchor: the first runnable member of the current group.
-  currentStepIndex: number;
-  // New runs persist every member independently; absent on legacy serial runs.
-  activeStepIndices?: number[];
-  // Exclusive authored boundary, including any frozen members in the group.
-  groupEndIndex?: number;
-  stepStates?: Record<number, WorkflowStepExecution>;
-  harnessOverride?: WorkflowStepHarness;
-  // Pi model override for the run, applied to every step when harnessOverride
-  // is `pi`. Sibling to harnessOverride (two-field model, see piModels.ts).
-  piModelOverride?: string;
-  error?: string;
-  // The run's task round: every task Open or In Progress when the run started,
-  // plus every task its Start step launched or queued. The Merge step waits
-  // for these — not runs started by hand mid-workflow — to reach Ready to
-  // Merge before merging any.
-  // Absent on runs persisted before rounds existed: every task then counts.
-  roundTaskIds?: string[];
-  definition?: Workflow;
-  definitionError?: string;
-  stepPhase?: 'pending' | 'spawning' | 'running' | 'completing';
-  stepSessionId?: string;
-  // Per-step result text, keyed by step index. Today only Run tests ('test')
-  // steps write one: their TEST_SUMMARY.md (bounded) plus any Lattice notes
-  // (skipped / timed out / could not start) and the post-check of the commits
-  // the step made. Persisted in the mirror and carried on every snapshot, so
-  // the run strip can show it. See testStep/summary.ts.
-  stepSummaries?: Record<number, string>;
-  // Checkpoint of the Run tests step in flight (absent otherwise): the HEAD it
-  // started from (null = unborn/unreadable) and when its terminal actually
-  // spawned — the timeout is measured from that, and a re-adopting backend
-  // re-arms it from here. See testStep/.
-  testStep?: RunTestsCheckpoint;
-  // A Claude Stop-hook completion for this step that the quiescence gate is
-  // still holding (stopHookGate.ts) — `at` is the most recent such Stop.
-  // Persisted because the gate itself is an in-memory timer: a restart inside
-  // its settle window used to lose the completion outright (the hook got its
-  // 200, so nothing retries, and the agent is idle and won't Stop again), and
-  // the step hung until its timeout — or forever for an agent step. A
-  // re-adopting backend re-arms the gate from here. Only meaningful while
-  // `stepIndex === currentStepIndex`.
-  // `activeAt`: the last time the holding gate saw the session busy (throttled);
-  // `busy`: whether it was busy at that checkpoint — a restart then starts the
-  // quiet window at boot (agentQuiescence.ts markAgentReadopted).
-  stopReceived?: { stepIndex: number; at: number; activeAt?: number; busy?: boolean };
-};
-
-export type RunTestsCheckpoint = {
-  stepIndex: number;
-  startHead: string | null;
-  spawnedAt?: number;
-};
-
-export type WorkflowRunEvent =
-  | { type: 'started'; run: WorkflowRun }
-  | { type: 'progress'; run: WorkflowRun }
-  | { type: 'completed'; run: WorkflowRun }
-  | { type: 'errored'; run: WorkflowRun }
-  | { type: 'cancelled'; run: WorkflowRun }
-  | {
-      type: 'step-spawned';
-      runId: string;
-      projectPath: string;
-      stepIndex: number;
-      command: string;
-      cwd: string;
-      serverId?: string;
-      terminalId?: string;
-    }
-  // Emitted by the Start control step for each Open task it kicks off.
-  // The frontend turns each one into a task-tagged terminal tab in the
-  // sidebar so the user can watch (and intervene with) the spawned agent.
-  // Distinct from `step-spawned` (which is one-per-step) because Start
-  // fans out N task agents in a single step and each needs its own tab.
-  | {
-      type: 'workflow-task-spawned';
-      runId: string;
-      projectPath: string;
-      stepIndex: number;
-      taskId: string;
-      title: string;
-      command: string;
-      cwd: string;
-      serverId?: string;
-      terminalId?: string;
-    }
-  // Emitted by control-flow steps (Start/Merge/Push) so the frontend can
-  // render kind-specific progress in the run strip without spawning a
-  // terminal. `current`/`total` semantics differ per kind:
-  //   - start: tasks started / total open tasks
-  //   - merge: tasks moved to QA / total ready+conflict tasks at step entry
-  //   - push: 0..1 / 1 (binary; uses `message` to surface state)
-  //   - agent: 0 / 0 + `message` while a pre-run tool (an Opengrep scan) runs
-  //     before the harness spawns — the frontend clears it on `step-spawned`
-  | {
-      type: 'step-control-progress';
-      parallel?: boolean;
-      runId: string;
-      projectPath: string;
-      stepIndex: number;
-      kind: WorkflowStepKind;
-      current: number;
-      total: number;
-      message?: string;
-    };
+// The run's wire types live in types.ts (node-free, re-exported to the
+// frontend); re-exported here so existing `./state.js` importers keep working.
+export type {
+  RunTestsCheckpoint,
+  WorkflowRun,
+  WorkflowRunEvent,
+  WorkflowRunStatus,
+  WorkflowStepExecution,
+} from './types.js';
 
 export const runs = new Map<string, WorkflowRun>();
 const events = createEmitter<[WorkflowRunEvent]>('workflow-run');
 
-export function snapshot(run: WorkflowRun): WorkflowRun {
-  return {
-    ...run,
-    ...(run.activeStepIndices ? { activeStepIndices: [...run.activeStepIndices] } : {}),
-    ...(run.roundTaskIds ? { roundTaskIds: [...run.roundTaskIds] } : {}),
-    ...(run.stepStates ? { stepStates: Object.fromEntries(Object.entries(run.stepStates).map(([index, step]) =>
-      [index, { ...step, ...(step.stopReceived ? { stopReceived: { ...step.stopReceived } } : {}) }])) } : {}),
-    ...(run.definition ? { definition: cloneWorkflowDefinition(run.definition) } : {}),
-    ...(run.stepSummaries ? { stepSummaries: { ...run.stepSummaries } } : {}),
-    ...(run.testStep ? { testStep: { ...run.testStep } } : {}),
-    ...(run.stopReceived ? { stopReceived: { ...run.stopReceived } } : {}),
-  };
-}
 
 // A transition checkpoint is required before external work starts. Unlike the
 // UI's best-effort debounce, failure must prevent an unrecorded side effect.

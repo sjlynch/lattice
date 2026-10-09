@@ -3,12 +3,46 @@
 Domain-split TypeScript types for backend payloads. `index.ts` re-exports this
 folder, and `../types.ts` is the legacy compatibility shim.
 
-- Wire types the backend already declares come from
-  `backend/src/shared/wireTypes.ts`: `tasks.ts` (`Task`, `TaskStatus`) and
-  `terminalTabs.ts` (the `TerminalRecord` family) re-export them — never
-  redeclare one (hand mirrors drift). The other files are still hand-maintained
-  mirrors; when you touch a type whose backend module is node-free, move it to
-  `wireTypes.ts` and re-export it here (rules: `backend/src/shared/CLAUDE.md`).
+## Shared vs local
+
+A wire type the backend declares in a node-free module is re-exported from
+`backend/src/shared/wireTypes.ts` — never redeclared here (hand mirrors drift;
+an audit found ten that had). Rules for what may go there:
+`backend/src/shared/CLAUDE.md`.
+
+- **Shared (re-export only):** `tasks.ts` (`Task`), `terminalTabs.ts`
+  (`TerminalRecord` family), `git.ts`, `gitHistory.ts`, `health.ts` (incl.
+  `HealthUpdate`), `harnessSystemPrompts.ts`, `instructionTemplates.ts`,
+  `postMergeHooks.ts`, `projectEnv.ts`, `runs.ts`, `workflows.ts` (definitions,
+  `WorkflowRun`, prompt customizations), `scan.ts`'s `DirListing` family, and
+  `settings.ts`'s Pi model types. Local names may alias a backend name
+  (`InstructionTemplate` = `InstructionTemplateEditorEntry`).
+- **Composed here from shared types** (the frontend genuinely differs):
+  WS envelopes the endpoint adds outside the backend union — `idle` in
+  `MergeRunEvent` / `PostMergeHookEvent`, `hello` in `WorkflowRunEvent`
+  (`backend/src/ws/endpoints/`); `ProjectInitResult` (`{ ok: true } &` the
+  backend result — the route adds `ok`); `RestoreSummary` (optional
+  `relaunchedIds` for an older backend); `PushRunStatus` / `QaRunStatus`;
+  `StartWorkflowPromptCustomizationInput` (stricter than the backend's: the UI
+  always sends `stepTitle` and a concrete `harness`).
+- **Frontend-only:** request/response wrappers and UI shapes
+  (`WorkflowQueueEntry`, `WorkflowRunStartOptions`, `TerminalLaunchSettings`,
+  `PostMergeHookSnapshot`, `ProjectEnvResponse`, …) and runtime values
+  (`RUN_TESTS_*` minutes, `DEFAULT_METRICS_IGNORED_EXTS`) — `wireTypes.ts` is
+  type-only, so keep those equal to the backend by hand.
+- **Still hand mirrors** — their backend module reaches node, so check the
+  backend when you touch one: `opengrep.ts` (every `backend/src/opengrep/`
+  module imports node), `settings.ts`'s `UserSettings` (via
+  `opengrep/settings.ts`), `scan.ts`'s `GraphNode` / `ScanResult` /
+  `SearchResult` (`scanner/`, `search.ts`), `PiProbeModel`
+  (`piModels/probe.ts`). To share one, move the type into a node-free module
+  first (as `HealthUpdate`, `EnvNoteInfo`, the `*EditorEntry` types and
+  `WorkflowRun` were) and re-export it from its old module.
+
+## Conventions
+
+- Where the backend always sends a field, use its required type rather than an
+  optional local copy.
 - Keep request/response shapes close to the API module that consumes them
   (`tasks`, `workflows`, `runs`, `settings`, etc.).
 - Prefer explicit string unions that mirror backend types over loose `string`

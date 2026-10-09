@@ -37,3 +37,14 @@ export type QaSession = {
   cwd: string;
   instructionsFile: string;
 };
+
+// POST /api/qa-runs response (routes/qaRuns/responses.ts): enough for the UI
+// to mount the pre-spawned terminal and track the run.
+export type StartQaRunResult = {
+  id: string;
+  taskId: string;
+  command: string;
+  cwd: string;
+  serverId?: string;
+  terminalId?: string;
+};

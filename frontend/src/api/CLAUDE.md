@@ -33,9 +33,10 @@ effects (`../terminal/terminalApi.ts`) and React state (feature hooks).
 
 Wire types and task runs:
 
-- `types/tasks.ts` and `types/terminalTabs.ts` re-export the backend's own
-  types from `backend/src/shared/wireTypes.ts` — never redeclare a type the
-  backend declares in a node-free module (hand mirrors drift).
+- `types/*` re-export the backend's own wire types from
+  `backend/src/shared/wireTypes.ts` — never redeclare a type the backend
+  declares in a node-free module (hand mirrors drift). What is still local and
+  why: `types/CLAUDE.md`.
 - `runTask` / `resumeTask` return `{accepted, queued}`: `accepted` means
   admitted to the spawn queue, not started. The pty arrives later via the
   `/ws/tasks` `task-spawned` event (`subscribeTasks` `onSpawned`); never re-POST

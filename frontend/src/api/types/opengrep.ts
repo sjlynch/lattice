@@ -30,6 +30,8 @@ export type OpengrepRulePackStatus = {
   licence: string;
   note: string;
   defaultEnabled: boolean;
+  // Top-level paths removed from the pack checkout after download.
+  prune: string[];
   dir: string;
   installed: {
     commit: string;
@@ -73,7 +75,7 @@ export type OpengrepStatus = {
   project?: {
     path: string;
     scanning: boolean;
-    runningScan?: { id: string; startedAt: number } | null;
+    runningScan: { id: string; startedAt: number } | null;
     lastScan: OpengrepScanRecord | null;
   };
 };
@@ -119,14 +121,14 @@ export type OpengrepGraphResult = {
   errors: number;
   partiallyParsed: number;
   skippedRules: number;
-  findings?: OpengrepFinding[];
-  allFindings?: OpengrepFinding[];
-  bySeverity?: Record<OpengrepSeverity, number>;
-  total?: number;
-  dropped?: { belowFloor: number; ignoredRules: number; ignoredFingerprints: number; duplicates: number };
-  filter?: { severityFloor: OpengrepSeverity; ignoreRuleIds: string[]; ignoreFingerprints: string[] };
-  freshness?: { state: 'current' | 'changed' | 'unknown'; changedFiles: number; configurationChanged: boolean; checkedAt: number };
-  caveats?: { errors: { kind: string; level: string; message: string; path?: string }[]; partiallyParsed: string[] };
+  findings: OpengrepFinding[];
+  allFindings: OpengrepFinding[];
+  bySeverity: Record<OpengrepSeverity, number>;
+  total: number;
+  dropped: { belowFloor: number; ignoredRules: number; ignoredFingerprints: number; duplicates: number };
+  filter: { severityFloor: OpengrepSeverity; ignoreRuleIds: string[]; ignoreFingerprints: string[] };
+  freshness: { state: 'current' | 'changed' | 'unknown'; changedFiles: number; configurationChanged: boolean; checkedAt: number };
+  caveats: { errors: { kind: string; level: string; message: string; path?: string }[]; partiallyParsed: string[] };
 };
 
 export type FindingDisposition = {

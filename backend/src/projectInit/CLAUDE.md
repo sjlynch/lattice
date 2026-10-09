@@ -10,8 +10,9 @@ Without it, opening a non-repo folder dead-ends: `routes/tasks/projectValidation
 
 ## Files
 
-- `types.ts` — the wire contract shared with the frontend (`ProjectGitState`,
-  `ProjectGitProbe`, `ProjectInitPreview`, `ProjectInitResult`) plus
+- `types.ts` — the wire contract the frontend re-exports via
+  `../shared/wireTypes.ts` (`ProjectGitState`, `ProjectGitProbe`,
+  `ProjectInitPreview`, `ProjectInitResult`; keep it node-free) plus
   `ProjectInitError`, the typed failure whose `code` the route maps to
   409 / 422 / 500 / 503.
 - `probe.ts` — `probeProjectGit(project)`. `fs.stat(<project>/.git)` fast path

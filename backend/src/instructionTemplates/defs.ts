@@ -57,6 +57,20 @@ export type InstructionTemplateDef = {
   tokens: InstructionTemplateToken[];
 };
 
+// One entry of GET /api/instruction-templates (built by editorData.ts): the
+// default, the project's override-or-default text and the token docs. Lives
+// here, not beside its builder, so the frontend can re-export it node-free
+// (backend/src/shared/wireTypes.ts).
+export type InstructionTemplateEditorEntry = {
+  id: string;
+  title: string;
+  filename: string;
+  description: string;
+  defaultTemplate: string;
+  currentTemplate: string;
+  tokens: InstructionTemplateToken[];
+};
+
 // ---------------------------------------------------------------------------
 // Catalog (template + token docs) consumed by the settings editor.
 // ---------------------------------------------------------------------------

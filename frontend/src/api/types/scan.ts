@@ -1,4 +1,15 @@
+// Source-graph scan, content search and folder-browser payloads. The folder
+// browser's `DirListing` family is the backend's own
+// (backend/src/fsbrowse/types.ts, re-exported through
+// backend/src/shared/wireTypes.ts). The graph/search types stay declared here:
+// their backend modules (scanner/, search.ts) import node.
 import type { HealthMetrics } from './health';
+
+export type {
+  DirEntry,
+  DirListing,
+  DirRoot,
+} from '../../../../backend/src/shared/wireTypes';
 
 export type GraphNode = {
   id: string;
@@ -29,13 +40,4 @@ export type SearchResult = {
   matches: string[];
   scanned: number;
   truncated: boolean;
-};
-
-export type DirEntry = { name: string; path: string };
-export type DirRoot = { name: string; path: string };
-export type DirListing = {
-  path: string;
-  parent: string | null;
-  roots?: DirRoot[];
-  entries: DirEntry[];
 };

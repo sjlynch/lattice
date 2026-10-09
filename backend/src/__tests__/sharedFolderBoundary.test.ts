@@ -12,6 +12,17 @@ import { fileURLToPath } from 'node:url';
 const SRC = fileURLToPath(new URL('..', import.meta.url));
 const SHARED = path.join(SRC, 'shared');
 const SPECIFIER = /(?:^|\n)\s*(?:import|export)\b[^'"]*?from\s*['"]([^'"]+)['"]|(?:^|\n)\s*import\s*['"]([^'"]+)['"]/g;
+// `import('./x.js')` anywhere: an inline type import (`import('./triage.js').X`
+// in a type position) or a dynamic import. The frontend type-checks both, so a
+// node-reaching one must fail here, not only in `tsc -b`.
+const IMPORT_CALL = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
+
+function specifiersOf(text: string): string[] {
+  return [
+    ...[...text.matchAll(SPECIFIER)].map((m) => m[1] ?? m[2]),
+    ...[...text.matchAll(IMPORT_CALL)].map((m) => m[1]),
+  ];
+}
 
 function resolveTs(fromFile: string, spec: string): string {
   const base = path.resolve(path.dirname(fromFile), spec).replace(/\.js$/, '');
@@ -30,8 +41,7 @@ test('every module reachable from shared/ imports only relative, node-free modul
     if (seen.has(file)) continue;
     seen.add(file);
     const text = fs.readFileSync(file, 'utf8');
-    for (const m of text.matchAll(SPECIFIER)) {
-      const spec = m[1] ?? m[2];
+    for (const spec of specifiersOf(text)) {
       if (!spec.startsWith('.')) {
         violations.push(`${path.relative(SRC, file)} imports '${spec}'`);
         continue;

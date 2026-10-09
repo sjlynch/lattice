@@ -1,64 +1,25 @@
-export type MergeRunStatus =
-  | 'running'
-  | 'completed'
-  | 'cancelled'
-  | 'errored';
+// Merge-run, push-run and QA-run payloads — the backend's own types
+// (backend/src/{mergeRuns,pushRuns,qaRuns}/types.ts, re-exported through
+// backend/src/shared/wireTypes.ts). Only the WS envelope and the polled
+// statuses are composed here.
+import type {
+  MergeRunEvent as BackendMergeRunEvent,
+  PushRun,
+  QaRun,
+} from '../../../../backend/src/shared/wireTypes';
 
-export type MergeRunErrorEntry = { taskId: string; error: string };
+export type {
+  MergeRun,
+  MergeRunErrorEntry,
+  MergeRunStatus,
+  StartPushRunResult,
+  StartQaRunResult,
+} from '../../../../backend/src/shared/wireTypes';
 
-export type MergeRun = {
-  id: string;
-  projectPath: string;
-  status: MergeRunStatus;
-  startedAt: number;
-  finishedAt?: number;
-  total: number;
-  processed: number;
-  current?: string;
-  merged: string[];
-  conflicted: string[];
-  errored: MergeRunErrorEntry[];
-  cancelRequested: boolean;
-};
+// `/ws/merge-runs` also sends `idle` on connect when no run is active
+// (ws/endpoints/mergeRuns.ts), so the client can clear stale run state.
+export type MergeRunEvent = BackendMergeRunEvent | { type: 'idle' };
 
-export type MergeRunEvent =
-  | { type: 'started'; run: MergeRun }
-  | { type: 'progress'; run: MergeRun }
-  | {
-      type: 'conflict';
-      runId: string;
-      projectPath: string;
-      taskId: string;
-      command: string;
-      cwd: string;
-      conflictedFiles: string[];
-      serverId?: string;
-      terminalId?: string;
-    }
-  | { type: 'completed'; run: MergeRun }
-  | { type: 'cancelled'; run: MergeRun }
-  | { type: 'idle' };
-
-export type StartPushRunResult = {
-  id: string;
-  command: string;
-  cwd: string;
-  serverId?: string;
-  terminalId?: string;
-};
-
-export type PushRunStatus = 'running' | 'done';
-
-// A QA e2e run: a Playwright-enabled Claude session that exercises one merged
-// QA-lane task end-to-end. Spawned per task from the QA lane when the
-// Playwright MCP toggle is on.
-export type StartQaRunResult = {
-  id: string;
-  taskId: string;
-  command: string;
-  cwd: string;
-  serverId?: string;
-  terminalId?: string;
-};
-
-export type QaRunStatus = 'running' | 'done';
+// `status` of the polled `GET /api/push-runs/:id` / `GET /api/qa-runs/:id`.
+export type PushRunStatus = PushRun['status'];
+export type QaRunStatus = QaRun['status'];

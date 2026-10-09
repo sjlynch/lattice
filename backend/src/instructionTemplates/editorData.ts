@@ -6,18 +6,10 @@ import { canonicalProjectPath } from '../projectPath.js';
 import { getUserSettings } from '../userSettings.js';
 import {
   INSTRUCTION_TEMPLATE_CATALOG,
-  type InstructionTemplateToken,
+  type InstructionTemplateEditorEntry,
 } from './defs.js';
 
-export type InstructionTemplateEditorEntry = {
-  id: string;
-  title: string;
-  filename: string;
-  description: string;
-  defaultTemplate: string;
-  currentTemplate: string;
-  tokens: InstructionTemplateToken[];
-};
+export type { InstructionTemplateEditorEntry } from './defs.js';
 
 export async function buildInstructionTemplateEditorData(
   project: string,

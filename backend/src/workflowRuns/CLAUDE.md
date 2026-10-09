@@ -10,9 +10,12 @@ definitions + `{{var}}` interpolation (`../workflows/`), routes
 ## Map
 
 **Run registry / state**
-- `state.ts` — `WorkflowRun` / `WorkflowRunEvent`, the `runs` map, `notify`,
-  `checkpointWorkflowRun`, round helpers. Sole source of `/ws/workflow-runs`
-  payloads: keep event shapes (esp. `step-spawned`) stable.
+- `types.ts` — the run wire types (`WorkflowRun`, `WorkflowStepExecution`,
+  `WorkflowRunEvent`): types only, node-free (the frontend re-exports them via
+  `../shared/wireTypes.ts`); `state.ts` re-exports them.
+- `state.ts` — the `runs` map, `notify`, `checkpointWorkflowRun`, round
+  helpers. Sole source of `/ws/workflow-runs` payloads: keep event shapes
+  (esp. `step-spawned`) stable.
 - `definition.ts` — the frozen per-run definition copy + validated read-back.
 - `execution.ts` — group policy (`nextStepGroup`, `openStepGroup`) +
   per-member state helpers.

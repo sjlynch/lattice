@@ -14,6 +14,7 @@ import {
   getPushRun,
   markPushRunCompleted,
   startPushSession,
+  type StartPushRunResult,
 } from '../pushRuns.js';
 import { pushAgentId } from '../pushRuns/stopHook.js';
 import { readProjectParam, relativeProjectError } from './projectParam.js';
@@ -74,7 +75,7 @@ export function buildPushRunsRouter(backendOrigin: string): Router {
         cwd: started.cwd,
         serverId: started.serverId,
         terminalId: started.terminalId,
-      });
+      } satisfies StartPushRunResult);
     } catch (err) {
       res.status(500).json({ error: (err as Error).message });
     }

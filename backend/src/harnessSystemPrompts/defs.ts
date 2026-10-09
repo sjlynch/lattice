@@ -48,6 +48,16 @@ export type HarnessSystemPromptDef = {
   sourceLabel?: string;
 };
 
+// One entry of GET /api/harness-system-prompts (built by editorData.ts). Lives
+// here, not beside its builder, so the frontend can re-export it node-free
+// (backend/src/shared/wireTypes.ts).
+export type HarnessSystemPromptEditorEntry = HarnessSystemPromptDef & {
+  // The project's saved override for each side, or '' when unset. Seeds the
+  // editor textareas; a blank value falls back to the harness default.
+  currentAppend: string;
+  currentReplace: string;
+};
+
 const CLAUDE_DEFAULT_PROMPT = `Not shown — Claude Code's built-in system prompt is proprietary and is NOT
 published by Anthropic. No \`claude\` command prints it, so Lattice can't
 display the real text without guessing.

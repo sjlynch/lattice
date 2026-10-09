@@ -3,19 +3,11 @@
 // The JSON shapes here are load-bearing — the frontend poller reads them — so
 // they must not drift.
 
-import type { StartedQaSession } from '../../qaRuns.js';
-import type { QaRun } from '../../qaRuns.js';
+import type { QaRun, StartedQaSession, StartQaRunResult } from '../../qaRuns.js';
 
 // The started-run payload the POST /api/qa-runs caller gets back (enough to
 // mount the pre-spawned terminal and track the run).
-export function startedQaRunResponse(started: StartedQaSession): {
-  id: string;
-  taskId: string;
-  command: string;
-  cwd: string;
-  serverId?: string;
-  terminalId?: string;
-} {
+export function startedQaRunResponse(started: StartedQaSession): StartQaRunResult {
   return {
     id: started.id,
     taskId: started.taskId,

@@ -27,8 +27,18 @@ comments, and several had drifted.
 - `workflowVariables.ts` — the `{{name}}` grammar, `normalizeVariableName`,
   `USER_INSTRUCTIONS_VAR`.
 - `terminalLabels.ts` — `shortLabel` for terminal tabs.
-- `wireTypes.ts` — type-only re-exports of wire types (`Task`, `TerminalRecord`
-  family) that `frontend/src/api/types/*` re-export instead of redeclaring.
-  Other `frontend/src/api/types/*` files are still hand-maintained mirrors;
-  move a type here when you touch it (its backend module must be node-free —
-  e.g. `McpSpawnScope` moved to `../mcp/spawnScope.ts` for this).
+- `wireTypes.ts` — type-only re-exports (`export type { … } from`, nothing
+  else) of the wire types `frontend/src/api/types/*` re-export instead of
+  redeclaring: tasks, terminal registry, project init, git history, health
+  (incl. `HealthUpdate`), harness-prompt / instruction-template editor entries,
+  post-merge hooks, project env notes, merge / push / QA runs, folder browser,
+  Pi models, workflows, workflow runs and prompt customizations. Which
+  frontend types are still hand mirrors, and why:
+  `frontend/src/api/types/CLAUDE.md`.
+- Adding one: its backend module — and every module reachable from it, inline
+  `import('…')` types included — must be node-free and npm-free. If it isn't,
+  move the TYPE into a node-free types module and re-export it from the old
+  module so backend importers don't change (`McpSpawnScope` →
+  `../mcp/spawnScope.ts`, `WorkflowRun` → `../workflowRuns/types.ts`,
+  `HealthUpdate` → `../health/types.ts`, the `*EditorEntry` types → their
+  `defs.ts`). Never move runtime code for this.

@@ -7,8 +7,10 @@ import {
   readString,
 } from '../homeScratch/persistence.js';
 import { postMergeHookPaths } from './paths.js';
-import type { PostMergeHookRun, PostMergeHookStatus } from './types.js';
+import type { PostMergeHookEvent, PostMergeHookRun, PostMergeHookStatus } from './types.js';
 import { createEmitter } from '../emitter.js';
+
+export type { PostMergeHookEvent } from './types.js';
 
 export {
   beginPostMergeHookTrigger,
@@ -119,11 +121,6 @@ export function restorePostMergeHook(run: PostMergeHookRun): boolean {
   notify({ type: 'started', run: { ...canonicalRun } });
   return true;
 }
-
-export type PostMergeHookEvent =
-  | { type: 'started'; run: PostMergeHookRun }
-  | { type: 'progress'; run: PostMergeHookRun }
-  | { type: 'finished'; run: PostMergeHookRun };
 
 type Listener = (event: PostMergeHookEvent) => void;
 const events = createEmitter<[PostMergeHookEvent]>('post-merge-hook');

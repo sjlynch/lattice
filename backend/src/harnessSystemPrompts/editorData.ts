@@ -7,15 +7,10 @@ import { canonicalProjectPath } from '../projectPath.js';
 import { getUserSettings } from '../userSettings.js';
 import {
   HARNESS_SYSTEM_PROMPT_CATALOG,
-  type HarnessSystemPromptDef,
+  type HarnessSystemPromptEditorEntry,
 } from './defs.js';
 
-export type HarnessSystemPromptEditorEntry = HarnessSystemPromptDef & {
-  // The project's saved override for each side, or '' when unset. Seeds the
-  // editor textareas; a blank value falls back to the harness default.
-  currentAppend: string;
-  currentReplace: string;
-};
+export type { HarnessSystemPromptEditorEntry } from './defs.js';
 
 export async function buildHarnessSystemPromptEditorData(
   project: string,

@@ -2,23 +2,11 @@ import type { TreeWatcher } from '../../watchTree.js';
 import type { HealthCache } from '../cache.js';
 import type { ConfigReloader } from '../configReloader.js';
 import type { CrossFileAnalyzer } from '../crossFileAnalyzer.js';
-import type { HealthMetrics } from '../types.js';
+import type { HealthMetrics, HealthUpdate } from '../types.js';
 import type { WatcherRevision } from './revision.js';
 
-export type HealthUpdate = {
-  type: 'updated';
-  filePath: string;
-  metrics: HealthMetrics;
-} | {
-  type: 'removed';
-  filePath: string;
-} | {
-  // Structural tree/config changes that cannot be represented as a single
-  // metrics patch. Frontend subscribers should refresh /api/scan.
-  type: 'rescan';
-  reason: 'config' | 'directory';
-  path: string;
-};
+// Declared beside HealthMetrics (node-free) so the frontend can re-export it.
+export type { HealthUpdate } from '../types.js';
 
 export type Subscriber = (update: HealthUpdate) => void;
 

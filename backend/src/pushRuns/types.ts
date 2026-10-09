@@ -31,3 +31,13 @@ export type PushSession = {
   cwd: string;
   instructionsFile: string;
 };
+
+// POST /api/push-runs response (routes/pushRuns.ts): enough for the UI to
+// mount the pre-spawned terminal and poll the run.
+export type StartPushRunResult = {
+  id: string;
+  command: string;
+  cwd: string;
+  serverId?: string;
+  terminalId?: string;
+};

@@ -1,30 +1,12 @@
 // Types for GET /api/project-env — auto-detected package-manager environments
-// and the "fresh worktree, don't reinstall" notes. See backend
-// worktree/envDetect.ts.
+// and the "fresh worktree, don't reinstall" notes. Each entry is the backend's
+// own `EnvNoteInfo` (backend/src/worktree/envDetect/catalog.ts, re-exported
+// through backend/src/shared/wireTypes.ts): `defaultNote` is what Lattice
+// injects by default; `effectiveNote` is the user override if set, else the
+// default ('' means the user suppressed it).
+import type { EnvNoteInfo } from '../../../../backend/src/shared/wireTypes';
 
-export type ProjectEnvKind =
-  | 'node'
-  | 'python'
-  | 'rust'
-  | 'ruby'
-  | 'php'
-  | 'go'
-  | 'maven'
-  | 'gradle'
-  | 'dotnet';
-
-export type ProjectEnvInfo = {
-  id: ProjectEnvKind;
-  label: string;
-  heavyDir: string;
-  manager: string;
-  installCmd: string;
-  // The note Lattice would inject by default for this env.
-  defaultNote: string;
-  // What actually gets injected (user override if set, else defaultNote;
-  // '' means the user suppressed it).
-  effectiveNote: string;
-};
+export type ProjectEnvInfo = EnvNoteInfo;
 
 export type ProjectEnvResponse = {
   environments: ProjectEnvInfo[];

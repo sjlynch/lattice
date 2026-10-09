@@ -1,7 +1,7 @@
-// Types for the Lattice API. `tasks.ts` and `terminalTabs.ts` re-export the
-// backend's own wire types (backend/src/shared/wireTypes.ts); the rest are
-// still hand-maintained mirrors — move a type to the shared re-export when you
-// touch it (see backend/src/shared/CLAUDE.md).
+// Types for the Lattice API. Wire types the backend declares in a node-free
+// module are re-exported from backend/src/shared/wireTypes.ts; the files here
+// only compose WS envelopes / request bodies from them or declare what the
+// backend can't share yet (see ./CLAUDE.md for which and why).
 
 export * from './health';
 export * from './scan';

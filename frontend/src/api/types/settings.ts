@@ -17,6 +17,9 @@ export type TerminalLaunchSettings = {
   codexYolo: boolean;
 };
 
+// Hand mirror of backend userSettings/types.ts `UserSettings` — it can't be
+// re-exported through wireTypes.ts: its `opengrep` field's module
+// (opengrep/settings.ts) reaches node. Add a field on both sides at once.
 export type UserSettings = {
   sidebarWidth?: number;
   // Terminal sidebar dragged to the full page width (graph hidden). While
@@ -52,6 +55,10 @@ export type UserSettings = {
   // Extensions (leading dot, lowercase) to skip when rendering the LOC
   // (`z`) and code-health (`h`) overlays. Absent = `DEFAULT_METRICS_IGNORED_EXTS`.
   metricsIgnoredExts?: string[];
+  // Extra entry-point globs (project-relative, `**`/`*`/`?`) for the dead-code
+  // (`D`) overlay's reachability pass: matching files count as live roots even
+  // when nothing imports them. See backend userSettings/types.ts.
+  deadCodeEntryGlobs?: string[];
   // Optional post-merge hook. See backend userSettings.ts.
   postMergeHookPrompt?: string;
   // Master on/off switch for the post-merge hook. The hook fires only when it
@@ -225,24 +232,16 @@ export function effectiveMetricsIgnoredExts(
 
 export type { HarnessAvailability };
 
-// --- Pi model discovery (GET /api/pi-models). See backend piModels.ts. ---
+// --- Pi model discovery (GET /api/pi-models): the backend's own types
+// (backend/src/piModels/types.ts, re-exported through
+// backend/src/shared/wireTypes.ts). `PiMenuEntry.label` excludes the "Pi — "
+// prefix; `PiModelInfo.pattern` is the `pi --model` value. ---
 
-export type PiModelInfo = {
-  provider: string;
-  model: string;
-  pattern: string; // `${provider}/${model}` — value for `pi --model`
-  contextWindow?: string;
-  thinking?: boolean;
-};
-
-// One curated dropdown entry. `label` excludes the "Pi — " prefix.
-export type PiMenuEntry = { pattern: string; label: string };
-
-export type PiModelsResult = {
-  models: PiModelInfo[];
-  menu: PiMenuEntry[];
-  defaultPattern: string | null;
-};
+export type {
+  PiMenuEntry,
+  PiModelInfo,
+  PiModelsResult,
+} from '../../../../backend/src/shared/wireTypes';
 
 // One model reported by an endpoint probe (POST /api/pi-endpoints/probe).
 // `contextWindow` is present only when the server advertised one (vLLM's
