@@ -6,9 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "typecheck": "tsc -b",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node --import tsx --test src/__tests__/*.test.ts"
+    "test": "node --import tsx --test --test-reporter=../scripts/testReporter.mjs src/__tests__/*.test.ts",
+    "test:file": "node --import tsx --test --test-reporter=../scripts/testReporter.mjs"
   },
   "dependencies": {
     "@vitejs/plugin-react-swc": "^4.3.0",

@@ -22,6 +22,13 @@ handshake, backend deps) is `backend/scripts/dev.mjs` —
   helpers (child spawn/kill, health poll, log prefixing, console sink, crash
   log, control protocol) live in `orchestrate/` — keep them there; see
   [orchestrate/CLAUDE.md](orchestrate/CLAUDE.md).
+- `workspace.mjs` — the root `npm run typecheck` / `npm test` /
+  `npm run test:file -- <path or module>`: runs each package's own
+  `package.json` script with that package as cwd (node spawned directly — no
+  shell, no `--prefix`), backend then frontend.
+- `testReporter.mjs` — the node:test reporter both packages' tests use: failing
+  tests with their error, captured console output of failing files only, one
+  summary line. Agents read test output; there is deliberately no verbose mode.
 - `opengrep-pin.mjs` — maintainer tool that bumps the Opengrep engine pin.
 - `soak/` — the self-hosting soak; see [soak/CLAUDE.md](soak/CLAUDE.md).
 

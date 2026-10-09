@@ -4,6 +4,9 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/devLoop.mjs",
+    "typecheck": "node scripts/workspace.mjs typecheck",
+    "test": "node scripts/workspace.mjs test",
+    "test:file": "node scripts/workspace.mjs test-file",
     "install:all": "npm install && npm --prefix backend install && npm --prefix frontend install",
     "test:e2e": "playwright test"
   },

@@ -1,0 +1,6 @@
+# Kept out of default ripgrep searches (agents' Grep/Glob tools): lockfiles and
+# recorded fixtures are large and match almost any dependency or field name.
+# Still readable directly, and searchable with `rg --no-ignore`.
+package-lock.json
+pnpm-lock.yaml
+backend/src/__tests__/fixtures/
