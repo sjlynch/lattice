@@ -5,45 +5,16 @@
 //
 // The provider list arrives as untrusted JSON off the /api/global-settings
 // PATCH, so only well-formed entries survive: a non-empty `id` + `baseUrl`, and
-// each model at least an `id`. The PiProvider/PiProviderModel types live here
-// (next to their validator and their piModels.ts consumer) and are re-exported
-// from globalSettings.ts for back-compat. Split out of globalSettings.ts (the
-// read/write facade); exercised directly by __tests__/piModels.test.ts.
+// each model at least an `id`. The PiProvider/PiProviderModel types are
+// declared in the node-free piModels/types.ts (the frontend shares them) and
+// re-exported here and from globalSettings.ts for back-compat. Split out of
+// globalSettings.ts (the read/write facade); exercised directly by
+// __tests__/piModels.test.ts.
 
 import { sanitizeThinkingLevels } from './piModels/thinkingLevels.js';
+import type { PiProvider, PiProviderModel } from './piModels/types.js';
 
-export type PiProviderModel = {
-  id: string;
-  name?: string;
-  reasoning?: boolean;
-  contextWindow?: number;
-  maxTokens?: number;
-  // The `reasoning_effort` tokens this endpoint said it accepts, detected once
-  // per model (piModels/probe.ts `probeThinkingLevels`). Reconcile turns this
-  // into Pi's `thinkingLevelMap`, which is the ONLY way `xhigh` / `max` become
-  // reachable — without it Pi silently clamps them to `high`.
-  thinkingLevels?: string[];
-};
-
-export type PiProvider = {
-  id: string; // models.json provider key
-  baseUrl: string;
-  api?: string; // default 'openai-completions'
-  // Literal, `$VAR` / `${VAR}` env interpolation, or `!command` — Pi resolves
-  // all three at request time. NOTE a bare `MY_API_KEY` is a LITERAL to Pi, not
-  // an env lookup. Lattice's probe resolves none of them (see piModels/probe.ts).
-  apiKey?: string;
-  // Absent leaves existing models.json overrides alone; an explicit empty map
-  // clears them. Keep empty maps through validation and persisted settings.
-  headers?: Record<string, string>;
-  compat?: Record<string, unknown>;
-  // Keep `models` in sync with whatever `<baseUrl>/models` currently reports.
-  // Absent means ON: an endpoint saved before auto-discovery existed, or added
-  // by someone who never opened Advanced, should still end up working rather
-  // than sitting there with an empty model list. See piModels/autoDiscover.ts.
-  autoDiscover?: boolean;
-  models: PiProviderModel[];
-};
+export type { PiProvider, PiProviderModel } from './piModels/types.js';
 
 // Defensive shape validation for Lattice-managed Pi providers. Keeps only
 // well-formed entries (a non-empty id + baseUrl and at least the model id) and

@@ -3,46 +3,17 @@
 // presence booleans + last-4 hints only.
 
 import { patchJson, postJson } from './http';
+import type { McpServerEntry } from '../../../backend/src/shared/wireTypes';
 
-export type McpRuntime = 'node' | 'uv' | 'docker' | 'remote';
-
-export type McpSecretRequirement = {
-  envVar: string;
-  label: string;
-  getKeyUrl?: string;
-};
-
-export type McpHarnessSupport = {
-  claude: boolean;
-  codex: boolean;
-  pi: boolean;
-};
-
-export type McpServerEntry = {
-  id: string;
-  label: string;
-  description: string;
-  transport: 'stdio' | 'http';
-  command?: string;
-  args?: string[];
-  env?: Record<string, string>;
-  url?: string;
-  headers?: Record<string, string>;
-  runtime: McpRuntime;
-  requiresSecret?: McpSecretRequirement;
-  secretEnvVars?: string[];
-  // HTTP header names whose values live in the secrets file (an imported auth
-  // header). Mirror of the backend field; the resolver re-injects them at spawn.
-  secretHeaders?: string[];
-  harnessSupport: McpHarnessSupport;
-  runtimeNote?: string;
-  builtin?: boolean;
-  // Resolves ON when the project has no explicit per-harness override. Backend
-  // sets it on FIRST-PARTY servers only (today: `lattice`), so the MCP tab's
-  // switches must read `overrides[id] ?? !!defaultEnabled` rather than treating
-  // an absent override as off. Mirror of the backend field.
-  defaultEnabled?: boolean;
-};
+// The backend's own server-entry types (backend/src/mcp/types.ts, re-exported
+// through backend/src/shared/wireTypes.ts). The MCP tab's switches read
+// `overrides[id] ?? !!defaultEnabled` — `defaultEnabled` is first-party only.
+export type {
+  McpHarnessSupport,
+  McpRuntime,
+  McpSecretRequirement,
+  McpServerEntry,
+} from '../../../backend/src/shared/wireTypes';
 
 // { [serverId]: { [envVar]: present } } — presence/hints only, never the value.
 export type RedactedMcpSecrets = Record<string, Record<string, boolean>>;

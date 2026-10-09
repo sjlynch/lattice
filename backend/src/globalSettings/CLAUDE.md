@@ -6,7 +6,11 @@ project: one backend, one terminal-server, one machine's RAM/CPU, one shared Pi
 config (`~/.pi/agent/`).
 
 `../globalSettings.ts` is the read/write facade; per-field validators live
-next to the shapes they produce.
+next to the shapes they produce. The `GlobalSettings` type is declared in the
+node-free `types.ts` here (re-exported by the facade) because the frontend
+shares it through `../shared/wireTypes.ts` — add a field THERE, and keep every
+type it references in a node-free module (`../mcp/types.ts`,
+`../piModels/types.ts`, `../opengrep/types.ts`).
 
 ## What "global" covers
 
@@ -19,7 +23,7 @@ next to the shapes they produce.
 | `mcpCustomServers` | User-added MCP server **definitions** (built-in catalog stays in code; secret values live in `~/.lattice/mcpSecrets.json`, never here). | `sanitizeCustomServers` in `../mcp/settingsValidation.ts`. |
 | `mcpBuiltinOverrides` | Per-id partial edits of built-in catalog entries (e.g. edited args). | `sanitizeBuiltinOverrides` in `../mcp/settingsValidation.ts`. |
 | `piModelMenu` | Curated `provider/model` patterns surfaced as "Pi — X" rows in the harness dropdowns; empty/absent → the default menu (see `piModels.ts`). | Inline string-array filter in `../globalSettings.ts`'s `sanitize`. |
-| `piProviders` | Lattice-managed Pi providers (OpenAI-compatible endpoints, e.g. vLLM), reconciled INTO `~/.pi/agent/models.json` by `piModels.ts`. | `sanitizePiProviders` in `../piProviderValidation.ts` (which also owns the `PiProvider`/`PiProviderModel` types). |
+| `piProviders` | Lattice-managed Pi providers (OpenAI-compatible endpoints, e.g. vLLM), reconciled INTO `~/.pi/agent/models.json` by `piModels.ts`. | `sanitizePiProviders` in `../piProviderValidation.ts` (which re-exports the `PiProvider`/`PiProviderModel` types declared in `../piModels/types.ts`). |
 | `opengrep` | Opengrep rule-pack enables (`packs: { [packId]: boolean }`, absent = the pack's `defaultEnabled`). Machine-global because packs are installed once per machine under `~/.lattice/opengrep/rules/`. | `sanitizeOpengrepGlobalSettings` in `../opengrep/settings.ts` (unknown pack ids and non-boolean values dropped). |
 
 ## Read/write invariants
@@ -39,8 +43,9 @@ an earlier unlocked read can overwrite an intervening save.
 `readGlobalSettingsStrict()` is the throwing read for destructive writes
 elsewhere, such as Pi models.json reconciliation.
 
-The facade re-exports MCP/Pi validators and `PiProvider`/`PiProviderModel`
-types, preserving the historical `./globalSettings.js` import surface.
+The facade re-exports MCP/Pi validators and the `GlobalSettings`,
+`PiProvider`/`PiProviderModel` types, preserving the historical
+`./globalSettings.js` import surface.
 
 ## Served by
 

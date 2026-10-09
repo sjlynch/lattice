@@ -100,7 +100,8 @@ project-root `.pi/mcp.json`.
 ## Modules
 
 - `catalog.ts` — `BUILTIN_MCP_SERVERS`; package names live in code (churn is a
-  code change, not a data migration).
+  code change, not a data migration). The `McpServerEntry` family is declared
+  in node-free `types.ts` (the frontend shares it) and re-exported here.
 - `retiredServers.ts` — leaf id list; `userSettings` strips their stale toggles
   (else a leftover `context7: true` would enable a custom server reusing it).
 - `registry.ts` — resolver facade (import from here) over the pure

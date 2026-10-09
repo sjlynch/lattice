@@ -32,7 +32,9 @@ of Pi config**.
   curation; larger lists respect it. Only labels that actually collide get a
   `(provider-id)` suffix.
 - `types.ts` — shared `PiModelInfo`, `PiMenuEntry`, `PiModelsResult`,
-  `ModelsJson`, and cache shapes.
+  `ModelsJson`, cache shapes, and `PiProvider` / `PiProviderModel`
+  (re-exported by `../piProviderValidation.ts`). Node-free: the frontend
+  shares them through `../shared/wireTypes.ts`.
 
 ## Write-side management
 

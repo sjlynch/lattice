@@ -18,7 +18,10 @@ an audit found ten that had). Rules for what may go there:
   scan records / envelope, graph result, findings, triage, `SecurityReview` —
   all from `backend/src/opengrep/types.ts`), `scan.ts`'s `DirListing` family,
   and `settings.ts`'s Pi model and `OpengrepSeverity` /
-  `OpengrepProjectSettings` types. Local names may alias a backend name
+  `OpengrepProjectSettings` types. Outside this folder, `../globalSettings.ts`
+  (`GlobalSettings`, `PiProvider` / `PiProviderModel`) and `../mcp.ts` (the
+  `McpServerEntry` family) re-export theirs beside their fetch helpers. Local
+  names may alias a backend name
   (`InstructionTemplate` = `InstructionTemplateEditorEntry`,
   `OpengrepRulePackStatus` = `RulePackStatus`).
 - **Composed here from shared types** (the frontend genuinely differs):
@@ -39,8 +42,8 @@ an audit found ten that had). Rules for what may go there:
   `GraphNode` / `ScanResult` / `SearchResult` (`scanner/`, `search.ts`),
   `PiProbeModel` (`piModels/probe.ts`). To share one, move the type into a
   node-free module first (as `HealthUpdate`, `EnvNoteInfo`, the `*EditorEntry`
-  types, `WorkflowRun`, the Opengrep types and `UserSettings` were) and re-export it from its
-  old module.
+  types, `WorkflowRun`, the Opengrep types, `UserSettings`, `GlobalSettings`
+  and the MCP / Pi-provider types were) and re-export it from its old module.
 
 ## Conventions
 

@@ -1,6 +1,6 @@
 // Built-in MCP server catalog. These definitions live in CODE (not seeded into
-// JSON) so a package-name change is a code update, not a data migration — see
-// the MCP plan, decision #5.
+// JSON) so a package-name change is a code update, not a data migration (MCP
+// plan, decision #5).
 //
 // INVARIANT: every THIRD-PARTY server ships DISABLED. The registry resolver
 // computes `enabled` from per-project overrides (`mcpOverrides[id]` for Claude,
@@ -9,81 +9,28 @@
 // loads no third-party code, no keys, and no telemetry until the user opts in.
 //
 // THE SINGLE EXCEPTION is Lattice's OWN first-party server (`lattice`, below),
-// which sets `defaultEnabled: true`. It runs Lattice's own code out of this
-// repo, needs no secret, talks only to the local backend that spawned the
-// session, and IS the feature — a board server nobody switches on is a board
-// server nobody uses. An explicit `false` override still turns it off, per
-// harness. `defaultEnabled` is reserved for that class of entry and must NEVER
-// be set on a third-party server: doing so would silently run somebody else's
-// package in every worktree agent on the machine.
-
+// which sets `defaultEnabled: true`: it runs Lattice's own code out of this repo,
+// needs no secret, talks only to the local backend that spawned the session, and
+// IS the feature. An explicit `false` override still turns it off, per harness.
+// `defaultEnabled` must NEVER be set on a third-party server: that would silently
+// run somebody else's package in every worktree agent on the machine.
 //
-// Package names verified June 2026. Gotchas baked in: the official
-// `fetch`/`git`/`time` servers are PyPI/`uvx` (not npm); Brave moved to the
-// `@brave/` scope (the old `@modelcontextprotocol/server-brave-search` is
-// archived); GitHub has no npm package. None of those ship here.
-//
-// Removed 2026-09: `chrome-devtools` and `context7` (see retiredServers.ts for
-// why their ids are still special-cased). Add one back as a custom server.
+// Gotchas (package names verified June 2026): the official `fetch`/`git`/`time`
+// servers are PyPI/`uvx` (not npm); Brave moved to the `@brave/` scope; GitHub
+// has no npm package — none of those ship here. `chrome-devtools` and `context7`
+// were removed (retiredServers.ts says why their ids are still special-cased);
+// add one back as a custom server.
 
 import { latticeMcpServerEntryPath } from '../latticeMcp/entryPath.js';
+import type { McpServerEntry } from './types.js';
 
-export type McpRuntime = 'node' | 'uv' | 'docker' | 'remote';
-
-export type McpSecretRequirement = {
-  // The environment variable the server reads the key from.
-  envVar: string;
-  // Human label for the masked field + status chips.
-  label: string;
-  // Provider dashboard the "Get a key" deep link points at.
-  getKeyUrl?: string;
-};
-
-export type McpHarnessSupport = {
-  claude: boolean;
-  codex: boolean;
-  pi: boolean;
-};
-
-export type McpServerEntry = {
-  id: string; // stable slug == the key written into Claude's `mcpServers`
-  label: string;
-  description: string;
-  transport: 'stdio' | 'http';
-  command?: string; // stdio
-  args?: string[]; // stdio
-  env?: Record<string, string>; // static env only; secrets merged at resolve time
-  url?: string; // http
-  headers?: Record<string, string>; // http
-  runtime: McpRuntime; // lets the UI warn "needs uv / Docker"
-  // When set, the server needs an API key; the MCP tab renders a masked field
-  // + status chip and the resolver injects the stored/ambient value.
-  requiresSecret?: McpSecretRequirement;
-  // Env vars whose VALUES live in `~/.lattice/mcpSecrets.json` rather than
-  // inline here — used by imported custom servers so their keys stay out of
-  // globalSettings.json. The resolver injects each from the secrets file (or
-  // omits it for ambient inheritance). `requiresSecret.envVar` is implicitly
-  // one of these for built-ins.
-  secretEnvVars?: string[];
-  // HTTP `headers` whose VALUES live in `~/.lattice/mcpSecrets.json` rather than
-  // inline in `headers` here — the header analogue of `secretEnvVars`, used by
-  // imported HTTP servers so an auth header's literal key (`Authorization:
-  // Bearer …`) never sits in the non-0600 globalSettings.json. The resolver
-  // re-injects each from the secrets file (keyed by header name) at spawn time.
-  secretHeaders?: string[];
-  harnessSupport: McpHarnessSupport;
-  // Free-text runtime caveat surfaced in the MCP tab (Node version, Chrome, …).
-  runtimeNote?: string;
-  // True for code-defined catalog entries; user-added customs are false. Built-ins
-  // are editable via `mcpBuiltinOverrides` but never deletable.
-  builtin?: boolean;
-  // Resolve to ON when the project has no explicit per-harness override.
-  // RESERVED FOR FIRST-PARTY SERVERS — currently only `lattice`. Never set this
-  // on a third-party entry: it would run someone else's package in every agent
-  // Lattice spawns, on every project, without the user ever choosing it. See
-  // the INVARIANT at the top of this file, and `registry.harnessToggleOn`.
-  defaultEnabled?: boolean;
-};
+// Declared in the node-free ./types.ts (the frontend's MCP tab shares them).
+export type {
+  McpHarnessSupport,
+  McpRuntime,
+  McpSecretRequirement,
+  McpServerEntry,
+} from './types.js';
 
 // The id of Lattice's own first-party board server. Referenced by the resolver
 // (which injects its per-spawn env) and by the settings UI, so it lives here

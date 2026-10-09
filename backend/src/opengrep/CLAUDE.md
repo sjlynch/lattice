@@ -36,7 +36,7 @@ nothing fetched without a click, nothing committed.
 ## Map
 
 - `types.ts` — the wire types (status, packs, scan records + envelope, graph
-  result, findings, triage, reviews, project settings), type-only and
+  result, findings, triage, reviews, global + project settings), type-only and
   node-free: the frontend re-exports them via `../shared/wireTypes.ts`. Each
   original module re-exports its own, so import from there as before. Change
   a payload shape HERE; never import a runtime module from it.

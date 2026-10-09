@@ -59,7 +59,20 @@ export type {
 export type { PushRun, StartPushRunResult } from '../pushRuns/types.js';
 export type { QaRun, StartQaRunResult } from '../qaRuns/types.js';
 export type { DirEntry, DirListing, DirRoot } from '../fsbrowse/types.js';
-export type { PiMenuEntry, PiModelInfo, PiModelsResult } from '../piModels/types.js';
+export type {
+  PiMenuEntry,
+  PiModelInfo,
+  PiModelsResult,
+  PiProvider,
+  PiProviderModel,
+} from '../piModels/types.js';
+export type { GlobalSettings } from '../globalSettings/types.js';
+export type {
+  McpHarnessSupport,
+  McpRuntime,
+  McpSecretRequirement,
+  McpServerEntry,
+} from '../mcp/types.js';
 export type {
   FindingDisposition,
   OpengrepFinding,

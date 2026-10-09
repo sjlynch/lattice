@@ -158,6 +158,13 @@ export type DigestFilter = {
 // What the digest filter dropped, per reason.
 export type OpengrepDigestDropped = { belowFloor: number; ignoredRules: number; ignoredFingerprints: number; duplicates: number };
 
+// Machine-global `globalSettings.opengrep` (settings.ts sanitizes it on read).
+export type OpengrepGlobalSettings = {
+  // Per-pack enable override, keyed by pack id. Absent = the pack's
+  // `defaultEnabled`.
+  packs?: Record<string, boolean>;
+};
+
 // Per-project `userSettings.opengrep` (settings.ts sanitizes it on read).
 export type OpengrepProjectSettings = {
   extraRulePaths?: string[];
