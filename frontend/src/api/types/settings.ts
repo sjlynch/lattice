@@ -1,16 +1,18 @@
-import type { AgentHarness, HarnessAvailability, HarnessChoice } from '../../harnesses';
+import type { HarnessAvailability } from '../../harnesses';
 import type {
   OpengrepProjectSettings,
   OpengrepSeverity,
+  TerminalDefaultHarness,
+  UserSettings,
 } from '../../../../backend/src/shared/wireTypes';
 
-export type StartupTerminal = {
-  id: string;
-  label: string;
-  command: string;
-};
-
-export type TerminalDefaultHarness = AgentHarness | 'terminal';
+// The backend's own per-project settings types (backend/src/userSettings/types.ts,
+// re-exported through backend/src/shared/wireTypes.ts). Add a field THERE.
+export type {
+  StartupTerminal,
+  TerminalDefaultHarness,
+  UserSettings,
+} from '../../../../backend/src/shared/wireTypes';
 
 export type TerminalLaunchSettings = {
   terminalDefaultHarness: TerminalDefaultHarness;
@@ -19,136 +21,6 @@ export type TerminalLaunchSettings = {
   // `--dangerously-skip-permissions`). Drives the sidebar's new-Codex-terminal
   // default; also read by the backend for every Codex agent spawn. Default ON.
   codexYolo: boolean;
-};
-
-// Hand mirror of backend userSettings/types.ts `UserSettings` — it can't be
-// re-exported through wireTypes.ts: its `opengrep` field's module
-// (opengrep/settings.ts) reaches node. Add a field on both sides at once.
-export type UserSettings = {
-  sidebarWidth?: number;
-  // Terminal sidebar dragged to the full page width (graph hidden). While
-  // set, `sidebarWidth` keeps the last non-full width.
-  sidebarMaximized?: boolean;
-  harness?: HarnessChoice;
-  // Per-project default Pi model ("provider/model"), chosen via the "Pi — X"
-  // rows in the harness dropdown. Only used when the harness is `pi`.
-  piModel?: string;
-  startupTerminals?: StartupTerminal[];
-  terminalDefaultHarness?: TerminalDefaultHarness;
-  terminalClaudeSkipPermissions?: boolean;
-  // Whether Codex launches with `--yolo` for this project (its analogue of
-  // Claude's `--dangerously-skip-permissions`). Applies to every Codex session
-  // Lattice spawns plus the sidebar's new-Codex-terminal default. Default ON —
-  // absent counts as `true`; only an explicit `false` runs plain `codex`. See
-  // backend userSettings.ts.
-  codexYolo?: boolean;
-  // Terminal-tab restore on project open (see backend terminalRegistry/).
-  // 'always' (default) | 'ask' | 'never'.
-  restoreTerminalsOnOpen?: 'always' | 'ask' | 'never';
-  // Send the continue-nudge to relaunched task / merge-resolver agents.
-  // Default ON (absent counts as true).
-  restoreNudgeAgents?: boolean;
-  // Also nudge relaunched sidebar (user) harness tabs — only when the
-  // interruption detector finds the agent was mid-turn. Default OFF.
-  restoreNudgeUserTabs?: boolean;
-  workflowStepsCollapsed?: Record<string, boolean>;
-  // Per-env override of the auto-injected "fresh worktree, don't reinstall"
-  // note in task instructions. Key = env id; '' suppresses the note;
-  // absent key = use the built-in default. See backend worktree/envDetect.ts.
-  worktreeEnvNotes?: Record<string, string>;
-  // Extensions (leading dot, lowercase) to skip when rendering the LOC
-  // (`z`) and code-health (`h`) overlays. Absent = `DEFAULT_METRICS_IGNORED_EXTS`.
-  metricsIgnoredExts?: string[];
-  // Extra entry-point globs (project-relative, `**`/`*`/`?`) for the dead-code
-  // (`D`) overlay's reachability pass: matching files count as live roots even
-  // when nothing imports them. See backend userSettings/types.ts.
-  deadCodeEntryGlobs?: string[];
-  // Optional post-merge hook. See backend userSettings.ts.
-  postMergeHookPrompt?: string;
-  // Master on/off switch for the post-merge hook. The hook fires only when it
-  // is enabled AND `postMergeHookPrompt` is non-empty. Default ON — absent
-  // counts as `true`. See backend userSettings.ts.
-  postMergeHookEnabled?: boolean;
-  postMergeHookHarness?: AgentHarness;
-  // Pi model for the post-merge hook, used only when postMergeHookHarness is `pi`.
-  postMergeHookPiModel?: string;
-  // When true (default — absent counts as true), Lattice instruments the
-  // project's `.claude/settings.local.json` so any Claude session working in
-  // the project tree shows as an orange node on the graph. See backend
-  // projectClaudeHooks.ts.
-  instrumentProjectClaudeSessions?: boolean;
-  // When true (default — absent counts as true), Lattice turns Claude's
-  // auto-memory OFF for this project: spawned agents get
-  // CLAUDE_CODE_DISABLE_AUTO_MEMORY=1 and the project's own
-  // `.claude/settings.local.json` gets `autoMemoryEnabled: false`. Per-project
-  // / Local scope only — never the machine-global ~/.claude/settings.json. See
-  // backend userSettings.ts.
-  disableClaudeMemory?: boolean;
-  // Per-project MCP-server on/off overrides, keyed by catalog server id.
-  // Missing = OFF (the all-off-by-default invariant). This is CLAUDE's toggle
-  // map (Codex/Pi use `mcpHarnessOverrides` below). `mcpOverrides.playwright`
-  // is the GLOBAL Playwright toggle (Settings → MCP tab): injected into every
-  // Lattice-spawned Claude session for the project and reconciled into the
-  // user's own project-root config. See backend mcp/registry.ts.
-  mcpOverrides?: Record<string, boolean>;
-  // Per-harness MCP toggle maps for Codex and Pi (Claude keeps `mcpOverrides`).
-  // `{ codex?: { [id]: boolean }, pi?: { [id]: boolean } }`; missing = OFF. Three
-  // independent switches per server so enabling for one harness never loads it
-  // into another. See backend mcp/registry.ts.
-  mcpHarnessOverrides?: Partial<Record<'codex' | 'pi', Record<string, boolean>>>;
-  // When true, the MCP-tab Playwright server runs HEADED (visible browser) for
-  // every Lattice-spawned session it's enabled in (Claude global + Codex/Pi
-  // toggles). Absent/false = headless. QA-lane runs are unaffected — they keep
-  // `qaPlaywright.headless`. See backend mcp/resolverPolicy.ts + registry.ts.
-  mcpPlaywrightHeaded?: boolean;
-  // Task worktree sessions (task run/resume + worktree merge resolvers) get
-  // ONLY the Lattice MCP server. Default ON — absent counts as true; only an
-  // explicit `false` gives them the full enabled set. Settings → MCP tab. See
-  // backend mcp/taskWorktreeScope.ts.
-  taskAgentsLatticeMcpOnly?: boolean;
-  // Task agents run no tests, builds or type-checks (a workflow's Run tests
-  // step verifies merged work). `true` lets them type-check the package(s)
-  // they edited. Default OFF. Settings → Agent prompts. See backend
-  // taskVerification.ts.
-  taskAgentTypecheck?: boolean;
-  // How task worktrees check out Git LFS files: 'pointers' (DEFAULT — absent
-  // counts as pointers) writes ~130-byte pointer stubs instead of the content
-  // (GIT_LFS_SKIP_SMUDGE), 'full' smudges everything. Settings → Agent prompts
-  // (worktree environment notes). See backend worktree/lfsMode.ts.
-  taskWorktreeLfsContent?: 'pointers' | 'full';
-  // Backs the QA-lane Playwright buttons — QA e2e runs ONLY (separate from the
-  // global `mcpOverrides.playwright`). `enabled` injects Playwright into QA
-  // "run an e2e test" sessions; `headless` (the eye toggle) appends --headless.
-  qaPlaywright?: { enabled: boolean; headless: boolean };
-  // When true, a QA-lane e2e (Playwright) terminal auto-closes the moment its
-  // run finishes. Default (absent/false) keeps it open so the user can read the
-  // verdict/output. Only the terminal lifecycle — the qa → done auto-advance is
-  // unaffected. The backend resolves this at `/done` time; see backend
-  // userSettings.ts / routes/qaRuns.ts.
-  qaTerminalAutoClose?: boolean;
-  // When true, a workflow agent step's terminal tab (`wf:stepN`) stays open
-  // after the step finishes — the session is left idle instead of killed — so
-  // its output can be read. Default (absent/false) closes it on advance. Close
-  // the tab yourself to end the session. Backend: workflowRuns.ts.
-  keepWorkflowStepTerminals?: boolean;
-  // Per-project overrides of the agent instruction templates (task brief,
-  // conflict resolver, QA / push / post-merge / workflow briefs), keyed by
-  // template id. Value = raw markdown with `{{token}}` placeholders; a missing
-  // or blank entry means "use Lattice's default". See backend
-  // instructionTemplates/.
-  instructionTemplateOverrides?: Record<string, string>;
-  // Per-project, per-harness overrides of the AGENT'S OWN system prompt (the
-  // harness's built-in prompt, not a Lattice brief). Keyed by harness, each with
-  // an independent `append` (added on top of the built-in prompt) and `replace`
-  // (swaps it entirely); a missing/blank side leaves that side alone. Edited in
-  // Settings → Agent prompts ("Harness system prompts"). See backend
-  // harnessSystemPrompts/.
-  harnessSystemPrompts?: Partial<
-    Record<'claude' | 'codex' | 'pi', { append?: string; replace?: string }>
-  >;
-  // Opengrep (SAST) scan configuration for this project. Edited in Settings →
-  // Tools. The backend's own type (backend/src/opengrep/types.ts).
-  opengrep?: OpengrepProjectSettings;
 };
 
 // The backend's own Opengrep settings types (backend/src/opengrep/types.ts,

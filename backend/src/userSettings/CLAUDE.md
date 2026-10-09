@@ -8,7 +8,10 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
 
 - `types.ts` — the `UserSettings` schema (with all per-field commentary) plus
   the `StartupTerminal` and `TerminalDefaultHarness` types. **No I/O.** Add new
-  settings fields here.
+  settings fields here — the frontend uses this very type (re-exported via
+  `../shared/wireTypes.ts`), so keep `types.ts` node-free: type-only imports
+  from node-free modules (`../shared/harnesses.ts`, `../opengrep/types.ts`);
+  `sharedFolderBoundary` enforces it.
 - `storage.ts` — the path/storage layer: `settingsFile()`, `getUserSettings()`
   (read-or-`{}`), and `patchUserSettings()` (read-modify-write under the
   per-project `runExclusive('userSettings:<key>')` lock so concurrent disjoint

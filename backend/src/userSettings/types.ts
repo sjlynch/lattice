@@ -1,5 +1,5 @@
-import type { AgentHarness } from '../harnesses.js';
-import type { OpengrepProjectSettings } from '../opengrep/settings.js';
+import type { AgentHarness } from '../shared/harnesses.js';
+import type { OpengrepProjectSettings } from '../opengrep/types.js';
 
 export type StartupTerminal = {
   id: string;
