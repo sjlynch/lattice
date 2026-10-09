@@ -2,4 +2,6 @@ Analyze the codebase for opportunities to refactor the code so that it is easier
 
 Look for large source files that handle too many concerns and should be broken into focused clean submodules, tangled dependencies, long functions or classes that should be simplified, magic numbers that should become named variables, and duplication that should be removed. Also look for `CLAUDE.md` files that need updating, and subfolders where adding one would be crucially helpful to LLMs — while keeping every `CLAUDE.md` succinct.
 
+Also look for repository hygiene that costs every agent session: line endings that are mixed or differ from what the tooling writes (no `.gitattributes` normalizing them — mixed files break exact-match edits), lockfiles, generated files or large fixtures that flood code searches and belong in an ignore file, and source-file header comments that have grown into long narratives (keep the contract and invariants; history belongs in commit messages).
+
 Every task you file must state that the refactor may not change the original code's observable behavior, must keep public APIs stable, and must preserve existing tests. Scope each task to one file or one module so it can land without conflicting with its siblings, name the exact paths involved, and do not file duplicates.

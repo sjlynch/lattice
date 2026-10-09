@@ -8,4 +8,11 @@ Consolidate rather than multiply. Where existing tests overlap, duplicate each o
 
 This prompt may be run many times against the same project, so guard hard against piling up redundant work. Treat both the existing test suite and the current task board as the source of truth: read the board first and do not file a task for a gap that is already covered, already requested, or a near-duplicate of an existing task. File only the few highest-impact gaps you actually find — if the important paths are already well covered, create no tasks and say so plainly. Quality and non-duplication over quantity.
 
+Also check how the suite serves the coding agents that run it — they, not humans, read test output — and file a task for each of these that is missing. They are one-time fixes: once in place, never file them again.
+
+- **Quiet by default.** Running the full suite prints only failures (each with its error and the log output captured while it ran) and a one-line summary. One line per passing test, or log output from the code under test, turns every passing run into thousands of lines an agent must read. No separate verbose mode is needed.
+- **One command per check, from the project root.** One command type-checks everything, one runs every test, and one runs a single test file with whatever setup or preload it needs. Without them agents reconstruct long commands and skip required setup.
+- **Test files sized to read.** A test file past ~20 KB, or one mixing unrelated scenarios, is split by scenario into files named after the module plus the area (`<module>.<area>.test.*`) that share one fixture or harness module — so fixing one case does not mean reading all of them.
+- **Tests checked like the source.** If the type-checker or linter skips the test files, fixtures drift from the real types and keep testing shapes production can no longer produce.
+
 For each task, name the exact file and function under test, the specific behavior or edge case to cover and the concrete risk it guards against, and whether the work is to extend an existing test, add a new one, or consolidate existing tests. Do not create duplicate tasks.

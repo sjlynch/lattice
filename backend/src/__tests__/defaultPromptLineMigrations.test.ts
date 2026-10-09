@@ -16,6 +16,8 @@ import {
 } from '../workflows/defaultPromptMigrations.js';
 
 const refactor = DEFAULT_PROMPT_MIGRATIONS.find((m) => m.id === 'quick-add:refactor')!;
+// Looked up by content, not position: later rewordings prepend newer legacy bodies.
+const typeCheckLegacy = refactor.legacy.find((body) => /must type-check before it is committed/.test(body))!;
 const bullet = DEFAULT_PROMPT_LINE_MIGRATIONS[0];
 
 const tailoring = (line: string) =>
@@ -33,7 +35,7 @@ const tailoring = (line: string) =>
   ].join('\n');
 
 test('a saved refactor prompt with the type-check requirement is upgraded, suffix and all', () => {
-  const saved = refactor.legacy[0] + tailoring(bullet.legacy);
+  const saved = typeCheckLegacy + tailoring(bullet.legacy);
   const migrated = migrateDefaultPromptText(saved);
   assert.equal(migrated, refactor.current + tailoring(bullet.current));
   assert.doesNotMatch(migrated, /type-check before it is committed|targeted tests/);
@@ -42,8 +44,8 @@ test('a saved refactor prompt with the type-check requirement is upgraded, suffi
 });
 
 test('the new refactor body is not a prefix of the old one (else the old tail would survive)', () => {
-  assert.ok(!refactor.legacy[0].startsWith(refactor.current));
-  assert.match(refactor.legacy[0], /must type-check before it is committed/);
+  assert.ok(!typeCheckLegacy.startsWith(refactor.current));
+  assert.match(typeCheckLegacy, /must type-check before it is committed/);
 });
 
 test('the stale tailoring bullet is reworded in any prompt, CRLF included', () => {

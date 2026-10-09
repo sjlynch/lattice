@@ -25,8 +25,9 @@ the TS modules (one level up) that surface and tailor them.
   work" or "commit your work" hands the agent contradictory instructions, and
   one resolved that by committing straight to the repo. Phrase every prompt as
   *file tasks for* the work.
-- **These bytes must equal the backend's copy.** Each quick-add has an entry in
-  `backend/src/workflows/defaultPromptMigrations.ts` whose `current` must match
+- **These bytes must equal the backend's copy.** A quick-add that was ever
+  reworded has an entry in `backend/src/workflows/defaultPromptMigrations.ts`
+  (add one the first time you reword a prompt) whose `current` must match
   the `.md` byte for byte (CRLF-normalized, trailing whitespace trimmed);
   `backend/src/__tests__/defaultPromptMigrations.test.ts` fails on drift. So
   rewording a prompt is a two-file change: also append the old body to that

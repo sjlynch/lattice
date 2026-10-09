@@ -22,7 +22,7 @@ cd "{{project_path}}"
 \`\`\`
 
 Run every command from the project. Don't create or edit files in the scratch
-directory except \`TEST_SUMMARY.md\` (step 7).
+directory except \`TEST_SUMMARY.md\` (step 7) and test-output logs (step 2).
 
 ## 2. Find and run the tests
 
@@ -32,6 +32,19 @@ docs, and any \`CLAUDE.md\` / \`AGENTS.md\` files. Run the project's own test an
 type-check commands the way those docs describe. Prefer the whole suite; if
 it is very slow, run what covers the recently merged work first. You have
 about {{timeout_minutes}} minutes before Lattice stops this session.
+
+**Keep the test output you read small** — every line of it lands in your
+context. Use the project's quiet / failures-only command if it has one, else
+the runner's quiet mode (a dot or failures-only reporter, \`-q\`, \`--silent\`).
+If a run would still print a lot, send it to a log and read only the failures
+and the summary line instead of printing it whole:
+
+\`\`\`
+<test command> > "{{step_dir}}/tests.log" 2>&1
+\`\`\`
+
+If the project has no quiet way to run its tests, say so in the report — the
+Test coverage workflow step files that fix.
 
 **A dev server may be running** against this checkout. Don't kill processes you
 didn't start, and don't start anything on the ports it uses — pick another

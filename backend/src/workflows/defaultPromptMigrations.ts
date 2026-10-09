@@ -39,6 +39,14 @@ export const DEFAULT_PROMPT_MIGRATIONS: DefaultPromptMigration[] = [
     id: "quick-add:refactor",
     // Told the agent to refactor + commit; the task-filing line came last.
     legacy: [
+      // Before the repository-hygiene paragraph (line endings, search noise, header narratives).
+      [
+        "Analyze the codebase for opportunities to refactor the code so that it is easier for LLMs to navigate and understand, and file each opportunity as a task on the Lattice board for this active project. Do not refactor anything yourself and do not commit — the board entries are your output.",
+        "",
+        "Look for large source files that handle too many concerns and should be broken into focused clean submodules, tangled dependencies, long functions or classes that should be simplified, magic numbers that should become named variables, and duplication that should be removed. Also look for `CLAUDE.md` files that need updating, and subfolders where adding one would be crucially helpful to LLMs — while keeping every `CLAUDE.md` succinct.",
+        "",
+        "Every task you file must state that the refactor may not change the original code's observable behavior, must keep public APIs stable, and must preserve existing tests. Scope each task to one file or one module so it can land without conflicting with its siblings, name the exact paths involved, and do not file duplicates.",
+      ].join('\n'),
       // Required every filed task to type-check before committing; task agents
       // now run no verification (a workflow's Run tests step owns that).
       [
@@ -61,6 +69,8 @@ export const DEFAULT_PROMPT_MIGRATIONS: DefaultPromptMigration[] = [
       "Analyze the codebase for opportunities to refactor the code so that it is easier for LLMs to navigate and understand, and file each opportunity as a task on the Lattice board for this active project. Do not refactor anything yourself and do not commit — the board entries are your output.",
       "",
       "Look for large source files that handle too many concerns and should be broken into focused clean submodules, tangled dependencies, long functions or classes that should be simplified, magic numbers that should become named variables, and duplication that should be removed. Also look for `CLAUDE.md` files that need updating, and subfolders where adding one would be crucially helpful to LLMs — while keeping every `CLAUDE.md` succinct.",
+      "",
+      "Also look for repository hygiene that costs every agent session: line endings that are mixed or differ from what the tooling writes (no `.gitattributes` normalizing them — mixed files break exact-match edits), lockfiles, generated files or large fixtures that flood code searches and belong in an ignore file, and source-file header comments that have grown into long narratives (keep the contract and invariants; history belongs in commit messages).",
       "",
       "Every task you file must state that the refactor may not change the original code's observable behavior, must keep public APIs stable, and must preserve existing tests. Scope each task to one file or one module so it can land without conflicting with its siblings, name the exact paths involved, and do not file duplicates.",
     ].join('\n'),
@@ -89,6 +99,21 @@ export const DEFAULT_PROMPT_MIGRATIONS: DefaultPromptMigration[] = [
     id: "quick-add:documentation",
     // Told the agent to write the docs itself and commit — the reported incident.
     legacy: [
+      // Before the auto-loaded-docs, one-rule-one-place and path-check guidance.
+      [
+        "Survey this project's documentation and file every gap you find as a task on the Lattice board for this active project. You are planning the documentation work, not performing it — do not create, edit, or delete any documentation file yourself, and do not commit anything.",
+        "",
+        "Stay language- and framework-agnostic: work with whatever stack, tooling, and conventions the project already uses, follow the patterns you find rather than imposing new ones, and make no assumptions about the language.",
+        "",
+        "Read the existing documentation first — the top-level README, any `CLAUDE.md`/`AGENTS.md` files, and any docs folders — so the tasks you file extend and correct what is there instead of duplicating it. Then file tasks covering what it would take to reach a genuinely useful state:",
+        "",
+        "- **Project overview.** If the top-level README (or its equivalent) does not clearly explain what the project is, how to build/run/test it, and how the code is laid out — enough for a newcomer or an agent to get oriented quickly — file a task naming exactly what is missing.",
+        "- **`CLAUDE.md` navigation files.** File tasks to add or update `CLAUDE.md` files in the directories where local context would crucially help a coding agent: the ones with non-obvious structure, important invariants, or easy-to-miss conventions. Spell out in each task that the file must stay **compact** — it is loaded into an agent's limited context on every session, so filler is cut ruthlessly and nothing the code already makes obvious is restated — yet **rich with the key details that actually trip up LLMs and coding harnesses**: the gotchas and footguns, invariants that must not be broken, non-obvious file relationships, where a given concern lives, and the exact build/test/type-check commands. A short, dense doc beats a long, wandering one.",
+        "- **Keep them current.** Treat stale documentation as a bug. File a task for anything that no longer matches the code, naming the file and the specific claim that has gone stale.",
+        "- **Pair every `CLAUDE.md` with an `AGENTS.md`.** So that every agent harness reads the same guidance, each directory that has a `CLAUDE.md` must also have an `AGENTS.md` beside it — and that `AGENTS.md` should do nothing but point at its sibling `CLAUDE.md` (for example: `See CLAUDE.md in this directory for agent instructions.`). The content is never copied across the two files; the `AGENTS.md` is only a pointer so the `CLAUDE.md` stays the single source of truth. File a task for any missing `AGENTS.md`, and have every task that adds a new `CLAUDE.md` add its paired `AGENTS.md` too.",
+        "",
+        "Scope each task to one directory or one document so it can land on its own without conflicting with its siblings, and name the exact paths involved. Check the board first and do not file duplicates. If the documentation is already in good shape, file nothing and say so.",
+      ].join('\n'),
       [
         "Survey this project and bring its documentation up to a high standard. Stay language- and framework-agnostic: work with whatever stack, tooling, and conventions the project already uses, follow the patterns you find rather than imposing new ones, and make no assumptions about the language.",
         "",
@@ -111,10 +136,51 @@ export const DEFAULT_PROMPT_MIGRATIONS: DefaultPromptMigration[] = [
       "",
       "- **Project overview.** If the top-level README (or its equivalent) does not clearly explain what the project is, how to build/run/test it, and how the code is laid out — enough for a newcomer or an agent to get oriented quickly — file a task naming exactly what is missing.",
       "- **`CLAUDE.md` navigation files.** File tasks to add or update `CLAUDE.md` files in the directories where local context would crucially help a coding agent: the ones with non-obvious structure, important invariants, or easy-to-miss conventions. Spell out in each task that the file must stay **compact** — it is loaded into an agent's limited context on every session, so filler is cut ruthlessly and nothing the code already makes obvious is restated — yet **rich with the key details that actually trip up LLMs and coding harnesses**: the gotchas and footguns, invariants that must not be broken, non-obvious file relationships, where a given concern lives, and the exact build/test/type-check commands. A short, dense doc beats a long, wandering one.",
-      "- **Keep them current.** Treat stale documentation as a bug. File a task for anything that no longer matches the code, naming the file and the specific claim that has gone stale.",
+      "- **Mind what is loaded automatically.** Agent harnesses inject some files into every session unasked: Claude Code loads the root `CLAUDE.md` and every `CLAUDE.md` on the path to any file it reads; Codex and Pi load `AGENTS.md` (Pi falls back to `CLAUDE.md`) from the project root down to where they start. Anything else — a `MAP.md`, a `docs/` page, a README — is read only when an agent chooses to. So the root file, and the file at the top of any large subtree, are paid for on almost every session. File a task when one of them carries more than the rules that apply to everything beneath it (invariants, gotchas, exact commands, pointers): module maps, walkthroughs and background belong in an on-demand file beside it (for example `MAP.md`) or under `docs/`, linked in one line. As a rule of thumb, a root file over ~8 KB, an index file over ~5 KB, or any `CLAUDE.md` over ~12 KB is a task.",
+      "- **One rule, one place; no history.** File a task where docs restate the same rule at several levels (keep it at the level that owns it and point to it elsewhere), or carry incident stories, dates and \"we used to…\" prose — a doc keeps the resulting rule with a one-clause reason; the story belongs in commit history.",
+      "- **Keep them current.** Treat stale documentation as a bug. File a task for anything that no longer matches the code, naming the file and the specific claim that has gone stale — including every file path a doc names that no longer exists. If the project has a test suite but no automated check for this, file one task to add a test that fails when a doc names a missing path or an auto-loaded doc exceeds its size ceiling, so the docs cannot drift back.",
       "- **Pair every `CLAUDE.md` with an `AGENTS.md`.** So that every agent harness reads the same guidance, each directory that has a `CLAUDE.md` must also have an `AGENTS.md` beside it — and that `AGENTS.md` should do nothing but point at its sibling `CLAUDE.md` (for example: `See CLAUDE.md in this directory for agent instructions.`). The content is never copied across the two files; the `AGENTS.md` is only a pointer so the `CLAUDE.md` stays the single source of truth. File a task for any missing `AGENTS.md`, and have every task that adds a new `CLAUDE.md` add its paired `AGENTS.md` too.",
       "",
       "Scope each task to one directory or one document so it can land on its own without conflicting with its siblings, and name the exact paths involved. Check the board first and do not file duplicates. If the documentation is already in good shape, file nothing and say so.",
+    ].join('\n'),
+  },
+  {
+    id: "quick-add:test-coverage",
+    // Gained the agent-ergonomics checks: quiet output, root commands, test-file size, type-checked tests.
+    legacy: [
+      [
+        "Analyze this codebase and its existing test suite to find genuine, high-impact gaps in unit-test coverage, and file a small, focused set of test tasks on the Lattice task board for this active project. The goal is a lean, high-signal suite — not maximum coverage. A handful of well-chosen tests on the riskiest code is worth far more than dozens of shallow ones.",
+        "",
+        "Read the existing tests first. Before proposing anything, understand what is already covered — never file a test for behavior an existing test already exercises. Strongly prefer extending an existing test file (add cases or parametrize) over creating a new one, and keep new test files to a minimum.",
+        "",
+        "Prioritize ruthlessly. Target the code most likely to break and most costly when it does: complex or branchy logic, pure functions with many edge cases, parsing/validation, state machines, money/auth/permissions, and data-integrity or error-handling paths — favoring modules with recent churn or a history of bugs. Skip low-value targets entirely: trivial getters/wrappers, type-only files, configuration/glue, generated code, and anything better served by an integration or end-to-end test.",
+        "",
+        "Consolidate rather than multiply. Where existing tests overlap, duplicate each other, or are split across files that should be one, file a task to combine them — merging redundant tests is as valuable as adding a missing one, and keeps the suite fast and maintainable.",
+        "",
+        "This prompt may be run many times against the same project, so guard hard against piling up redundant work. Treat both the existing test suite and the current task board as the source of truth: read the board first and do not file a task for a gap that is already covered, already requested, or a near-duplicate of an existing task. File only the few highest-impact gaps you actually find — if the important paths are already well covered, create no tasks and say so plainly. Quality and non-duplication over quantity.",
+        "",
+        "For each task, name the exact file and function under test, the specific behavior or edge case to cover and the concrete risk it guards against, and whether the work is to extend an existing test, add a new one, or consolidate existing tests. Do not create duplicate tasks.",
+      ].join('\n'),
+    ],
+    current: [
+      "Analyze this codebase and its existing test suite to find genuine, high-impact gaps in unit-test coverage, and file a small, focused set of test tasks on the Lattice task board for this active project. The goal is a lean, high-signal suite — not maximum coverage. A handful of well-chosen tests on the riskiest code is worth far more than dozens of shallow ones.",
+      "",
+      "Read the existing tests first. Before proposing anything, understand what is already covered — never file a test for behavior an existing test already exercises. Strongly prefer extending an existing test file (add cases or parametrize) over creating a new one, and keep new test files to a minimum.",
+      "",
+      "Prioritize ruthlessly. Target the code most likely to break and most costly when it does: complex or branchy logic, pure functions with many edge cases, parsing/validation, state machines, money/auth/permissions, and data-integrity or error-handling paths — favoring modules with recent churn or a history of bugs. Skip low-value targets entirely: trivial getters/wrappers, type-only files, configuration/glue, generated code, and anything better served by an integration or end-to-end test.",
+      "",
+      "Consolidate rather than multiply. Where existing tests overlap, duplicate each other, or are split across files that should be one, file a task to combine them — merging redundant tests is as valuable as adding a missing one, and keeps the suite fast and maintainable.",
+      "",
+      "This prompt may be run many times against the same project, so guard hard against piling up redundant work. Treat both the existing test suite and the current task board as the source of truth: read the board first and do not file a task for a gap that is already covered, already requested, or a near-duplicate of an existing task. File only the few highest-impact gaps you actually find — if the important paths are already well covered, create no tasks and say so plainly. Quality and non-duplication over quantity.",
+      "",
+      "Also check how the suite serves the coding agents that run it — they, not humans, read test output — and file a task for each of these that is missing. They are one-time fixes: once in place, never file them again.",
+      "",
+      "- **Quiet by default.** Running the full suite prints only failures (each with its error and the log output captured while it ran) and a one-line summary. One line per passing test, or log output from the code under test, turns every passing run into thousands of lines an agent must read. No separate verbose mode is needed.",
+      "- **One command per check, from the project root.** One command type-checks everything, one runs every test, and one runs a single test file with whatever setup or preload it needs. Without them agents reconstruct long commands and skip required setup.",
+      "- **Test files sized to read.** A test file past ~20 KB, or one mixing unrelated scenarios, is split by scenario into files named after the module plus the area (`<module>.<area>.test.*`) that share one fixture or harness module — so fixing one case does not mean reading all of them.",
+      "- **Tests checked like the source.** If the type-checker or linter skips the test files, fixtures drift from the real types and keep testing shapes production can no longer produce.",
+      "",
+      "For each task, name the exact file and function under test, the specific behavior or edge case to cover and the concrete risk it guards against, and whether the work is to extend an existing test, add a new one, or consolidate existing tests. Do not create duplicate tasks.",
     ].join('\n'),
   },
   {
