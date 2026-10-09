@@ -6,7 +6,8 @@ Node/Express backend package. Runtime code lives in `src/`; compiled output in
 ## Source of truth
 
 - `src/` is the authoritative implementation and local navigation root.
-- `src/CLAUDE.md` describes the backend module layout in detail.
+- `src/CLAUDE.md` holds the rules for all backend code; `src/MAP.md` (read on
+  demand) says which module owns what.
 - `dist/` is produced by TypeScript/build scripts and may be stale in a
   worktree; fix `src/` and rebuild rather than patching emitted JS.
 
@@ -15,13 +16,17 @@ Node/Express backend package. Runtime code lives in `src/`; compiled output in
 - `npm run dev` — backend dev loop (`scripts/dev.mjs`); do not start it from
   an agent session unless explicitly asked.
 - `npm run build` — `tsc` then `scripts/copy-assets.mjs` (see below).
-- `npm test` — node:test via `tsx` over `src/__tests__/*.test.ts`.
+- `npm test` — node:test via `tsx` over `src/__tests__/*.test.ts`, through the
+  compact reporter `../scripts/testReporter.mjs` (failures + one summary line).
+- `npm run test:file -- <file>` — one or more test files, same preloads/reporter.
+  From the repo root, `npm run test:file -- <path or module name>` picks the package.
 
 ## Validation
 
-- Type-check: `npx tsc --noEmit` from `backend/`.
-- Tests: `npm test` from `backend/` (target a single test with Node's
-  `--test-name-pattern` when useful).
+- Type-check: `npm run typecheck` (`tsc --noEmit`) from `backend/`, or the root
+  `npm run typecheck` for both packages.
+- Tests: `npm test` from `backend/` (add Node's `--test-name-pattern` to
+  `npm run test:file -- <file>` to target one test).
 
 ## Non-TS runtime assets
 

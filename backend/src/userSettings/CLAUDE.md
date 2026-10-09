@@ -35,15 +35,13 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   `'pointers'` — anything but an explicit `'full'`, junk included, is pointer
   mode; see `../worktree/lfsMode.ts`). New "what does setting X mean
   for feature Y" helpers go here.
-- `index.ts` — internal barrel re-exporting the public surface.
 
 ## Invariants
 
 - **No taskCache import chain.** `storage.ts` imports `PROJECT_DIR_NAME` from
   `../taskCache/paths.js` (the leaf), **not** `../tasks.js` (which re-exports
-  the whole task cache). userSettings is read at every Claude spawn by the MCP
-  registry and the detached terminal-server, so it must stay free of that heavy
-  chain. Keep new imports leaf-scoped.
+  the whole task cache). userSettings is read at every spawn (the MCP registry
+  at the spawn chokepoint), so it must stay free of that heavy chain. Keep new imports leaf-scoped.
 - **A field the UI trusts field-by-field is coerced in `storage.ts`, on read
   AND on write.** These settings are not written only by the settings dialog:
   agents PATCH `/api/settings` directly, and the route hands the body through as

@@ -1,6 +1,6 @@
 /* App stylesheet — split into feature-scoped files under ./styles/.
-   See frontend/src/components/CLAUDE.md for the style map (which class
-   lives in which file). Imports are ordered to preserve the original
+   See frontend/src/components/MAP.md ("Styles") for the style map (which
+   class lives in which file). Imports are ordered to preserve the original
    cascade: foundational layers first, feature modules after. */
 
 @import './styles/tokens.css';

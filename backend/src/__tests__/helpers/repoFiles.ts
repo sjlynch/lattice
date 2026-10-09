@@ -29,4 +29,8 @@ export function readRepoFile(rel: string): string {
   return fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
 }
 
+// Auto-loaded: Claude Code injects every CLAUDE.md on the path to a file it reads.
 export const isAgentDoc = (rel: string): boolean => /(^|\/)CLAUDE\.md$/.test(rel);
+
+// Read on demand: a MAP.md beside a CLAUDE.md, and the top-level docs/*.md.
+export const isOnDemandDoc = (rel: string): boolean => /(^|\/)MAP\.md$/.test(rel) || /^docs\/[^/]+\.md$/.test(rel);

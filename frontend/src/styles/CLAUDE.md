@@ -5,7 +5,8 @@ rule lives in one of the files here. No MUI, no CSS-in-JS — hand-written CSS
 plus `lucide-react` icons.
 
 The **canonical file → class-name map** (which class lives where, plus the
-cascade-sensitive notes) is the table in `../components/CLAUDE.md`. This file
+cascade-sensitive notes) is the "Styles" table in `../components/MAP.md`; the
+cascade-sensitive rules are in `../components/CLAUDE.md`. This file
 is only the navigation summary.
 
 ## Import / aggregation order

@@ -9,7 +9,9 @@ any test imports the task cache, whose home path binds once at module load. It
 also sets `LATTICE_TEST_HOME_ISOLATED`; a test that writes under `~/.lattice`
 (`opengrepScan`, `opengrepInstall`) throws at import without that marker, so a
 bare `node --test <file>` can't land fixtures in your real home. Run one file
-with `node --import tsx --import ./src/__tests__/helpers/isolateHome.mjs --test <file>`.
+(or every file of a module) from the repo root with
+`npm run test:file -- <path or module name>` — it adds the preloads and the
+compact reporter (`scripts/testReporter.mjs`: failures + one summary line).
 
 ## Conventions
 
@@ -33,7 +35,10 @@ with `node --import tsx --import ./src/__tests__/helpers/isolateHome.mjs --test 
 
 Tests are named after the module they cover (`crashLog.test.ts`), with dotted
 suffixes for a sub-area (`worktree.merge.branchState.test.ts`,
-`health.analyze.test.ts`) — grep the module name in this directory. Tests for
+`health.analyze.test.ts`) — grep the module name in this directory. A module
+whose suite outgrew one file is split by scenario (`<module>.<area>.test.ts`,
+each ≤ ~15 KB) with its shared harness in `helpers/<module>.ts` — reuse that
+harness, never copy it into a new split file. Tests for
 the dev runner scripts (`backend/scripts/dev/`, root `scripts/`) live here too,
 importing them by relative path.
 
@@ -70,5 +75,5 @@ importing them by relative path.
 - `deadExports` — an export of `backend/src`/`frontend/src` that nothing references fails; delete it rather than allowlisting.
 - `moduleLayout` — no `x/index.ts` facades (a domain's facade is the root `x.ts`).
 - `importCycles` — no runtime import cycle in `backend/src` / `frontend/src` beyond its short known list (a cycle dies at boot with "Cannot access X before initialization" once top-level code reads a binding). Break new ones with a leaf module or `import()`.
-- `docBudget` — every `CLAUDE.md` in the repo stays under its byte budget (12 KB; 20 KB for the root and package indexes).
-- `docPaths` — every backtick-quoted file path in a `CLAUDE.md` exists (suffix match), or is a name the code writes at runtime. Move a file → fix the docs that name it.
+- `docBudget` — auto-loaded `CLAUDE.md` budgets (root 9 KB, the package / components indexes 5 KB, every other 12 KB) and 20 KB for on-demand `MAP.md` / `docs/*.md`.
+- `docPaths` — every backtick-quoted file path in a `CLAUDE.md`, `MAP.md` or `docs/*.md` exists (suffix match), or is a name the code writes at runtime. Move a file → fix the docs that name it.

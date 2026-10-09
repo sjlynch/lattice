@@ -68,7 +68,7 @@ does not rule out a backend crash.
 
 ## Docs
 
-- [src/CLAUDE.md](src/CLAUDE.md) — authoritative navigation doc for the UI code
-  (feature subdirectories carry their own `CLAUDE.md` with local conventions).
+- [src/CLAUDE.md](src/CLAUDE.md) — rules for all UI code; [src/MAP.md](src/MAP.md)
+  says which file owns what (feature subdirectories carry their own `CLAUDE.md`).
 - Root [README.md](../README.md) / [CLAUDE.md](../CLAUDE.md) — project overview
   and architecture.

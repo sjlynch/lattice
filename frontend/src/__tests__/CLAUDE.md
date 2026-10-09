@@ -4,8 +4,9 @@ Frontend tests use Node's built-in `node:test` runner with `tsx` — mostly pure
 TS / React-state tests, not a browser or Vite integration suite. `npm test`
 from `frontend/` runs `node --import tsx --test src/__tests__/*.test.ts` (one
 level only; there is no HOME-isolation preload — no frontend test writes to
-disk). Run one file from `frontend/` with
-`node --import tsx --test src/__tests__/<name>.test.ts`. Type-check: `npx tsc -b`
+disk), with the compact reporter `scripts/testReporter.mjs` (failures + one
+summary line). Run one file (or every file of a module) from the repo root with
+`npm run test:file -- <path or module name>`. Type-check: `npx tsc -b`
 (it includes these tests via `../../tsconfig.test.json`; `tsx` alone never type-checks).
 
 ## Conventions
@@ -31,9 +32,11 @@ disk). Run one file from `frontend/` with
 - Memory-ownership tests assert deterministic release/disposal with controlled
   doubles and disposal/reference instrumentation — never real GPU bytes or
   forced-GC timing. They prove a release contract, not the absence of a leak.
-- Keep tests as flat `.test.ts` files here; shared code is `domDoubles.ts` and
-  `queueScheduler.fixture.ts` (builders + scenario harness for the split
-  `queueScheduler.*` suites).
+- Keep tests as flat `.test.ts` files here; shared code is `domDoubles.ts`
+  plus one `<module>.fixture.ts` per split suite. A suite that outgrew one file
+  is split by scenario (`<module>.<area>.test.ts`, each ≤ ~15 KB) around that
+  fixture (`queueScheduler`, `securityOverlay`, `backendRestartResilience`,
+  `useTerminalRegistrySync`) — reuse it, never copy the harness.
 - Most files' header comment carries their regression story — read it before
   weakening an assertion.
 

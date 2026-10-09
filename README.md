@@ -162,11 +162,12 @@ pointing it at the live `:5183`/`:5184` also needs `LATTICE_E2E_ALLOW_LIVE=1`.
 - `frontend/` — Vite + React + TS + xterm + 3d-force-graph (`:5183`)
 - `scripts/` — the `npm run dev` loop (`devLoop.mjs` → `preflight.mjs` → `orchestrate.mjs` + `orchestrate/`), dependency checks/watch (`depsCheck.mjs`, `depsWatch.mjs`), and the self-hosting soak (`soak/`); see `scripts/CLAUDE.md`
 - `e2e/` — Playwright specs
-- `docs/` and the root `plan*.md` files — historical design notes, not current docs (superseded by the code and the per-directory `CLAUDE.md` files)
+- `docs/` — on-demand agent docs: `ARCHITECTURE.md` (on-disk state, task pipeline, merge runs, worktrees, dev loop), `RECIPES.md` (touch points for common changes), `MANUAL_TESTING.md`
 - `.lattice/` — per-project scratch (gitignored)
 
 ## Where to go deeper
 
-For architecture, the full HTTP/WS surface, the task pipeline, and agent-facing
-conventions, see the root [`CLAUDE.md`](./CLAUDE.md) and the per-directory
-`CLAUDE.md` / `AGENTS.md` files.
+Agent-facing rules live in the root [`CLAUDE.md`](./CLAUDE.md) and the
+per-directory `CLAUDE.md` files; architecture in
+[`docs/ARCHITECTURE.md`](./docs/ARCHITECTURE.md); the HTTP/WS surface in
+[`backend/src/routes/ROUTES.md`](./backend/src/routes/ROUTES.md).
