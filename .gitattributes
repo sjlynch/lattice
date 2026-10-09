@@ -1,1 +1,8 @@
-frontend/src/components/workflows/prompts/*.md text eol=lf
+# One line ending everywhere: LF in the repository AND in every checkout.
+# With core.autocrlf=true and no rule, checkouts were CRLF while agents wrote
+# LF, so files ended up mixed (exact-match edits failed on them) and every
+# `git add` printed a CRLF warning per file. Windows scripts keep CRLF.
+* text=auto eol=lf
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
