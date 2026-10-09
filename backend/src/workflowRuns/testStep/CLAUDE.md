@@ -6,7 +6,8 @@ can, commits the fixes and reports. The facade's `dispatchStep` routes `'test'`
 to `dispatchRunTestsStep` (never `executeControlStep`); the spawn (step dir,
 spawn queue), hooks, `/complete` route and Claude quiescence gate are the agent
 step's, unchanged (`../stepSpawner.ts` takes `opts.runTests`). Covered by
-`__tests__/workflowRunTestsStep.test.ts`.
+the split `__tests__/workflowRunTestsStep.*.test.ts` suites (shared harness
+`__tests__/helpers/workflowRunTestsStep.ts`).
 
 ## Modules
 

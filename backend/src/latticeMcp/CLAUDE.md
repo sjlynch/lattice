@@ -78,7 +78,11 @@ owns backend scan/storage details.
 
 ## Coverage
 
-[latticeMcp.test.ts](../__tests__/latticeMcp.test.ts): registry, schemas, HTTP
-forwarding, project guards, result shaping and retries via in-memory MCP and
-injected fetch. [latticeMcpOpengrep.test.ts](../__tests__/latticeMcpOpengrep.test.ts):
+The split `latticeMcp.*.test.ts` suites (shared harness
+[helpers/latticeMcp.ts](../__tests__/helpers/latticeMcp.ts)), via in-memory MCP
+and injected fetch: registry, schemas and session tool sets
+([surface](../__tests__/latticeMcp.surface.test.ts)); HTTP forwarding
+([reads](../__tests__/latticeMcp.reads.test.ts),
+[writes](../__tests__/latticeMcp.writes.test.ts)); project guards, result
+shaping and retries ([failures](../__tests__/latticeMcp.failures.test.ts)). [latticeMcpOpengrep.test.ts](../__tests__/latticeMcpOpengrep.test.ts):
 digests, ignore writes, async polling, failures and still-running results.

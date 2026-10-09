@@ -74,4 +74,5 @@ them when refactoring. Both `runs.ts` and `promptCustomizations.ts` take
 Command reference (cwd `backend/`): `npm run build`, `npm test`,
 `npx tsc --noEmit`. See [the test guide](../../__tests__/CLAUDE.md);
 recovery/callback coverage includes `workflowDurability.test.ts`,
-`workflowRunResume.test.ts`, and `workflowStopHookGate.test.ts` there.
+`workflowRunResume.restore.test.ts` (and its sibling `workflowRunResume.*`
+suites), and `workflowStopHookGate.test.ts` there.

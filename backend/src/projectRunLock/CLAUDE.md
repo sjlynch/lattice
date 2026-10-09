@@ -148,6 +148,6 @@ every `workflow-*` label from its 15-minute forced restart, and
 `workflow-test:` lock (the workflow resume re-takes it).
 
 Tests (`../__tests__/`): `projectRunLock.test.ts`, `projectMutation.test.ts`
-(ownership), `workflowRunTestsStep.test.ts` (exclusive holds),
+(ownership), `workflowRunTestsStep.lock.test.ts` (exclusive holds),
 `repoMaintenanceMergeGate.test.ts`, `stashResolvedAfterMaintenance.test.ts`.
 HOME-isolated single-file runs: [test guide](../__tests__/CLAUDE.md).

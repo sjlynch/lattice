@@ -1,5 +1,5 @@
 // The two Opengrep tools on Lattice's MCP server, driven over the in-memory
-// transport with a fake backend (same harness as latticeMcp.test.ts). What is
+// transport with a fake backend (as helpers/latticeMcp.ts does). What is
 // pinned: the exact request each tool makes, that the DIGEST MARKDOWN is what
 // reaches the model (never the JSON envelope), and that the backend's 409
 // (busy / not installed / no rules) is surfaced as an error the agent can act

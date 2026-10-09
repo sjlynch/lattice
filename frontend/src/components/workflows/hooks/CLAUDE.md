@@ -159,7 +159,7 @@ Queue:
   hook dispatches) — keep it wired to project switch and unmount.
   `resolvingVanishedRef` holds one resolver per run id. `fetchRun` /
   `vanishedRunTiming` are test seams; pinned by
-  `__tests__/backendRestartResilience.test.ts`.
+  `__tests__/backendRestartResilience.vanishedRun.test.ts`.
 
 ### Run state
 - The WS `hello` is the authoritative snapshot and the only removal path;

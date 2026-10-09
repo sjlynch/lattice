@@ -95,7 +95,7 @@ owns shared tab mutations, scoping and registry reconciliation.
 
 ## References
 
-[Bounded-history scenarios](../../../__tests__/useTerminalRegistrySync.test.ts)
+[Bounded-history scenarios](../../../__tests__/useTerminalRegistrySync.mountHistory.test.ts)
 cover repeated removals/stale selection, `Set` identity, A -> B -> A and panel
 switches, pending/failed registered closes, lazy panes and restore gates.
 
