@@ -10,6 +10,8 @@ import { terminalRegistry } from './store.js';
 import type { AgentSessionRef, TerminalRecord } from './types.js';
 import { scheduleCodexDiscovery } from './codexDiscovery.js';
 import type { RestoreDeps } from './restore.js';
+import { findClaudeConversationId } from './sessionFiles.js';
+import { isNewerThanLiveView } from './watch.js';
 
 // The nudge decision plus (for Claude) the transcript-exists fact, from ONE
 // read of the harness's files.
@@ -64,6 +66,41 @@ async function markRelaunchFailed(
   terminalRegistry.emitRestoreFailed(record, reason);
 }
 
+// Two harness processes resuming one conversation interleave their turns in a
+// single transcript and corrupt it. A tab can reach another tab's conversation:
+// an in-tab `/resume` points a new tab's process at a dead tab's conversation,
+// and retrying the dead tab (or a restart relaunching both) would resume it
+// twice. So a `--resume` relaunch first claims its conversation — in-process,
+// before any await, so two relaunches in one pass can't both pass — and is
+// refused while another live tab holds it.
+const resumeClaims = new Map<string, string>();
+
+// Which live tab (by label) already runs `conversation`, if any. Claude tabs
+// are resolved through their transcripts (the pinned id names the process,
+// not necessarily the conversation). An unreadable executor blocks nothing.
+async function liveConversationHolder(
+  record: TerminalRecord,
+  conversation: AgentSessionRef,
+  deps: RestoreDeps,
+): Promise<string | null> {
+  const others = (await terminalRegistry.list(record.projectPath)).filter((r) => r.id !== record.id
+    && !r.ended && r.serverId && r.agentSession?.harness === conversation.harness);
+  if (others.length === 0) return null;
+  const view = await deps.readLiveSessions();
+  if (!view) return null;
+  for (const r of others) {
+    const live = view.serverIds.has(r.serverId!)
+      || (isNewerThanLiveView(r, view) && r.serverInstanceId === view.instanceId);
+    if (!live) continue;
+    const pinned = r.agentSession!;
+    const id = pinned.harness === 'claude'
+      ? await findClaudeConversationId(r.cwd, pinned.id, r.createdAt) ?? pinned.id
+      : pinned.id;
+    if (id === conversation.id) return r.label;
+  }
+  return null;
+}
+
 export function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Promise<void> {
   // A retried failure keeps its FIRST failure time when it fails again, so the
   // retention prune counts from the original failure, not the latest retry.
@@ -106,46 +143,25 @@ export function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Prom
         claudeTranscriptExists: plan.transcriptExists,
         nudge: plan.nudge,
       });
-      const sess = await deps.createSession({
-        cwd: current.cwd,
-        initialCommand: built.command,
-        projectPath: current.projectPath,
-        isQaRun: current.launch.isQaRun,
-        taskId: current.launch.taskId,
-        mcpScope: current.launch.mcpScope,
-        registry: {
-          owner: current.owner,
-          label: current.label,
-          kind: current.kind,
-          taskId: current.taskId,
-          startupId: current.startupId,
-          piModel: current.launch.piModel,
-          existingId: current.id,
-          agentSession: built.agentSession,
-        },
-      });
-      if ('error' in sess) {
-        if (sess.code === 'CAP') throw new SpawnCapacityError(`terminal-restore ${current.id}: hard cap`);
-        await markRelaunchFailed(current, sess.error, firstFailedAt, { bestEffort: false });
-        return;
-      }
-      const restored = await terminalRegistry.get(current.id, current.projectPath);
-      // The tab was closed (record ended / removed) while the spawn was in
-      // flight. A close tombstone owns the late PTY until its cleanup succeeds;
-      // legacy callers may already have removed the record entirely.
-      if (!restored || restored.ended || restored.serverId !== sess.id) {
-        const killed = await deps.killSession(sess.id).catch(() => false);
-        if (killed) {
-          notifySessionsFreed();
-          if (restored?.closePending && restored.serverId === sess.id) {
-            await terminalRegistry.end(restored.id, { reason: 'closed' }, restored.projectPath);
-          }
+      const conversation = built.mode === 'resume' ? built.agentSession : undefined;
+      const claimKey = conversation ? JSON.stringify([current.projectPath, conversation.harness, conversation.id]) : null;
+      if (claimKey) {
+        const claimedBy = resumeClaims.get(claimKey);
+        if (claimedBy !== undefined) {
+          await markRelaunchFailed(current, `conversation already being restored in tab "${claimedBy}"`, firstFailedAt, { bestEffort: false });
+          return;
         }
-        return;
+        resumeClaims.set(claimKey, current.label);
       }
-      terminalRegistry.emitRestored(restored, 'relaunched');
-      if (current.launch.harness === 'codex' && !built.agentSession) {
-        scheduleCodexDiscovery(current.id, current.projectPath);
+      try {
+        const holder = conversation ? await liveConversationHolder(current, conversation, deps) : null;
+        if (holder !== null) {
+          await markRelaunchFailed(current, `conversation already open in tab "${holder}"`, firstFailedAt, { bestEffort: false });
+          return;
+        }
+        await spawnRelaunch(current, built, deps, firstFailedAt);
+      } finally {
+        if (claimKey) resumeClaims.delete(claimKey);
       }
     },
   });
@@ -155,4 +171,53 @@ export function enqueueRelaunch(record: TerminalRecord, deps: RestoreDeps): Prom
     if (!current || current.ended) return;
     await markRelaunchFailed(current, reason, firstFailedAt, { bestEffort: true });
   });
+}
+
+async function spawnRelaunch(
+  current: TerminalRecord,
+  built: ReturnType<typeof buildRestoreCommand>,
+  deps: RestoreDeps,
+  firstFailedAt: number | undefined,
+): Promise<void> {
+  const sess = await deps.createSession({
+    cwd: current.cwd,
+    initialCommand: built.command,
+    projectPath: current.projectPath,
+    isQaRun: current.launch.isQaRun,
+    taskId: current.launch.taskId,
+    mcpScope: current.launch.mcpScope,
+    registry: {
+      owner: current.owner,
+      label: current.label,
+      kind: current.kind,
+      taskId: current.taskId,
+      startupId: current.startupId,
+      piModel: current.launch.piModel,
+      existingId: current.id,
+      agentSession: built.agentSession,
+    },
+  });
+  if ('error' in sess) {
+    if (sess.code === 'CAP') throw new SpawnCapacityError(`terminal-restore ${current.id}: hard cap`);
+    await markRelaunchFailed(current, sess.error, firstFailedAt, { bestEffort: false });
+    return;
+  }
+  const restored = await terminalRegistry.get(current.id, current.projectPath);
+  // The tab was closed (record ended / removed) while the spawn was in
+  // flight. A close tombstone owns the late PTY until its cleanup succeeds;
+  // legacy callers may already have removed the record entirely.
+  if (!restored || restored.ended || restored.serverId !== sess.id) {
+    const killed = await deps.killSession(sess.id).catch(() => false);
+    if (killed) {
+      notifySessionsFreed();
+      if (restored?.closePending && restored.serverId === sess.id) {
+        await terminalRegistry.end(restored.id, { reason: 'closed' }, restored.projectPath);
+      }
+    }
+    return;
+  }
+  terminalRegistry.emitRestored(restored, 'relaunched');
+  if (current.launch.harness === 'codex' && !built.agentSession) {
+    scheduleCodexDiscovery(current.id, current.projectPath);
+  }
 }

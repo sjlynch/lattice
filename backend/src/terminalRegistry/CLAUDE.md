@@ -118,6 +118,11 @@ Restore:
   record before spawning, kills a pty whose tab closed mid-spawn, throws
   `SpawnCapacityError` on CAP so the queue retries, and ends `restore-failed`
   at the FIRST failure's `at`.
+- A `--resume` relaunch claims its conversation (in-process, before any
+  await) and is refused — `restore-failed` naming the holder — while another
+  live tab runs it (Claude tabs resolved via `findClaudeConversationId`): an
+  in-tab `/resume` points a new tab at a dead tab's conversation, and two
+  processes on one transcript interleave and corrupt it.
 
 Watch:
 
