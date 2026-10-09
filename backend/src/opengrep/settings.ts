@@ -14,24 +14,16 @@
 
 import type { DigestFilter, OpengrepSeverity } from './digest.js';
 import { DEFAULT_DIGEST_BUDGET_BYTES } from './digest.js';
+import type { OpengrepProjectSettings } from './types.js';
 import { OPENGREP_RULE_PACKS } from './versions.js';
+
+// Declared in the node-free ./types.ts (the frontend's Settings → Tools shares it).
+export type { OpengrepProjectSettings } from './types.js';
 
 export type OpengrepGlobalSettings = {
   // Per-pack enable override, keyed by pack id. Absent = the pack's
   // `defaultEnabled`.
   packs?: Record<string, boolean>;
-};
-
-export type OpengrepProjectSettings = {
-  extraRulePaths?: string[];
-  excludeGlobs?: string[];
-  severityFloor?: OpengrepSeverity;
-  // Full check ids or any dot-suffix (`xss.foo`, `foo`).
-  ignoreRuleIds?: string[];
-  // Full or short fingerprints (see digest.ts).
-  ignoreFingerprints?: string[];
-  // Digest size ceiling in KB (default 60).
-  digestBudgetKb?: number;
 };
 
 export type EffectiveOpengrepConfig = {

@@ -61,6 +61,22 @@ export type { QaRun, StartQaRunResult } from '../qaRuns/types.js';
 export type { DirEntry, DirListing, DirRoot } from '../fsbrowse/types.js';
 export type { PiMenuEntry, PiModelInfo, PiModelsResult } from '../piModels/types.js';
 export type {
+  FindingDisposition,
+  OpengrepFinding,
+  OpengrepGraphFile,
+  OpengrepGraphResult,
+  OpengrepInstallJob,
+  OpengrepProjectSettings,
+  OpengrepScanEnvelope,
+  OpengrepScanRecord,
+  OpengrepSeverity,
+  OpengrepStatus,
+  RulePackJob,
+  RulePackStatus,
+  SecurityReview,
+  TriageEvent,
+} from '../opengrep/types.js';
+export type {
   Workflow,
   WorkflowRunHarnessOverride,
   WorkflowStep,

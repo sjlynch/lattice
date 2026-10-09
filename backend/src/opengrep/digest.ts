@@ -20,6 +20,7 @@ import {
   type OpengrepSeverity,
   type ParsedOpengrepOutput,
 } from './parseOutput.js';
+import type { DigestFilter, OpengrepDigestDropped } from './types.js';
 
 export {
   fingerprintMatches,
@@ -32,14 +33,10 @@ export {
   type ParsedOpengrepOutput,
 } from './parseOutput.js';
 export { DEFAULT_DIGEST_BUDGET_BYTES, renderDigestMarkdown, type RenderOptions } from './renderDigest.js';
+// Declared in the node-free ./types.ts (scan / graph payloads carry it).
+export type { DigestFilter } from './types.js';
 
 const SEVERITY_RANK: Record<OpengrepSeverity, number> = { ERROR: 0, WARNING: 1, INFO: 2 };
-
-export type DigestFilter = {
-  severityFloor: OpengrepSeverity;
-  ignoreRuleIds: string[];
-  ignoreFingerprints: string[];
-};
 
 export const DEFAULT_DIGEST_FILTER: DigestFilter = {
   severityFloor: 'WARNING',
@@ -77,7 +74,7 @@ export type OpengrepDigest = {
   // What survived the filter (and dedup).
   shown: number;
   bySeverity: Record<OpengrepSeverity, number>;
-  dropped: { belowFloor: number; ignoredRules: number; ignoredFingerprints: number; duplicates: number };
+  dropped: OpengrepDigestDropped;
   groups: DigestGroup[];
   errors: OpengrepRunError[];
   partiallyParsed: string[];

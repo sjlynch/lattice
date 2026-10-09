@@ -13,6 +13,15 @@
 // REFUSES to write digests it could not verify, so a user installing from these
 // pins inherits the signature check the maintainer performed — without needing
 // cosign themselves. Never edit the digest block by hand.
+//
+// The asset-name union and the rule-pack shapes are wire types (the Settings
+// card reads them), so they are declared in the node-free ./types.ts. A new
+// release asset is added to that union; `OPENGREP_ASSETS` below is a `Record`
+// over it, so a name without a pin (or a pin without a name) fails to compile.
+
+import type { OpengrepAssetName, OpengrepRulePackDef } from './types.js';
+
+export type { OpengrepAssetName, OpengrepRulePackDef, OpengrepRulePackId } from './types.js';
 
 export const OPENGREP_VERSION = '1.30.0';
 export const OPENGREP_RELEASE_TAG = `v${OPENGREP_VERSION}`;
@@ -28,15 +37,6 @@ export const OPENGREP_SIGNING_IDENTITY = {
   identityRegexp:
     '^https://github\\.com/opengrep/opengrep/\\.github/workflows/[^@]+@refs/(heads/main|tags/v[0-9.]+)$',
 } as const;
-
-export type OpengrepAssetName =
-  | 'opengrep_windows_x86.exe'
-  | 'opengrep_manylinux_x86'
-  | 'opengrep_manylinux_aarch64'
-  | 'opengrep_musllinux_x86'
-  | 'opengrep_musllinux_aarch64'
-  | 'opengrep_osx_x86'
-  | 'opengrep_osx_arm64';
 
 export type OpengrepAssetPin = {
   // Lower-case hex SHA-256 of the exact bytes GitHub served when pinned.
@@ -59,30 +59,6 @@ export const OPENGREP_ASSETS: Record<OpengrepAssetName, OpengrepAssetPin> = {
   'opengrep_osx_arm64': { sha256: '0f5bc3dec09d995c61331a4017b856ede508f90d95b018d95f1dc6166be89fdd', bytes: 47364272 },
 };
 // </opengrep-pin:assets>
-
-export type OpengrepRulePackId = 'qodana-mit' | 'opengrep-archived';
-
-export type OpengrepRulePackDef = {
-  id: OpengrepRulePackId;
-  label: string;
-  // git clone URL. Fetched with `git fetch --depth 1 origin <commit>` — a
-  // commit is content-addressed, so checking it out verifies the tree by
-  // construction (no tarball digest to pin, and tarball bytes drift anyway).
-  repo: string;
-  homepage: string;
-  commit: string;
-  // The licence the KEPT files carry after pruning.
-  licence: string;
-  // One-line note shown beside the pack in Settings; states any condition the
-  // user should know before enabling (Commons Clause, archived, …).
-  note: string;
-  // Enabled for scans by default. A user can still turn a default pack off.
-  defaultEnabled: boolean;
-  // Top-level paths (relative to the pack root, forward slashes) removed after
-  // checkout. Everything that is not a `*.yaml`/`*.yml` rule file is removed
-  // regardless (test sources, CI config, scripts) — see rules.ts `prunePackTree`.
-  prune: string[];
-};
 
 export const OPENGREP_RULE_PACKS: readonly OpengrepRulePackDef[] = [
   {

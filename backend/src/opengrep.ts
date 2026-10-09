@@ -83,4 +83,5 @@ export {
   type ScanWithDigestResult,
   type DigestRenderContext,
 } from './opengrep/service.js';
+export type { OpengrepScanEnvelope } from './opengrep/types.js';
 export { projectRulesDir, PROJECT_RULES_RELATIVE_DIR, projectScansDir } from './opengrep/paths.js';

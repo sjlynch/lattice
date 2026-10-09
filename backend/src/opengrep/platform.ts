@@ -4,14 +4,10 @@
 // is the one IO probe.
 
 import fs from 'node:fs/promises';
-import type { OpengrepAssetName } from './versions.js';
+import type { AssetChoice, OpengrepAssetName } from './types.js';
 
-export type AssetChoice = {
-  asset: OpengrepAssetName;
-  // Shown on the Settings card when the choice is a fallback the user should
-  // know about (Windows on ARM runs the x64 build under emulation).
-  note?: string;
-};
+// Declared in the node-free ./types.ts (the frontend shares it).
+export type { AssetChoice } from './types.js';
 
 export function pickOpengrepAsset(env: {
   platform: string;

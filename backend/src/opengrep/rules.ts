@@ -11,6 +11,7 @@ import { RulePackError } from './rulePackError.js';
 import { prunePackTree, sweepStalePackDirs } from './rulePackTree.js';
 import { withRulesMutation } from './rulesGate.js';
 import { readOpengrepState, updateOpengrepState, type OpengrepPackState } from './state.js';
+import type { RulePackJob, RulePackStatus } from './types.js';
 import {
   OPENGREP_RULE_PACKS,
   findRulePackDef,
@@ -23,22 +24,8 @@ export { RulePackError } from './rulePackError.js';
 export { fetchPackCommit } from './rulePackFetch.js';
 export { prunePackTree, sweepStalePackDirs } from './rulePackTree.js';
 
-export type RulePackJob = {
-  status: 'running' | 'done' | 'failed';
-  packId: string;
-  startedAt: number;
-  finishedAt?: number;
-  error?: string;
-};
-
-export type RulePackStatus = OpengrepRulePackDef & {
-  dir: string;
-  installed: OpengrepPackState | null;
-  // True when the installed commit differs from the pinned one (a Lattice
-  // upgrade moved the pin) — the Settings card offers "Update".
-  outdated: boolean;
-  job: RulePackJob | null;
-};
+// Declared in the node-free ./types.ts (the frontend shares them).
+export type { RulePackJob, RulePackStatus } from './types.js';
 
 // Test seam: the fetch step (a real `git fetch` otherwise).
 export type RulePackDeps = {

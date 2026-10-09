@@ -1,21 +1,17 @@
 // Compact per-file colors from the complete filtered findings, independent of
 // the markdown byte budget. Only visited files without scan caveats can be green.
-import { buildDigest, type DigestFilter, type OpengrepSeverity, type ParsedOpengrepOutput } from './digest.js';
+import { buildDigest, type DigestFilter, type ParsedOpengrepOutput } from './digest.js';
 import type { OpengrepScanRecord } from './scanRecords.js';
+import type { OpengrepGraph, OpengrepGraphFile } from './types.js';
 
-export type OpengrepGraphFile = {
-  path: string;
-  severity: OpengrepSeverity | null;
-  findings: number;
-  incomplete: boolean;
-  stale?: boolean;
-};
+// Declared in the node-free ./types.ts (the frontend shares them).
+export type { OpengrepGraphFile } from './types.js';
 
 export function buildOpengrepGraph(
   parsed: ParsedOpengrepOutput,
   scan: OpengrepScanRecord,
   filter: DigestFilter,
-) {
+): OpengrepGraph {
   const digest = buildDigest(parsed, filter);
   const findingKey = (f: { fingerprint: string; path: string; line: number; severity: string }) => `${f.fingerprint}\0${f.path}\0${f.line}\0${f.severity}`;
   const included = new Set(digest.groups.flatMap((group) => group.files.flatMap((file) => file.occurrences.map((o) => findingKey({ ...o, path: file.path })))));

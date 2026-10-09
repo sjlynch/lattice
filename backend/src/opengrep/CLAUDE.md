@@ -35,6 +35,11 @@ nothing fetched without a click, nothing committed.
 
 ## Map
 
+- `types.ts` — the wire types (status, packs, scan records + envelope, graph
+  result, findings, triage, reviews, project settings), type-only and
+  node-free: the frontend re-exports them via `../shared/wireTypes.ts`. Each
+  original module re-exports its own, so import from there as before. Change
+  a payload shape HERE; never import a runtime module from it.
 - `versions.ts` — `OPENGREP_VERSION`, per-asset `{sha256, bytes}`,
   `OPENGREP_RULE_PACKS` (full-commit pins). The digest block is written ONLY by
   `scripts/opengrep-pin.mjs` (repo root), which Sigstore-verifies every asset

@@ -7,17 +7,10 @@ import { runExclusive } from '../serializeWrites.js';
 import { canonicalProjectPath, homeProjectDir } from '../projectPath.js';
 import { fingerprintMatches, ruleMatches, type OpengrepFinding, type ParsedOpengrepOutput } from './parseOutput.js';
 import type { DigestFilter } from './digest.js';
+import type { FindingDisposition, TriageEvent } from './types.js';
 
-export type FindingDisposition = {
-  status: 'open' | 'ignored' | 'deferred';
-  scope: 'local' | 'settings' | 'source';
-  reason: string;
-  updatedAt: number;
-  owner?: string;
-  reviewAt?: string;
-  expired?: boolean;
-};
-export type TriageEvent = FindingDisposition & { fingerprint: string; path: string; ruleId: string };
+// Declared in the node-free ./types.ts (the frontend shares them).
+export type { FindingDisposition, TriageEvent } from './types.js';
 type TriageState = { version: 1; entries: Record<string, TriageEvent>; history: TriageEvent[] };
 const empty = (): TriageState => ({ version: 1, entries: {}, history: [] });
 export function findingKey(f: Pick<OpengrepFinding, 'fingerprint' | 'path'>): string { return `${f.path}\0${f.fingerprint}`; }

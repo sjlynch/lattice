@@ -8,7 +8,7 @@ import path from 'node:path';
 import { getGlobalSettings } from '../globalSettings.js';
 import { canonicalProjectPath } from '../projectPath.js';
 import { getUserSettings, updateUserSettings } from '../userSettings.js';
-import { resolveOpengrep, type OpengrepResolution } from './detect.js';
+import { resolveOpengrep } from './detect.js';
 import {
   buildDigest,
   renderDigestMarkdown,
@@ -16,9 +16,9 @@ import {
   type OpengrepDigest,
   type ParsedOpengrepOutput,
 } from './digest.js';
-import { getOpengrepInstallJob, type OpengrepInstallJob } from './install.js';
-import { chooseAssetForThisMachine, type AssetChoice } from './platform.js';
-import { listRulePacks, type RulePackStatus } from './rules.js';
+import { getOpengrepInstallJob } from './install.js';
+import { chooseAssetForThisMachine } from './platform.js';
+import { listRulePacks } from './rules.js';
 import {
   runningOpengrepScan,
   latestOpengrepScan,
@@ -38,23 +38,10 @@ import { buildOpengrepGraph } from './graph.js';
 import { captureScanInputs, changedPaths, cachePathKey } from './scanCache.js';
 import { defaultExcludeGlobs, resolveRuleConfigs } from './scanArgs.js';
 import { withFindingTriage } from './triage.js';
+import type { OpengrepGraphResult, OpengrepScanFreshness, OpengrepStatus } from './types.js';
 
-export type OpengrepStatus = {
-  available: boolean;
-  engine: OpengrepResolution | null;
-  managedVersion: string;
-  managedInstalled: boolean;
-  platformAsset: AssetChoice | null;
-  installJob: OpengrepInstallJob | null;
-  packs: RulePackStatus[];
-  // Present when `project` was given: is a scan running, and the last one.
-  project?: {
-    path: string;
-    scanning: boolean;
-    runningScan: { id: string; startedAt: number } | null;
-    lastScan: OpengrepScanRecord | null;
-  };
-};
+// Declared in the node-free ./types.ts (the frontend shares it).
+export type { OpengrepStatus } from './types.js';
 
 export async function getOpengrepStatus(project?: string): Promise<OpengrepStatus> {
   const [engine, state, packs, platformAsset] = await Promise.all([
@@ -242,7 +229,7 @@ export async function digestOfStoredScan(
 
 // Read only: the graph starts scans explicitly through POST /scan, then polls
 // its exact id. Loading this snapshot never starts or refreshes a scan.
-export async function graphOfStoredScan(project: string, id: string) {
+export async function graphOfStoredScan(project: string, id: string): Promise<OpengrepGraphResult | null> {
   const canonical = canonicalProjectPath(project);
   const scanId = id === 'latest' ? (await latestOpengrepScan(canonical))?.id : id;
   if (!scanId) return null;
@@ -251,7 +238,7 @@ export async function graphOfStoredScan(project: string, id: string) {
   const config = await loadEffectiveConfig(canonical);
   const parsed = await withFindingTriage(canonical, stored.parsed, config.filter);
   const graph = buildOpengrepGraph(parsed, stored.record, config.filter);
-  let freshness: { state: 'current' | 'changed' | 'unknown'; changedFiles: number; configurationChanged: boolean; checkedAt: number } = {
+  let freshness: OpengrepScanFreshness = {
     state: 'unknown', changedFiles: 0, configurationChanged: false, checkedAt: Date.now(),
   };
   if (stored.cache) {

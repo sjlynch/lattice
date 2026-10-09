@@ -23,6 +23,7 @@ import { probeOpengrepVersion, resetOpengrepCache } from './detect.js';
 import { downloadsDir, managedBinaryDir, managedBinaryPath } from './paths.js';
 import { chooseAssetForThisMachine, type AssetChoice } from './platform.js';
 import { updateOpengrepState } from './state.js';
+import type { OpengrepInstallJob } from './types.js';
 import {
   OPENGREP_ASSETS,
   OPENGREP_RELEASE_BASE_URL,
@@ -31,20 +32,8 @@ import {
   type OpengrepAssetPin,
 } from './versions.js';
 
-export type OpengrepInstallPhase = 'downloading' | 'verifying' | 'checking';
-
-export type OpengrepInstallJob = {
-  status: 'running' | 'done' | 'failed';
-  phase: OpengrepInstallPhase;
-  version: string;
-  asset: string;
-  note?: string;
-  receivedBytes: number;
-  totalBytes: number;
-  startedAt: number;
-  finishedAt?: number;
-  error?: string;
-};
+// Declared in the node-free ./types.ts (the frontend shares them).
+export type { OpengrepInstallJob, OpengrepInstallPhase } from './types.js';
 
 export type InstallDeps = {
   fetchImpl?: typeof fetch;

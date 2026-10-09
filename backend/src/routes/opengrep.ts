@@ -32,6 +32,7 @@ import {
   startOpengrepInstall,
   startProjectScanWithDigest,
   type DigestRenderContext,
+  type OpengrepScanEnvelope,
   type OpengrepSeverity,
   type ScanWithDigestResult,
 } from '../opengrep.js';
@@ -65,7 +66,7 @@ function renderContextFromQuery(q: Record<string, unknown>): DigestRenderContext
 // A scan's JSON envelope: the record, the digest's counts, and (optionally) the
 // markdown, plus `canonicalProject` so the MCP client's project assertion
 // holds.
-function scanEnvelope(r: ScanWithDigestResult, includeMarkdown: boolean) {
+function scanEnvelope(r: ScanWithDigestResult, includeMarkdown: boolean): OpengrepScanEnvelope {
   return {
     canonicalProject: r.record.project,
     scan: r.record,

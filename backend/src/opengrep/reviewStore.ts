@@ -3,15 +3,12 @@ import path from 'node:path';
 import { atomicWriteFile } from '../fsAtomic.js';
 import { canonicalProjectPath, homeProjectDir } from '../projectPath.js';
 import { runExclusive } from '../serializeWrites.js';
-import type { AgentHarness } from '../harnesses.js';
+import type { ReviewRun } from './types.js';
 
-// Conversation content belongs to the harness, not a second report in Lattice.
-export type ReviewRun = {
-  id: string; project: string; scanId: string; harness: AgentHarness; piModel?: string;
-  status: 'running' | 'awaiting-decision' | 'closed' | 'failed' | 'cancelled';
-  createdAt: number; updatedAt: number; lastTurnAt?: number; finishedAt?: number;
-  findingCount: number; serverId?: string; terminalId?: string; error?: string;
-};
+// Declared in the node-free ./types.ts (the frontend shares it, as
+// `SecurityReview`). Conversation content belongs to the harness, not a
+// second report in Lattice.
+export type { ReviewRun } from './types.js';
 type Store = { version: 1; runs: ReviewRun[] };
 export const reviewStoreFile = (project: string) => path.join(homeProjectDir(project), 'opengrep-review-sessions.json');
 export const isActiveReview = (run: Pick<ReviewRun, 'status'>) => run.status === 'running' || run.status === 'awaiting-decision';

@@ -9,20 +9,15 @@ import path from 'node:path';
 import { atomicWriteFile } from '../fsAtomic.js';
 import { runExclusive } from '../serializeWrites.js';
 import { stateFilePath } from './paths.js';
+import type { OpengrepPackState } from './types.js';
+
+// Declared in the node-free ./types.ts (rule-pack status carries it).
+export type { OpengrepPackState } from './types.js';
 
 export type OpengrepBinaryState = {
   version: string;
   asset: string;
   sha256: string;
-  installedAt: number;
-};
-
-export type OpengrepPackState = {
-  commit: string;
-  // Rule FILES kept after pruning, and the `- id:` entries counted in them.
-  ruleFiles: number;
-  ruleCount: number;
-  licence: string;
   installedAt: number;
 };
 

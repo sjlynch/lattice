@@ -10,17 +10,11 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import { spawnWithTimeout } from '../spawnWithTimeout.js';
 import { managedBinaryPath } from './paths.js';
+import type { OpengrepResolution } from './types.js';
 import { OPENGREP_VERSION } from './versions.js';
 
-export type OpengrepSource = 'path' | 'managed';
-
-export type OpengrepResolution = {
-  // Absolute path (or the bare name for a PATH hit that `where`/`which` could
-  // not resolve to a file) to spawn with `shell: false`.
-  command: string;
-  source: OpengrepSource;
-  version: string;
-};
+// Declared in the node-free ./types.ts (the frontend shares them).
+export type { OpengrepResolution, OpengrepSource } from './types.js';
 
 // `--version` on a cold cache can take a few seconds (the binary is a
 // self-contained ~50 MB executable).

@@ -1,4 +1,8 @@
 import type { AgentHarness, HarnessAvailability, HarnessChoice } from '../../harnesses';
+import type {
+  OpengrepProjectSettings,
+  OpengrepSeverity,
+} from '../../../../backend/src/shared/wireTypes';
 
 export type StartupTerminal = {
   id: string;
@@ -143,20 +147,13 @@ export type UserSettings = {
     Record<'claude' | 'codex' | 'pi', { append?: string; replace?: string }>
   >;
   // Opengrep (SAST) scan configuration for this project. Edited in Settings →
-  // Tools. Mirrors backend opengrep/settings.ts `OpengrepProjectSettings`.
+  // Tools. The backend's own type (backend/src/opengrep/types.ts).
   opengrep?: OpengrepProjectSettings;
 };
 
-export type OpengrepSeverity = 'ERROR' | 'WARNING' | 'INFO';
-
-export type OpengrepProjectSettings = {
-  extraRulePaths?: string[];
-  excludeGlobs?: string[];
-  severityFloor?: OpengrepSeverity;
-  ignoreRuleIds?: string[];
-  ignoreFingerprints?: string[];
-  digestBudgetKb?: number;
-};
+// The backend's own Opengrep settings types (backend/src/opengrep/types.ts,
+// re-exported through backend/src/shared/wireTypes.ts).
+export type { OpengrepProjectSettings, OpengrepSeverity };
 
 // Extensions Lattice ignores by default in the LOC and code-health overlays.
 // Config/data and prose files are often long but not meaningful code-health

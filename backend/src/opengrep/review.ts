@@ -10,6 +10,7 @@ import { defaultExcludeGlobs, resolveRuleConfigs } from './scanArgs.js';
 import { captureScanInputs, changedPaths, type ScanInputs } from './scanCache.js';
 import { readOpengrepScan } from './scanRecords.js';
 import { isActiveReview, readReviewStore, updateReviewStore } from './reviewStore.js';
+import type { SecurityReview } from './types.js';
 import { abortPendingReview, cleanupReview, reviewAgentId, startReviewSession } from './reviewSession.js';
 import { unregisterAgentSession } from '../agentSessions.js';
 import { terminalRegistry } from '../terminalRegistry/store.js';
@@ -52,9 +53,9 @@ function selectedIds(input: unknown) {
   if (!Array.isArray(input) || !input.length || input.length > 20_000 || input.some((id) => typeof id !== 'string')) throw new Error('Choose at least one finding');
   return new Set(input as string[]);
 }
-export async function listSecurityReviews(project: string) {
+export async function listSecurityReviews(project: string): Promise<SecurityReview[]> {
   const store = await readReviewStore(project);
-  return Promise.all([...store.runs].sort((a, b) => b.createdAt - a.createdAt).map(async (run) => {
+  return Promise.all([...store.runs].sort((a, b) => b.createdAt - a.createdAt).map(async (run): Promise<SecurityReview> => {
     if (!isActiveReview(run) || !run.terminalId) return run;
     const terminal = await terminalRegistry.get(run.terminalId, project);
     const busy = terminal?.lastBusy;

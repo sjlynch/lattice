@@ -32,7 +32,8 @@ comments, and several had drifted.
   redeclaring: tasks, terminal registry, project init, git history, health
   (incl. `HealthUpdate`), harness-prompt / instruction-template editor entries,
   post-merge hooks, project env notes, merge / push / QA runs, folder browser,
-  Pi models, workflows, workflow runs and prompt customizations. Which
+  Pi models, workflows, workflow runs, prompt customizations and Opengrep
+  (status, packs, scans, graph, triage, reviews, project settings). Which
   frontend types are still hand mirrors, and why:
   `frontend/src/api/types/CLAUDE.md`.
 - Adding one: its backend module — and every module reachable from it, inline
@@ -41,4 +42,7 @@ comments, and several had drifted.
   module so backend importers don't change (`McpSpawnScope` →
   `../mcp/spawnScope.ts`, `WorkflowRun` → `../workflowRuns/types.ts`,
   `HealthUpdate` → `../health/types.ts`, the `*EditorEntry` types → their
-  `defs.ts`). Never move runtime code for this.
+  `defs.ts`, the Opengrep wire types → `../opengrep/types.ts`). Never move
+  runtime code for this. A wire shape the backend only infers (a route's
+  object literal) gets a named type there and the function an explicit
+  return type, so the two can't drift.

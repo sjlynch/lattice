@@ -9,33 +9,10 @@
 // 128 hex chars + `_N`; the digest prints the SHORT form (first 16 hex + the
 // suffix) and every matcher accepts either.
 
-export type OpengrepSeverity = 'ERROR' | 'WARNING' | 'INFO';
+import type { OpengrepFinding, OpengrepRunError, OpengrepSeverity } from './types.js';
 
-export type OpengrepFinding = {
-  nativeIgnored?: boolean;
-  triage?: import('./triage.js').FindingDisposition;
-  fingerprint: string;
-  shortFingerprint: string;
-  ruleId: string;
-  severity: OpengrepSeverity;
-  message: string;
-  // Project-relative, forward slashes.
-  path: string;
-  line: number;
-  endLine: number;
-  col: number;
-  snippet: string;
-  category?: string;
-  cwe: string[];
-  references: string[];
-};
-
-export type OpengrepRunError = {
-  kind: string;
-  level: string;
-  message: string;
-  path?: string;
-};
+// Declared in the node-free ./types.ts (the frontend shares them).
+export type { OpengrepFinding, OpengrepRunError, OpengrepSeverity } from './types.js';
 
 export type ParsedOpengrepOutput = {
   version: string;

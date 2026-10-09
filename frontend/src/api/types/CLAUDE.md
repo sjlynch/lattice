@@ -14,9 +14,13 @@ an audit found ten that had). Rules for what may go there:
   (`TerminalRecord` family), `git.ts`, `gitHistory.ts`, `health.ts` (incl.
   `HealthUpdate`), `harnessSystemPrompts.ts`, `instructionTemplates.ts`,
   `postMergeHooks.ts`, `projectEnv.ts`, `runs.ts`, `workflows.ts` (definitions,
-  `WorkflowRun`, prompt customizations), `scan.ts`'s `DirListing` family, and
-  `settings.ts`'s Pi model types. Local names may alias a backend name
-  (`InstructionTemplate` = `InstructionTemplateEditorEntry`).
+  `WorkflowRun`, prompt customizations), `opengrep.ts` (status, rule packs,
+  scan records / envelope, graph result, findings, triage, `SecurityReview` —
+  all from `backend/src/opengrep/types.ts`), `scan.ts`'s `DirListing` family,
+  and `settings.ts`'s Pi model and `OpengrepSeverity` /
+  `OpengrepProjectSettings` types. Local names may alias a backend name
+  (`InstructionTemplate` = `InstructionTemplateEditorEntry`,
+  `OpengrepRulePackStatus` = `RulePackStatus`).
 - **Composed here from shared types** (the frontend genuinely differs):
   WS envelopes the endpoint adds outside the backend union — `idle` in
   `MergeRunEvent` / `PostMergeHookEvent`, `hello` in `WorkflowRunEvent`
@@ -31,13 +35,13 @@ an audit found ten that had). Rules for what may go there:
   (`RUN_TESTS_*` minutes, `DEFAULT_METRICS_IGNORED_EXTS`) — `wireTypes.ts` is
   type-only, so keep those equal to the backend by hand.
 - **Still hand mirrors** — their backend module reaches node, so check the
-  backend when you touch one: `opengrep.ts` (every `backend/src/opengrep/`
-  module imports node), `settings.ts`'s `UserSettings` (via
-  `opengrep/settings.ts`), `scan.ts`'s `GraphNode` / `ScanResult` /
-  `SearchResult` (`scanner/`, `search.ts`), `PiProbeModel`
-  (`piModels/probe.ts`). To share one, move the type into a node-free module
-  first (as `HealthUpdate`, `EnvNoteInfo`, the `*EditorEntry` types and
-  `WorkflowRun` were) and re-export it from its old module.
+  backend when you touch one: `settings.ts`'s `UserSettings` (backend
+  `userSettings/types.ts` imports `opengrep/settings.ts`), `scan.ts`'s
+  `GraphNode` / `ScanResult` / `SearchResult` (`scanner/`, `search.ts`),
+  `PiProbeModel` (`piModels/probe.ts`). To share one, move the type into a
+  node-free module first (as `HealthUpdate`, `EnvNoteInfo`, the `*EditorEntry`
+  types, `WorkflowRun` and the Opengrep types were) and re-export it from its
+  old module.
 
 ## Conventions
 
