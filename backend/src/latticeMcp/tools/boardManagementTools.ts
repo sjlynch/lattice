@@ -3,13 +3,18 @@
 // session is not a task worktree's agent (see the gate there for why).
 // Registration order is what the model sees; keep it.
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { LatticeClient } from '../client.js';
+import type { ToolHost } from '../toolHost.js';
 import { toToolResult, withKeptBranchHint } from '../toolResult.js';
 
-export function registerBoardManagementTools(server: McpServer, client: LatticeClient): void {
-  server.registerTool(
+// `runModelFields` (controller mode only): `run_task` also forwards `model` +
+// `effort` to `POST /api/tasks/:id/run` verbatim — the API validates them. The
+// pinned server's schema stays exactly as it was.
+export function registerBoardManagementTools(
+  host: ToolHost,
+  opts: { runModelFields?: boolean } = {},
+): void {
+  host.tool(
     'update_task',
     {
       description:
@@ -26,7 +31,7 @@ export function registerBoardManagementTools(server: McpServer, client: LatticeC
           .describe('Target lane.'),
       },
     },
-    async ({ id, title, description, status }) =>
+    async (client, { id, title, description, status }) =>
       toToolResult(
         await client.call(`/api/tasks/${encodeURIComponent(id)}`, {
           method: 'PATCH',
@@ -39,7 +44,7 @@ export function registerBoardManagementTools(server: McpServer, client: LatticeC
       ),
   );
 
-  server.registerTool(
+  host.tool(
     'transition_tasks',
     {
       description:
@@ -57,7 +62,7 @@ export function registerBoardManagementTools(server: McpServer, client: LatticeC
           .describe('Move every task in this lane instead (ignored when ids is given).'),
       },
     },
-    async ({ status, ids, fromStatus }) =>
+    async (client, { status, ids, fromStatus }) =>
       toToolResult(
         await client.call('/api/tasks/transition', {
           method: 'POST',
@@ -70,7 +75,7 @@ export function registerBoardManagementTools(server: McpServer, client: LatticeC
       ),
   );
 
-  server.registerTool(
+  host.tool(
     'delete_task',
     {
       description:
@@ -82,7 +87,7 @@ export function registerBoardManagementTools(server: McpServer, client: LatticeC
         'transition_tasks; to retire finished work, move it to done.',
       inputSchema: { id: z.string().describe('Task id.') },
     },
-    async ({ id }) =>
+    async (client, { id }) =>
       toToolResult(
         withKeptBranchHint(
           await client.call(`/api/tasks/${encodeURIComponent(id)}`, { method: 'DELETE' }),
@@ -90,7 +95,13 @@ export function registerBoardManagementTools(server: McpServer, client: LatticeC
       ),
   );
 
-  server.registerTool(
+  const modelFields: z.ZodRawShape = opts.runModelFields
+    ? {
+        model: z.string().optional().describe('Agent model id, passed through.'),
+        effort: z.string().optional().describe('Reasoning effort, passed through.'),
+      }
+    : {};
+  host.tool(
     'run_task',
     {
       description:
@@ -108,17 +119,19 @@ export function registerBoardManagementTools(server: McpServer, client: LatticeC
           .string()
           .optional()
           .describe('With harness "pi": a "provider/model" id from the Pi model menu.'),
+        ...modelFields,
       },
     },
-    async ({ id, harness, piModel }) =>
-      toToolResult(
-        await client.call(`/api/tasks/${encodeURIComponent(id)}/run`, {
-          method: 'POST',
-          body: {
-            ...(harness !== undefined ? { harness } : {}),
-            ...(piModel !== undefined ? { piModel } : {}),
-          },
-        }),
-      ),
+    async (client, args) => {
+      const { id, ...given } = args as { id: string } & Record<string, unknown>;
+      // Forward only what was given (the API owns every default).
+      const body: Record<string, unknown> = {};
+      for (const key of ['harness', 'piModel', 'model', 'effort'] as const) {
+        if (given[key] !== undefined) body[key] = given[key];
+      }
+      return toToolResult(
+        await client.call(`/api/tasks/${encodeURIComponent(id)}/run`, { method: 'POST', body }),
+      );
+    },
   );
 }

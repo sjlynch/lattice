@@ -1,5 +1,5 @@
 // Shared harness for the split latticeMcp.* suites (surface, reads, writes,
-// failures): Lattice's own first-party MCP server (`backend/src/latticeMcp/`),
+// failures, controller*): Lattice's own first-party MCP server (`backend/src/latticeMcp/`),
 // driven end to end over the SDK's in-memory transport with a fake `fetchImpl`
 // standing in for the backend. That combination is the point: it exercises the
 // REAL tool registry, the real zod schemas and the real result shaping, while
@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { createLatticeMcpServer } from '../../latticeMcp/createServer.js';
+import { createLatticeControllerServer } from '../../latticeMcp/createControllerServer.js';
 import type { FetchLike } from '../../latticeMcp/client.js';
 
 export const PROJECT = 'C:\\development\\lattice';
@@ -64,6 +65,51 @@ export async function connect(
   const client = new Client({ name: 'test', version: '1.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return { client, close: () => client.close() };
+}
+
+// The controller-mode server (`createControllerServer.ts`) over the same
+// in-memory pair. `answer` routes each request (method + parsed URL) to a
+// canned response; sleeps are instant and recorded, so polling costs no time.
+export const EXP = 'http://127.0.0.1:5484';
+export const SANDBOX = 'C:\\sandbox\\a';
+
+export async function connectController(
+  calls: Recorded[],
+  answer: (req: { method: string; url: URL; body: unknown }) => CannedResponse | Promise<CannedResponse>,
+  opts: { defaultProject?: string; sleeps?: number[]; retryBudgetMs?: number } = {},
+) {
+  const fetchImpl: FetchLike = async (url, init) => {
+    calls.push({ url, method: init?.method ?? 'GET', body: init?.body });
+    const res = await answer({
+      method: init?.method ?? 'GET',
+      url: new URL(url),
+      body: init?.body === undefined ? undefined : JSON.parse(init.body),
+    });
+    const status = res.status ?? 200;
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      text: async () => (typeof res.body === 'string' ? res.body : JSON.stringify(res.body)),
+    };
+  };
+  const server = createLatticeControllerServer({
+    instances: [
+      { name: 'main', url: API },
+      { name: 'exp', url: EXP },
+    ],
+    defaultProject: opts.defaultProject,
+    fetchImpl,
+    retry: { budgetMs: opts.retryBudgetMs ?? 0, sleep: async (ms) => void opts.sleeps?.push(ms) },
+  });
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: 'test', version: '1.0.0' });
+  await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
+  return { client, close: () => client.close() };
+}
+
+// Parse a tool result's text block as JSON.
+export function jsonOf(result: unknown): any {
+  return JSON.parse(textOf(result));
 }
 
 // Narrow a CallToolResult's first text block.

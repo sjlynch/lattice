@@ -7,13 +7,19 @@ owns catalog policy, harness injection, scoping and opt-outs.
 
 The harness launches the backend's Node with `dist/latticeMcp/server.js`,
 which talks HTTP to the running backend. Required env: `LATTICE_API_URL`,
-`LATTICE_PROJECT`; optional: `LATTICE_TASK_ID`.
+`LATTICE_PROJECT`; optional: `LATTICE_TASK_ID`. With `--controller` (or
+`LATTICE_MCP_MODE=controller`) it is the multi-instance controller instead —
+see "Controller mode" below; the pinned server is unchanged by it.
 
 ## Module map
 
 | Module | Responsibility |
 |---|---|
-| [createServer.ts](createServer.ts) | Server composition, registrar order and session gate. |
+| [createServer.ts](createServer.ts) | Pinned server composition, registrar order and session gate. |
+| [createControllerServer.ts](createControllerServer.ts) | Controller composition, per-call `instance`/`project` scope, board-tool subset. |
+| [toolHost.ts](toolHost.ts) | `ToolHost`: one tool implementation, pinned or per-call client. |
+| [instances.ts](instances.ts) | `LATTICE_INSTANCES` / `LATTICE_API_URL` parsing; instance-argument resolution. |
+| [workflowViews.ts](workflowViews.ts) | Compact workflow / run views (no prompts, clipped summaries). |
 | [client.ts](client.ts) | HTTP outcomes, bounded retries and injectable polling sleep. |
 | [toolResult.ts](toolResult.ts) | MCP result mapping, status descriptions and kept-branch hint. |
 | [server.ts](server.ts) | Env validation, stderr logging and stdio transport. |
@@ -22,6 +28,8 @@ which talks HTTP to the running backend. Required env: `LATTICE_API_URL`,
 | [tools/writeTools.ts](tools/writeTools.ts) | `create_task`, `create_tasks`, `append_summary`. |
 | [tools/boardManagementTools.ts](tools/boardManagementTools.ts) | `update_task`, `transition_tasks`, `delete_task`, `run_task`. |
 | [tools/opengrepTools.ts](tools/opengrepTools.ts) | Scan/findings; separately registered ignore. |
+| [tools/workflowTools.ts](tools/workflowTools.ts) | Controller: workflow definitions and runs, incl. `wait_workflow_run`. |
+| [tools/controllerTools.ts](tools/controllerTools.ts) | Controller: `instances`, merge runs, `export_board`, `api_request`. |
 
 ## Registration and session scope
 
@@ -34,7 +42,7 @@ session task, and omit board management plus `opengrep_ignore`. Otherwise
 
 ## Shared contracts
 
-- **Project isolation:** no tool accepts `project`. The client pins `project=`
+- **Project isolation (pinned):** no tool accepts `project`. The client pins `project=`
   on every request, including writes; by-id API routes refuse foreign tasks
   before acting. Successful responses assert `canonicalProject` (envelope) or
   `projectPath` (bare task) when present, using normalized paths.
@@ -76,6 +84,34 @@ echoed, never stored. The [registrar](tools/opengrepTools.ts) owns
 exact timing constants and result messages; the [Opengrep guide](../opengrep/CLAUDE.md)
 owns backend scan/storage details.
 
+## Controller mode (`lattice-control`)
+
+Opt-in catalog entry `lattice-control` (no `defaultEnabled`) that reaches only
+user-launched sessions (`../mcp/userLaunchedScope.ts`); never weaken that gate.
+
+- **Instances:** `LATTICE_INSTANCES` (JSON object or `name=url,name=url`) plus
+  `LATTICE_API_URL` as the default (first) instance, else
+  `default=http://localhost:5184`. `instance` = a configured name or an ad-hoc
+  LOOPBACK URL only. Bad config exits at startup.
+- **Scope:** every scoped tool takes `instance` + `project`; the client is
+  built per call (`projectSource: 'argument'`) and still asserts every
+  response, nested `run` / arrays included. `LATTICE_PROJECT` defaults the
+  project on the DEFAULT instance only. `LATTICE_TASK_ID` is ignored.
+- **Tools:** `instances`; board subset (no `create_task`, `append_summary`,
+  `my_task`, Opengrep), `run_task` + pass-through `model`/`effort`; workflow
+  tools; `start_merge_run` / `get_merge_run`; `export_board` (`status=all`,
+  `fields=full`, `clip=0`, `limit=0`; `outFile` → atomic write + counts);
+  `api_request` (resolved path must stay under `/api/`, body cut at 64 KB).
+- **Passthrough:** step lists, run `overrides` and `model`/`effort` reach the
+  API verbatim — the API validates, the MCP never filters new fields.
+- **Waiting:** `wait_workflow_run` polls every 10 s via the injectable sleep
+  (default 600 s, max 3600); `done:false` is a normal result. Codex caps a
+  tool call at its `tool_timeout_sec` (default 60 s): pass a shorter timeout.
+- **Plain terminal:** build `backend/dist`, then
+  `claude mcp add lattice-control -s user -e LATTICE_INSTANCES=main=http://localhost:5184,exp=http://localhost:5484 -- node C:/development/lattice/backend/dist/latticeMcp/server.js --controller`
+  (name before the variadic `-e`; `-s user` keeps it out of the
+  `projects[<root>]` entries Lattice manages).
+
 ## Coverage
 
 The split `latticeMcp.*.test.ts` suites (shared harness
@@ -86,3 +122,9 @@ and injected fetch: registry, schemas and session tool sets
 [writes](../__tests__/latticeMcp.writes.test.ts)); project guards, result
 shaping and retries ([failures](../__tests__/latticeMcp.failures.test.ts)). [latticeMcpOpengrep.test.ts](../__tests__/latticeMcpOpengrep.test.ts):
 digests, ignore writes, async polling, failures and still-running results.
+Controller: instance parsing, surface, routing and guard
+([controller](../__tests__/latticeMcp.controller.test.ts)), workflow tools and
+waits ([controllerWorkflows](../__tests__/latticeMcp.controllerWorkflows.test.ts)),
+instances / merge / export / `api_request`
+([controllerTools](../__tests__/latticeMcp.controllerTools.test.ts)); the
+session gate is `mcp.controllerScope.test.ts`.

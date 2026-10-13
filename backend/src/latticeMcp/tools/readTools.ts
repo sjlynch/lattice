@@ -3,20 +3,18 @@
 // worktree session) → find (`search_tasks`). Registration order is what the
 // model sees; keep it.
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { LatticeClient } from '../client.js';
 import type { CreateLatticeMcpServerOptions } from '../createServer.js';
+import type { ToolHost } from '../toolHost.js';
 import { STATUS_DESC, toToolResult } from '../toolResult.js';
 
 export function registerReadTools(
-  server: McpServer,
-  client: LatticeClient,
+  host: ToolHost,
   opts: Pick<CreateLatticeMcpServerOptions, 'taskId'>,
 ): void {
   // ---- Tier 0: orient -------------------------------------------------------
 
-  server.registerTool(
+  host.tool(
     'board_summary',
     {
       description:
@@ -25,12 +23,12 @@ export function registerReadTools(
         'Read this before list_tasks so a listing never surprises you.',
       inputSchema: {},
     },
-    async () => toToolResult(await client.call('/api/tasks/summary')),
+    async (client) => toToolResult(await client.call('/api/tasks/summary')),
   );
 
   // ---- Tier 1: scan ---------------------------------------------------------
 
-  server.registerTool(
+  host.tool(
     'list_tasks',
     {
       description:
@@ -84,7 +82,7 @@ export function registerReadTools(
           ),
       },
     },
-    async (args) =>
+    async (client, args) =>
       toToolResult(
         await client.call('/api/tasks', {
           // Only what the caller actually passed — the API owns the defaults.
@@ -103,7 +101,7 @@ export function registerReadTools(
 
   // ---- Tier 2: expand -------------------------------------------------------
 
-  server.registerTool(
+  host.tool(
     'get_task',
     {
       description:
@@ -112,7 +110,7 @@ export function registerReadTools(
         'instead of calling this in a loop.',
       inputSchema: { id: z.string().describe('Task id.') },
     },
-    async ({ id }) => toToolResult(await client.call(`/api/tasks/${encodeURIComponent(id)}`)),
+    async (client, { id }) => toToolResult(await client.call(`/api/tasks/${encodeURIComponent(id)}`)),
   );
 
   // Registered ONLY when the session is a task worktree's agent. A worktree
@@ -122,7 +120,7 @@ export function registerReadTools(
   // not have to read its own id back out of a file to ask.
   if (opts.taskId) {
     const taskId = opts.taskId;
-    server.registerTool(
+    host.tool(
       'my_task',
       {
         description:
@@ -130,13 +128,13 @@ export function registerReadTools(
           'status, description, any summaries appended so far. No arguments.',
         inputSchema: {},
       },
-      async () => toToolResult(await client.call(`/api/tasks/${encodeURIComponent(taskId)}`)),
+      async (client) => toToolResult(await client.call(`/api/tasks/${encodeURIComponent(taskId)}`)),
     );
   }
 
   // ---- Find -----------------------------------------------------------------
 
-  server.registerTool(
+  host.tool(
     'search_tasks',
     {
       description:
@@ -151,7 +149,7 @@ export function registerReadTools(
         limit: z.number().int().min(1).optional().describe('Max results (default 20, max 200).'),
       },
     },
-    async ({ q, status, limit }) =>
+    async (client, { q, status, limit }) =>
       toToolResult(await client.call('/api/tasks/search', { query: { q, status, limit } })),
   );
 }

@@ -2,20 +2,18 @@
 // `append_summary` (how an agent reports). Registration order is what the
 // model sees; keep it.
 
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
-import type { LatticeClient } from '../client.js';
 import type { CreateLatticeMcpServerOptions } from '../createServer.js';
+import type { ToolHost } from '../toolHost.js';
 import { toToolResult } from '../toolResult.js';
 
 export function registerWriteTools(
-  server: McpServer,
-  client: LatticeClient,
+  host: ToolHost,
   opts: Pick<CreateLatticeMcpServerOptions, 'taskId'>,
 ): void {
   // ---- Write ----------------------------------------------------------------
 
-  server.registerTool(
+  host.tool(
     'create_task',
     {
       description:
@@ -29,13 +27,13 @@ export function registerWriteTools(
           .describe('Markdown brief the worktree agent will be given.'),
       },
     },
-    async ({ title, description }) =>
+    async (client, { title, description }) =>
       toToolResult(
         await client.call('/api/tasks', { method: 'POST', body: { title, description } }),
       ),
   );
 
-  server.registerTool(
+  host.tool(
     'create_tasks',
     {
       description:
@@ -53,14 +51,14 @@ export function registerWriteTools(
           .describe('The tasks to create.'),
       },
     },
-    async ({ tasks }) =>
+    async (client, { tasks }) =>
       toToolResult(await client.call('/api/tasks/batch', { method: 'POST', body: { tasks } })),
   );
 
   // `append_summary` is how an agent REPORTS — it belongs to every session,
   // and a worktree agent's most of all, so it is registered ahead of the
   // board-management cut (`createServer.ts`).
-  server.registerTool(
+  host.tool(
     'append_summary',
     {
       description:
@@ -82,7 +80,7 @@ export function registerWriteTools(
         summary: z.string().describe('Markdown or plain text to append.'),
       },
     },
-    async ({ id, summary }) => {
+    async (client, { id, summary }) => {
       // The default only exists in a worktree session; elsewhere the schema
       // already requires `id`, and this is the belt to that suspender.
       const target = id ?? opts.taskId;

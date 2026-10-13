@@ -66,8 +66,11 @@ async function reconcileProjectClaudeMcp(
   // out. Runs regardless of the instrumentation toggle, and `isQaRun` is left
   // false so the QA-only Playwright never lands here. Best-effort.
   // NB: Claude keys config by launch cwd, so this covers sessions started AT
-  // the project root, not ones launched from a subdirectory.
-  const managed = await resolveManagedClaudeServers(project, { isQaRun: false });
+  // the project root, not ones launched from a subdirectory. `userLaunched`:
+  // the root entry serves the user's own sessions, so an enabled
+  // `lattice-control` lands here; a non-user spawn at the root (a stash /
+  // snapshot resolver) rewrites `projects[<root>]` without it before it starts.
+  const managed = await resolveManagedClaudeServers(project, { isQaRun: false, userLaunched: true });
   await applyClaudeProjectConfig(root, { managed });
 }
 

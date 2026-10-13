@@ -2,7 +2,9 @@
 // through `LatticeClient.call`, which:
 //   1. builds the URL against `LATTICE_API_URL` with `project` PINNED from
 //      `LATTICE_PROJECT` — no tool takes a `project` argument, so an agent can't
-//      aim a write at the wrong board;
+//      aim a write at the wrong board (controller mode builds one client per
+//      call for the requested instance + project, `projectSource: 'argument'`;
+//      an empty project is unpinned: no `project=`, no assertion);
 //   2. sends/parses JSON;
 //   3. asserts the envelope's `canonicalProject` matches the pinned project
 //      (`assertCanonicalProject`);
@@ -42,8 +44,11 @@ export type FetchLike = (
 export type LatticeClientOptions = {
   // e.g. `http://127.0.0.1:5184` (trailing slash tolerated).
   apiUrl: string;
-  // The canonical project path this server is pinned to.
+  // The canonical project path this server is pinned to ('' = unpinned).
   project: string;
+  // Where `project` came from, for the mismatch message: the server's env
+  // (pinned mode, the default) or the tool call's own argument (controller).
+  projectSource?: ProjectSource;
   fetchImpl?: FetchLike;
   // How long to keep retrying a backend that is restarting (connection
   // refused / 503). Tests pass 0; `sleep` is injectable for the same reason.
@@ -96,6 +101,14 @@ export type LatticeCallOutcome =
   // The envelope came back for a different project than we pinned.
   | { kind: 'projectMismatch'; text: string };
 
+// One response with nothing classified yet (`api_request` renders it whole).
+export type LatticeRawOutcome =
+  | { kind: 'response'; status: number; ok: boolean; raw: string }
+  | { kind: 'unreachable'; text: string }
+  | { kind: 'timeout'; text: string };
+
+type ProjectSource = 'env' | 'argument';
+
 export type LatticeCallInit = {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   // Extra query params. `undefined`/`null` values are dropped, so a tool can
@@ -106,8 +119,9 @@ export type LatticeCallInit = {
 };
 
 export class LatticeClient {
-  private readonly apiUrl: string;
+  readonly apiUrl: string;
   readonly project: string;
+  private readonly projectSource: ProjectSource;
   private readonly fetchImpl: FetchLike;
   private readonly retryBudgetMs: number;
   private readonly sleep: (ms: number) => Promise<void>;
@@ -116,6 +130,7 @@ export class LatticeClient {
     // Strip trailing slashes once so path joins stay single-slashed.
     this.apiUrl = opts.apiUrl.replace(/\/+$/, '');
     this.project = opts.project;
+    this.projectSource = opts.projectSource ?? 'env';
     // Default to the ambient global fetch (Node 18+). Wrapped rather than
     // referenced so an unbound `globalThis.fetch` can't throw "Illegal
     // invocation".
@@ -157,18 +172,21 @@ export class LatticeClient {
   }
 
   // `path` is the API path only (`/api/tasks`); `project` is appended here so
-  // no caller can forget it.
+  // no caller can forget it (an unpinned client sends none).
   buildUrl(path: string, query: LatticeCallInit['query'] = {}): string {
     const params = new URLSearchParams();
-    params.set('project', this.project);
+    if (this.project) params.set('project', this.project);
     for (const [key, value] of Object.entries(query)) {
       if (value === undefined || value === null || value === '') continue;
       params.set(key, String(value));
     }
-    return `${this.apiUrl}${path}?${params.toString()}`;
+    const qs = params.toString();
+    return `${this.apiUrl}${path}${qs ? `?${qs}` : ''}`;
   }
 
-  async call(path: string, init: LatticeCallInit = {}): Promise<LatticeCallOutcome> {
+  // One round trip, unclassified: the status and body of whatever answered,
+  // or why nothing did. `call` builds on this; `api_request` renders it whole.
+  async request(path: string, init: LatticeCallInit = {}): Promise<LatticeRawOutcome> {
     const url = this.buildUrl(path, init.query);
     const method = init.method ?? 'GET';
     let res: Awaited<ReturnType<FetchLike>>;
@@ -202,22 +220,31 @@ export class LatticeClient {
     }
 
     const raw = await res.text().catch(() => '');
+    return { kind: 'response', status: res.status, ok: res.ok, raw };
+  }
+
+  async call(path: string, init: LatticeCallInit = {}): Promise<LatticeCallOutcome> {
+    const out = await this.request(path, init);
+    if (out.kind !== 'response') return out;
+    const { status, raw } = out;
     const parsed = parseJson(raw);
 
-    if (res.status === 413) {
+    if (status === 413) {
       // The teaching response. Hand it back verbatim (compact) — it carries the
       // board summary and the exact narrowing suggestions.
       return { kind: 'oversize', text: compact(parsed, raw) };
     }
-    if (!res.ok) {
+    if (!out.ok) {
       return {
         kind: 'httpError',
-        text: `Lattice API ${method} ${path} failed with HTTP ${res.status}: ${raw || '(empty body)'}`,
-        status: res.status,
+        text: `Lattice API ${init.method ?? 'GET'} ${path} failed with HTTP ${status}: ${raw || '(empty body)'}`,
+        status,
       };
     }
 
-    const mismatch = assertCanonicalProject(this.project, parsed);
+    const mismatch = this.project
+      ? assertCanonicalProject(this.project, parsed, this.projectSource)
+      : null;
     if (mismatch) return { kind: 'projectMismatch', text: mismatch };
 
     return { kind: 'ok', text: compact(parsed, raw) };
@@ -267,6 +294,7 @@ function parseJson(raw: string): unknown {
 export function assertCanonicalProject(
   pinnedProject: string,
   payload: unknown,
+  source: ProjectSource = 'env',
 ): string | null {
   if (!payload || typeof payload !== 'object') return null;
   const p = payload as { canonicalProject?: unknown; projectPath?: unknown };
@@ -278,6 +306,13 @@ export function assertCanonicalProject(
         : null;
   if (claimed === null) return null;
   if (normalizeForCompare(claimed) === normalizeForCompare(pinnedProject)) return null;
+  if (source === 'argument') {
+    return (
+      `Project mismatch: you asked for ${pinnedProject}, but the backend answered ` +
+      `for ${claimed}. Refusing the result — the id or run you named belongs to ` +
+      'another board. Check the project and instance arguments; do not retry blindly.'
+    );
+  }
   return (
     `Project mismatch: this Lattice MCP server is pinned to ${pinnedProject}, ` +
     `but the backend answered for ${claimed}. Refusing the result — the ` +

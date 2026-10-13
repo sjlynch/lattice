@@ -17,7 +17,9 @@
 //     `client.ts`: the server is its own short-lived, harness-spawned process
 //     (`server.ts`) and must not drag in the task cache, Express, or node-pty.
 // The tools live in `tools/`, one module per tier; this file only fixes their
-// ORDER (which the model sees) and the worktree-session cut.
+// ORDER (which the model sees) and the worktree-session cut. The opt-in
+// multi-instance controller mode reuses the board tiers through `ToolHost`
+// (`createControllerServer.ts`).
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import {
@@ -29,6 +31,7 @@ import { registerBoardManagementTools } from './tools/boardManagementTools.js';
 import { registerOpengrepIgnoreTool, registerOpengrepTools } from './tools/opengrepTools.js';
 import { registerReadTools } from './tools/readTools.js';
 import { registerWriteTools } from './tools/writeTools.js';
+import { pinnedScope, ToolHost } from './toolHost.js';
 
 export type CreateLatticeMcpServerOptions = {
   // Backend origin, e.g. `http://127.0.0.1:5184`.
@@ -69,11 +72,12 @@ export function createLatticeMcpServer(
     },
   );
 
+  const host = new ToolHost(server, pinnedScope(client));
   // board_summary, list_tasks, get_task, my_task (worktree sessions only),
   // search_tasks.
-  registerReadTools(server, client, opts);
+  registerReadTools(host, opts);
   // create_task, create_tasks, append_summary — in every session.
-  registerWriteTools(server, client, opts);
+  registerWriteTools(host, opts);
   // opengrep_scan, opengrep_findings — read-only, in every session.
   registerOpengrepTools(server, client);
 
@@ -100,7 +104,7 @@ export function createLatticeMcpServer(
   // opengrep_ignore.
   registerOpengrepIgnoreTool(server, client);
   // update_task, transition_tasks, delete_task, run_task.
-  registerBoardManagementTools(server, client);
+  registerBoardManagementTools(host);
 
   return server;
 }

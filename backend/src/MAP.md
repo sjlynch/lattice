@@ -128,7 +128,7 @@ beside its `x/` folder ("`x.ts` / `x/`" below); "See its doc" = that folder's
 - `piSubagents.ts` / `piSubagents/` — auto-installs `@tintinweb/pi-subagents` + cwd-exact shims (incl. the project root). See its doc.
 - `piMcp.ts` / `piMcp/` — Pi MCP via `pi-mcp-adapter` (cwd `.pi/mcp.json` + shim written at spawn). See its doc.
 - `mcp/` — MCP control plane: catalog, per-harness resolvers, secrets, import; resolved in the backend, applied by the executor. See its doc.
-- `latticeMcp/` — Lattice's own first-party stdio MCP server over the task-board API. See its doc.
+- `latticeMcp/` — Lattice's own first-party stdio MCP server over the task-board API (pinned `lattice`), plus its opt-in `--controller` mode (`lattice-control`: any project on one or more instances, workflow runs, board export). See its doc.
 - `opengrep.ts` / `opengrep/` — Opengrep SAST as a user-installed pre-run tool; nothing third-party is committed or bundled. See its doc.
 
 ## Crash & logging

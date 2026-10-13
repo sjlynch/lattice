@@ -36,6 +36,10 @@ export type {
 // (which injects its per-spawn env) and by the settings UI, so it lives here
 // rather than as a string literal in three places.
 export const LATTICE_MCP_SERVER_ID = 'lattice';
+// The same server in its multi-instance controller mode. First-party too, but
+// NOT default-enabled, and the resolver hands it only to sessions the user
+// started (`userLaunched`) — never a task, resolver or workflow-step agent.
+export const LATTICE_CONTROL_MCP_SERVER_ID = 'lattice-control';
 
 // The catalog: Lattice's own board server (on by default) followed by the
 // third-party servers, all of which stay disabled until enabled per-project.
@@ -71,6 +75,28 @@ export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
     // The one first-party exception to the all-off invariant. See the top of
     // this file.
     defaultEnabled: true,
+  },
+  {
+    id: LATTICE_CONTROL_MCP_SERVER_ID,
+    label: 'Lattice controller (multi-instance)',
+    description:
+      'Drive any project on this and other local Lattice instances: task boards, ' +
+      'workflow definitions and runs (start, wait, cancel), merge runs, a full-board ' +
+      'JSON export and a raw /api/ escape hatch. First-party and key-free, but OFF by ' +
+      'default; when on it reaches only sessions you start (sidebar and startup ' +
+      'terminals, your own claude at the project root) — never task agents, merge ' +
+      'resolvers or workflow steps. Name another instance by URL, e.g. ' +
+      'http://localhost:5484.',
+    transport: 'stdio',
+    // Same runner as `lattice` (see there); `--controller` selects the mode.
+    command: process.execPath,
+    args: [latticeMcpServerEntryPath(), '--controller'],
+    // Filled per spawn like `lattice` (LATTICE_API_URL + LATTICE_PROJECT, which
+    // become the default instance + project), never LATTICE_TASK_ID.
+    runtime: 'node',
+    harnessSupport: { claude: true, codex: true, pi: true },
+    builtin: true,
+    // No `defaultEnabled`: opt-in per project and harness on the MCP tab.
   },
   {
     id: 'playwright',

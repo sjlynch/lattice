@@ -13,9 +13,16 @@
 // (The MCP SDK itself never writes to stdout outside the transport, but a
 // future import here, or a Node deprecation warning routed through console,
 // easily could.)
+//
+// `--controller` (or LATTICE_MCP_MODE=controller) starts the opt-in
+// multi-instance controller instead (`createControllerServer.ts`): instances
+// from LATTICE_INSTANCES / LATTICE_API_URL, LATTICE_PROJECT only a default.
 
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
+import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { createLatticeControllerServer } from './createControllerServer.js';
 import { createLatticeMcpServer } from './createServer.js';
+import { parseInstanceConfig } from './instances.js';
 
 console.log = (...args: unknown[]) => console.error(...args);
 console.info = (...args: unknown[]) => console.error(...args);
@@ -26,7 +33,20 @@ function fail(message: string): never {
   process.exit(1);
 }
 
-async function main(): Promise<void> {
+function isControllerMode(): boolean {
+  return (
+    process.argv.slice(2).includes('--controller') ||
+    process.env.LATTICE_MCP_MODE?.trim().toLowerCase() === 'controller'
+  );
+}
+
+function controllerServer(): McpServer {
+  const parsed = parseInstanceConfig(process.env);
+  if ('error' in parsed) fail(parsed.error);
+  return createLatticeControllerServer(parsed.config);
+}
+
+function pinnedServer(): McpServer {
   const apiUrl = process.env.LATTICE_API_URL?.trim();
   const project = process.env.LATTICE_PROJECT?.trim();
   // Both are set by the resolver at spawn time; missing means this process was
@@ -37,8 +57,11 @@ async function main(): Promise<void> {
   // Optional: present only for a task worktree's session (run/resume). Unlocks
   // `my_task` and the id-less `append_summary`; every other session omits it.
   const taskId = process.env.LATTICE_TASK_ID?.trim() || undefined;
+  return createLatticeMcpServer({ apiUrl, project, taskId });
+}
 
-  const server = createLatticeMcpServer({ apiUrl, project, taskId });
+async function main(): Promise<void> {
+  const server = isControllerMode() ? controllerServer() : pinnedServer();
   await server.connect(new StdioServerTransport());
 }
 

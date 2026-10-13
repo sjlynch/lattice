@@ -63,6 +63,13 @@ project-root `.pi/mcp.json`.
   `command` is **`process.execPath`**, not bare `node` (no shell; the harness's
   PATH isn't ours); as an absolute `.exe` it stays unwrapped (`cmd /c` breaks a
   path with a space).
+- **`lattice-control` (controller mode) → user-launched only**: opt-in, same
+  per-spawn env (no task id). `resolveMcpEntries` drops it unless
+  `ctx.userLaunched` — set by `userLaunchedScope.ts` (explicit `user`/`startup`
+  owner, no task/QA/scope marker, not a Lattice-managed cwd; fail closed) and
+  by the root reconcile. Never task agents, resolvers, workflow steps, push/QA.
+  Accepted race (Claude): `projects[<root>]` is keyed by cwd, so a root
+  resolver could read it just as a sidebar spawn or reconcile re-adds it.
 - **Task-worktree scope → lattice-only** (`taskAgentsLatticeMcpOnly`, default
   ON, also when settings are absent/corrupt): task and worktree-resolver spawns
   get ONLY `lattice` (or nothing) — an idle stdio server is a ~100–180 MB

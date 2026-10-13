@@ -11,6 +11,7 @@ import {
   isTaskWorktreeSpawn,
   latticeOnlyMcpApplies,
 } from '../mcp/taskWorktreeScope.js';
+import { isUserLaunchedSpawn } from '../mcp/userLaunchedScope.js';
 import { withCodexActivityTitle } from '../codexTerminalActivity.js';
 import { refreshLatticeApiDocs } from '../latticeApiDocs.js';
 import { resolveClaudeSpawn } from './spawnClaude.js';
@@ -48,7 +49,8 @@ function isPiCommand(initialCommand: string | undefined): boolean {
 //
 // A task-worktree spawn (`opts.mcpScope`) may be narrowed to the Lattice MCP
 // server alone — `latticeOnlyMcpApplies` decides, from the project settings
-// read ONCE here and handed to every resolver.
+// read ONCE here and handed to every resolver. Only a user-launched spawn
+// (`isUserLaunchedSpawn`) may get the `lattice-control` controller.
 export async function resolveHarnessSpawnBody(
   opts: CreateSessionOptions,
 ): Promise<SessionWireBody> {
@@ -91,7 +93,11 @@ async function resolveHarnessConfig(
 ): Promise<SessionWireBody> {
   if (!opts.cwd) return opts;
   const latticeOnly = latticeOnlyMcpApplies(opts, settings);
-  const mcpCtx = { taskId: opts.taskId, ...(latticeOnly ? { latticeOnly: true } : {}) };
+  const mcpCtx = {
+    taskId: opts.taskId,
+    ...(latticeOnly ? { latticeOnly: true } : {}),
+    ...(isUserLaunchedSpawn(opts) ? { userLaunched: true } : {}),
+  };
   // A task-worktree agent's "don't run tests" rule rides its system prompt as
   // well as its brief — see taskVerification.ts.
   const promptExtra = isTaskWorktreeSpawn(opts)

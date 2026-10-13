@@ -10,6 +10,7 @@ import { canonicalProjectPath } from '../projectPath.js';
 import { getBackendServerConfig } from '../server/config.js';
 import type { McpSecrets } from './secrets.js';
 import {
+  LATTICE_CONTROL_MCP_SERVER_ID,
   LATTICE_MCP_SERVER_ID,
   type McpHarnessSupport,
   type McpServerEntry,
@@ -50,6 +51,11 @@ export type McpResolveContext = {
   // worktree session when `taskAgentsLatticeMcpOnly` is on — see
   // `taskWorktreeScope.ts`. Never set for a project-root cwd.
   latticeOnly?: boolean;
+  // A session the USER started: a sidebar / startup terminal (`userLaunchedScope.ts`)
+  // or the project-root reconcile (their own `claude` at the root). The ONLY
+  // spawns that may get `lattice-control`, which drives any project on any
+  // instance — never a task agent, resolver, workflow step, push or QA run.
+  userLaunched?: boolean;
 };
 
 // The per-project settings the resolver reads. `mcpOverrides` is CLAUDE's map
@@ -122,6 +128,8 @@ function resolvePlaywrightFor(
 // project-less spawn — a sidebar terminal opened before a project is chosen, a
 // scratch cwd — is better off with no board tools at all than with a set that
 // all fail on the first call.
+// `lattice-control` gets the same env as defaults (its own backend becomes the
+// default instance, the project the default project) and NEVER a task id.
 function shapeLatticeEntry(
   entry: McpServerEntry,
   ctx: McpResolveContext,
@@ -147,7 +155,7 @@ function shapeLatticeEntry(
       LATTICE_PROJECT: canonicalProjectPath(ctx.projectPath),
       // Only a task-run spawn carries one; the key is omitted (not set empty)
       // otherwise, so the server registers `my_task` exactly when it applies.
-      ...(ctx.taskId ? { LATTICE_TASK_ID: ctx.taskId } : {}),
+      ...(ctx.taskId && entry.id === LATTICE_MCP_SERVER_ID ? { LATTICE_TASK_ID: ctx.taskId } : {}),
     },
   };
 }
@@ -173,18 +181,20 @@ export function resolveMcpEntries(
     // Task-worktree scope: only Lattice's own server survives. Its own toggle
     // still applies below, so an explicit `lattice = false` means zero servers.
     if (ctx.latticeOnly && entry.id !== LATTICE_MCP_SERVER_ID) continue;
+    // The controller reaches user-started sessions only, whatever its toggle.
+    if (entry.id === LATTICE_CONTROL_MCP_SERVER_ID && ctx.userLaunched !== true) continue;
     const { enabled, headless } =
       entry.id === 'playwright'
         ? resolvePlaywrightFor(settings, harness, entry, isQaRun)
         : { enabled: harnessToggleOn(settings, harness, entry), headless: false };
     if (!enabled) continue;
 
-    // Lattice's own server is the one entry whose config is not fully static:
-    // it carries the project + backend URL for THIS spawn. Shaped into a clone
+    // Lattice's own server (both modes) is the one entry whose config is not
+    // fully static: it carries the project + backend URL for THIS spawn. Shaped into a clone
     // (never a mutation of the shared catalog), and dropped when there is no
     // project to serve.
     let resolvedEntry = entry;
-    if (entry.id === LATTICE_MCP_SERVER_ID) {
+    if (entry.id === LATTICE_MCP_SERVER_ID || entry.id === LATTICE_CONTROL_MCP_SERVER_ID) {
       const shaped = shapeLatticeEntry(entry, ctx);
       if (!shaped) continue;
       resolvedEntry = shaped;

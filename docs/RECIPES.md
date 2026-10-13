@@ -86,11 +86,11 @@ Guard: `__tests__/defaultPromptMigrations.test.ts` — `current` equals the `.md
 
 Owners: BE `latticeMcp/CLAUDE.md`, `mcp/CLAUDE.md`.
 
-1. Register it in its tier under `latticeMcp/tools/`: `readTools.ts`, `writeTools.ts` (every session), `boardManagementTools.ts`, `opengrepTools.ts`. Body: `toToolResult(await client.call('/api/…', { method, body, query }))`; the route must exist (recipe 3).
+1. Register it in its tier under `latticeMcp/tools/`: `readTools.ts`, `writeTools.ts` (every session), `boardManagementTools.ts`, `opengrepTools.ts`; controller-only: `workflowTools.ts`, `controllerTools.ts`. Register through `host.tool(name, config, async (client, args) => …)` (`toolHost.ts`) so the same code serves the pinned server and the controller; body: `toToolResult(await client.call('/api/…', { method, body, query }))`; the route must exist (recipe 3). A shared-tier tool reaches the controller only if it is in `CONTROLLER_BOARD_TOOLS` (`createControllerServer.ts`).
 2. Scope: `createServer.ts` returns before board management when `taskId` is set (task worktrees). A tool that re-lanes, deletes, spawns or permanently suppresses goes after that cut. Registration order is what the model sees.
-3. Update `EXPECTED_TOOLS` / `WORKTREE_TOOLS` (grep `__tests__/latticeMcp*`), the counts in `latticeMcp/CLAUDE.md`, and the tool names in the `mcp/catalog.ts` entry description and `LATTICE_API.template.md`.
+3. Update `EXPECTED_TOOLS` / `WORKTREE_TOOLS` / `CONTROLLER_TOOLS` (grep `__tests__/latticeMcp*`), the counts in `latticeMcp/CLAUDE.md`, and the tool names in the `mcp/catalog.ts` entry description and `LATTICE_API.template.md`.
 
-Gotchas: no tool takes `project` (the client pins it; the test asserts it) or re-implements an API default; a description of ≤ 40 chars fails. Import nothing beyond `latticeMcp/` (own process, run from `dist/`, so only newly spawned sessions see a change); nothing may print to stdout. Writes replay only after `ECONNREFUSED` / 503.
+Gotchas: no pinned tool takes `project` (the client pins it; the test asserts it; the controller adds `instance` + `project` itself) or re-implements an API default; a description of ≤ 40 chars fails. Import nothing beyond `latticeMcp/` (own process, run from `dist/`, so only newly spawned sessions see a change); nothing may print to stdout. Writes replay only after `ECONNREFUSED` / 503.
 
 ## 8. Graph overlay or extension style
 
