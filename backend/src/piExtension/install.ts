@@ -31,7 +31,6 @@ export async function installPiCompletionExtension(args: {
   site: PiExtensionSite;
   respectQuitGate: boolean;
   eventName?: 'session_shutdown' | 'agent_settled';
-  promptFile?: string;
 }): Promise<{ extensionFile: string; sentinelFile: string }> {
   const extDir = path.join(args.dir, '.pi', 'extensions');
   await fs.mkdir(extDir, { recursive: true });
@@ -42,7 +41,6 @@ export async function installPiCompletionExtension(args: {
     site: args.site,
     respectQuitGate: args.respectQuitGate,
     eventName: args.eventName,
-    promptFile: args.promptFile,
     extensionFile,
     sentinelFile,
   });
@@ -58,8 +56,7 @@ export async function installPiCompletionExtension(args: {
   await atomicWriteFile(extensionFile, expected);
   console.log(
     `[pi-extension] installed ${args.site} backstop at ${extensionFile} ` +
-      `(gate=${args.respectQuitGate ? 'quit-only' : 'any-reason'}` +
-      `${args.promptFile ? `, promptFile=${args.promptFile}` : ''})`,
+      `(gate=${args.respectQuitGate ? 'quit-only' : 'any-reason'})`,
   );
   return { extensionFile, sentinelFile };
 }

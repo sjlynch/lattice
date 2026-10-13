@@ -9,8 +9,7 @@ public facade; external consumers import from `'../piExtension.js'`. Internal
 modules import their implementation dependencies directly, never the facade.
 
 One renderer feeds all call-sites — task `/complete`, push `/done`,
-workflow-step-complete, post-merge-hook-complete, and
-workflow-customization-complete, plus security-review-done
+workflow-step-complete, post-merge-hook-complete, plus security-review-done
 (the `PiExtensionSite` union) — so all backstops
 share one hardening (retry loop + per-attempt timeout + sentinel audit log).
 Security reviews use `agent_settled` (after retries/compaction/queued messages),
@@ -21,8 +20,8 @@ conversation. All existing shutdown callers keep byte-identical output.
 
 - `renderer.ts` — owns the `PiExtensionSite` /
   `PiCompletionExtensionOptions` types, default filenames, and
-  `renderPiCompletionExtension`. Derives the source-tagged URL, callback-outbox
-  path, and prompt-file literal, then calls `template.ts` without I/O.
+  `renderPiCompletionExtension`. Derives the source-tagged URL and
+  callback-outbox path, then calls `template.ts` without I/O.
 - `template.ts` — *how the extension text is assembled*, no I/O. The banner
   comment, the `const` block, the static helper fns, and the `session_shutdown`
   handler (or its opt-in `agent_settled` variant), joined by `renderExtensionSource`.

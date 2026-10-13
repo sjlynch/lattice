@@ -112,15 +112,15 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
 Pick the band: `batch` for fan-out work (task runs, workflow steps),
 `priority` for things that unblock an in-flight run (merge-conflict
 resolvers, post-merge hook), `interactive` for user-initiated one-offs
-(push, prompt customization).
+(push, security review).
 
 Two consumer shapes, both in use:
 
 - **Await the result** — `queuedCreateSession({ kind, priority, dedupeKey,
   opts })` (`../queuedCreateSession.ts`) wraps a single `proxyCreateSession`
   and resolves with the usual `CreateSessionResult`. Use it when the caller
-  needs the session synchronously (merge resolvers, post-merge hook, push,
-  prompt customization). Lightweight per-site setup runs before the call.
+  needs the session synchronously (merge resolvers, post-merge hook, push).
+  Lightweight per-site setup runs before the call.
 - **Fire-and-forget** — call `enqueueSpawn` directly with a thunk that does
   the spawn and emits whatever WS event delivers the terminal (task runs →
   `task-spawned`, workflow steps → `step-spawned`). Use it when the heavy

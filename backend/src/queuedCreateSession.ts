@@ -2,9 +2,9 @@
 //
 // `queuedCreateSession` is the drop-in replacement for `proxyCreateSession`
 // at spawn sites whose caller needs the session result synchronously (merge
-// resolvers, post-merge hook, push runs, prompt customization). It routes the
-// `proxyCreateSession` call through the spawn queue so it waits for
-// concurrency headroom instead of being hard-cap-rejected.
+// resolvers, post-merge hook, push runs). It routes the `proxyCreateSession`
+// call through the spawn queue so it waits for concurrency headroom instead of
+// being hard-cap-rejected.
 //
 // The lightweight per-site setup (writing an instructions file, mkdir) runs
 // BEFORE this call — only the pty allocation is queued. Sites with heavy

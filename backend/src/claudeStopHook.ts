@@ -7,42 +7,6 @@ import {
   ensureCallbackScript,
 } from './callbackOutbox/script.js';
 
-// Render a Stop-hook config that runs an arbitrary shell command. Most
-// call-sites deliver a plain completion POST via renderClaudeStopHookConfig
-// (the durable callback script — see callbackOutbox/script.ts); the
-// prompt-customization site needs a different command (`node <backstop
-// script>`) because its callback expects a JSON body, so the renderer is
-// generalised to take a command string.
-export function renderClaudeStopHookConfigForCommand(
-  command: string,
-  timeoutS?: number,
-): string {
-  const hookConfig = {
-    hooks: {
-      Stop: [
-        {
-          matcher: '',
-          hooks: [
-            {
-              type: 'command',
-              command,
-              ...(timeoutS ? { timeout: timeoutS } : {}),
-            },
-          ],
-        },
-      ],
-    },
-  };
-  return JSON.stringify(hookConfig, null, 2);
-}
-
-export function renderClaudeStopHookConfig(callbackUrl: string): string {
-  return renderClaudeStopHookConfigForCommand(
-    claudeCallbackCommand(callbackUrl),
-    CALLBACK_HOOK_TIMEOUT_S,
-  );
-}
-
 // Tools whose `tool_input` carries a single file the agent is reading or
 // modifying. The graph's activity overlay draws a focus beam to each. Glob /
 // Grep / Bash are deliberately excluded — they don't name one target file.
@@ -128,13 +92,4 @@ export async function installClaudeHooks(
   urls: ClaudeHookUrls,
 ): Promise<void> {
   await writeStopHookFile(dir, renderClaudeHooksConfig(urls));
-}
-
-// Variant used by the prompt-customization site to invoke its backstop
-// script (which posts a JSON body) instead of a bare curl.
-export async function installClaudeStopHookForCommand(
-  dir: string,
-  command: string,
-): Promise<void> {
-  await writeStopHookFile(dir, renderClaudeStopHookConfigForCommand(command));
 }

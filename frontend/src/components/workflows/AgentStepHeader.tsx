@@ -1,5 +1,5 @@
 import { memo } from 'react';
-import { ChevronDown, ChevronRight, GitFork, Wand2, X } from 'lucide-react';
+import { ChevronDown, ChevronRight, GitFork, X } from 'lucide-react';
 import type {
   HarnessAvailability,
   PiMenuEntry,
@@ -9,7 +9,6 @@ import {
   buildHarnessOptions,
   decodeHarnessValue,
   encodeHarnessValue,
-  harnessLabel,
   normalizeAgentHarness,
   selectedOptionTitle,
   type AgentHarness,
@@ -67,7 +66,7 @@ export function StepHarnessSelect({
 }
 
 // The top row of an agent step: collapse toggle, status badge, title input,
-// harness select, and the customize/remove actions. Memoized on its own
+// harness select, and the parallel/freeze/remove actions. Memoized on its own
 // and fed only the header-relevant fields of the step (not the whole object) so
 // a keystroke in the prompt textarea — which lives in the sibling
 // `PromptHighlightTextarea` — doesn't re-render the header.
@@ -84,11 +83,9 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   harnessAvail,
   piMenu,
   runStatus,
-  customizing,
   onChange,
   onRemove,
   onToggleCollapse,
-  onCustomize,
 }: {
   stepId: string;
   index: number;
@@ -102,11 +99,7 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   harnessAvail: HarnessAvailability;
   piMenu: PiMenuEntry[];
   runStatus?: StepRunStatus;
-  customizing: boolean;
-} & Pick<
-  StepRowCallbacks,
-  'onChange' | 'onRemove' | 'onToggleCollapse' | 'onCustomize'
->) {
+} & Pick<StepRowCallbacks, 'onChange' | 'onRemove' | 'onToggleCollapse'>) {
   const selectedHarness = normalizeAgentHarness(harness);
   const opengrepOn = tools?.includes('opengrep') === true;
   return (
@@ -150,15 +143,6 @@ export const AgentStepHeader = memo(function AgentStepHeader({
         frozen={frozen}
         onToggle={() => onChange(index, { frozen: !frozen })}
       />
-      <button
-        className="icon-btn sm"
-        onClick={() => onCustomize(index)}
-        disabled={customizing}
-        title={`Customize this prompt for the active project using ${harnessLabel(selectedHarness)}`}
-        aria-label="Customize prompt for active project"
-      >
-        <Wand2 size={12} />
-      </button>
       <button
         className="icon-btn sm"
         onClick={() => onRemove(index)}

@@ -1,9 +1,9 @@
 # backend/src/routes/workflows
 
 The HTTP edges of the workflow subsystem. `routes/workflows.ts` composes these
-three per-concern sub-routers (their mount order is not significant; route
-order inside `runs.ts` is). Run state itself lives in `../../workflowRuns.ts` /
-`../../workflowPromptCustomizations.ts`; these modules are thin handlers over it.
+two per-concern sub-routers (their mount order is not significant; route
+order inside `runs.ts` is). Run state itself lives in `../../workflowRuns.ts`;
+these modules are thin handlers over it.
 
 ## Modules
 
@@ -14,9 +14,6 @@ order inside `runs.ts` is). Run state itself lives in `../../workflowRuns.ts` /
   harness/Pi-model override), `POST /api/workflow-runs/:runId/steps/:n/complete`,
   `POST /api/workflow-runs/:runId/cancel`, `GET /api/workflow-runs/active?project=`,
   and `GET /api/workflow-runs/:runId`.
-- `promptCustomizations.ts` — tailor a step prompt before running:
-  `POST /api/workflow-prompt-customizations` (spawn the selected harness),
-  `GET …/:id` (poll status/result), and `POST …/:id/complete` (harness callback).
 
 ## Run-route gotchas
 
@@ -68,8 +65,8 @@ Ownership regression coverage: `../../__tests__/workflowProjectPin.test.ts`.
 ## Stability
 
 The Stop-hook callback paths/shapes are part of the agent contract — don't change
-them when refactoring. Both `runs.ts` and `promptCustomizations.ts` take
-`backendOrigin` (for the curl callback baked into the spawned session).
+them when refactoring. `runs.ts` takes `backendOrigin` (for the curl callback
+baked into the spawned session).
 
 Command reference (cwd `backend/`): `npm run build`, `npm test`,
 `npx tsc --noEmit`. See [the test guide](../../__tests__/CLAUDE.md);

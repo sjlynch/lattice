@@ -4,7 +4,6 @@ import {
   type Workflow,
   type WorkflowQueueEntry,
 } from '../../../api';
-import { useTerminals } from '../../../TerminalsContext';
 import type { WorkflowTemplate } from '../../../workflowTemplates';
 import { useStructuralScan } from '../../../hooks/useStructuralScan';
 import type { QueueState } from '../queueScheduler';
@@ -24,7 +23,6 @@ import { useWorkflowManualRun } from './useWorkflowManualRun';
 import { useWorkflowRunActions, type StartOutcome } from './useWorkflowRunActions';
 import { useWorkflowRuns } from './useWorkflowRuns';
 import { useWorkflowRunViews } from './useWorkflowRunViews';
-import { useWorkflowPromptCustomization } from './useWorkflowPromptCustomization';
 import { detectProjectPromptProfile } from '../projectPromptVariants';
 import { usePostMergeHookConfigured } from './usePostMergeHookConfigured';
 
@@ -61,7 +59,6 @@ function buildQueueView(
 // callbacks are stable, so this allocation is cheap and identity-irrelevant.
 function buildActions(parts: {
   editorState: ReturnType<typeof useWorkflowEditor>;
-  promptCustomization: ReturnType<typeof useWorkflowPromptCustomization>;
   harnessState: ReturnType<typeof useWorkflowHarnessOverrides>;
   runActions: ReturnType<typeof useWorkflowRunActions>;
   queueActions: ReturnType<typeof useWorkflowQueueActions>;
@@ -74,7 +71,6 @@ function buildActions(parts: {
 }) {
   const {
     editorState,
-    promptCustomization,
     harnessState,
     runActions,
     queueActions,
@@ -103,7 +99,6 @@ function buildActions(parts: {
     removeVariable: editorState.removeVariable,
     selectWorkflow,
     updateEditorName,
-    customizeStepPrompt: promptCustomization.customizeStepPrompt,
     setWorkflowHarnessOverride: harnessState.setWorkflowHarnessOverride,
     // The ▶ Run buttons: start now, or queue behind the active run.
     runWorkflow: manualRun.runWorkflowOrQueue,
@@ -132,7 +127,6 @@ function buildActions(parts: {
 // `buildActions` so this body reads as wiring.
 export function useWorkflowManager(activeFolder: string, scanResult: ScanResult | null) {
   const { error, showError, clearError } = useWorkflowErrorHandler();
-  const { addTerminal } = useTerminals();
   const harnessState = useWorkflowHarnessOverrides();
 
   // Stack detection reads only structural fields (names/paths/exts), so key it
@@ -169,13 +163,6 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
   });
 
   const { editor, setEditor } = editorState;
-  const promptCustomization = useWorkflowPromptCustomization({
-    activeFolder,
-    steps: editor.steps,
-    setEditor,
-    addTerminal,
-    showError,
-  });
 
   const workflowsById = useMemo(() => {
     const map = new Map<string, Workflow>();
@@ -296,12 +283,10 @@ export function useWorkflowManager(activeFolder: string, scanResult: ScanResult 
     getWorkflowPiModelOverride: harnessState.getWorkflowPiModelOverride,
     projectProfile,
     postMergeHookConfigured,
-    customizingSteps: promptCustomization.customizingSteps,
     queue: buildQueueView(queueState, queueSelectors, queuedWorkflowIds),
     collapsedSteps,
     actions: buildActions({
       editorState,
-      promptCustomization,
       harnessState,
       runActions,
       queueActions,

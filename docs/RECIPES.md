@@ -72,14 +72,13 @@ Gotchas: runtime values can't ride `wireTypes.ts` — shared logic goes in a `sh
 
 Owners: FE `components/workflows/prompts/CLAUDE.md`, BE `workflows/CLAUDE.md`.
 
-New quick-add chip: body `components/workflows/prompts/<id>.md` (planner-only: it files tasks, never edits or commits — the step brief forbids both); `?raw` import + entry in `DEFAULT_PROMPTS` (`components/workflows/defaultPrompts.ts`, optional `tools`); a matcher in `PROMPT_TEMPLATE_METADATA` (`promptTemplates.ts`; `projectAware` for stack tailoring).
+New quick-add chip: body `components/workflows/prompts/<id>.md` (planner-only: it files tasks, never edits or commits — the step brief forbids both); `?raw` import + entry in `DEFAULT_PROMPTS` (`components/workflows/defaultPrompts.ts`, optional `tools`); for stack tailoring, add its id to `ProjectAwarePromptId` / `PROJECT_AWARE_PROMPTS` (`promptTemplates.ts`).
 
 Rewording one:
 1. Edit the `.md`.
 2. BE `workflows/defaultPromptMigrations.ts`: in its `quick-add:<file>` entry prepend the old body to `legacy` (newest first, byte-exact from git history) and set `current`. Not every chip has an entry — add one when saved workflows should get the new wording (the guard then pins it).
-3. Changed opener → add the new `startsWith` in `promptTemplates.ts`, keep the old one.
-4. Template steps in `workflowTemplates.ts` mirror the `template-step:*` entries by hand — no drift test covers them.
-5. A reworded tailoring bullet (`projectStackDetection.ts`) → `DEFAULT_PROMPT_LINE_MIGRATIONS` (`defaultPromptLineMigrations.test.ts`).
+3. Template steps in `workflowTemplates.ts` mirror the `template-step:*` entries by hand — no drift test covers them.
+4. A reworded tailoring bullet (`projectStackDetection.ts`) → `DEFAULT_PROMPT_LINE_MIGRATIONS` (`defaultPromptLineMigrations.test.ts`).
 
 Guard: `__tests__/defaultPromptMigrations.test.ts` — `current` equals the `.md` (CRLF-normalized, trailing whitespace trimmed), no `current` asks for a commit, no legacy equals current. Migration is a prefix match, so a hand-edited saved prompt is never touched.
 

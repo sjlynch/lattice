@@ -16,7 +16,7 @@ effects (`../terminal/terminalApi.ts`) and React state (feature hooks).
 - `wsConnectionHealth.ts` — `isBackendConnectionDown` / `subscribeBackendConnection` behind the navbar's `BackendConnectionIndicator`.
 - `tasks.ts` — task CRUD, `runTask` / `resumeTask` / `cancelQueuedRun` / `mergeTask` / `abortTaskMerge`, `subscribeTasks` (`/ws/tasks`: board snapshots, `task-spawned`, `task-spawn-failed`, `task-activity`, `agent-activity`), `subscribeAgentSessions`.
 - `mergeRuns.ts` — start / active / cancel / subscribe for "merge all".
-- `workflows.ts` — workflow CRUD, `startWorkflow`, `fetchWorkflowRun` (`null` on 404), prompt-customization helpers, `subscribeWorkflows` / `subscribeWorkflowRuns`.
+- `workflows.ts` — workflow CRUD, `startWorkflow`, `fetchWorkflowRun` (`null` on 404), `subscribeWorkflows` / `subscribeWorkflowRuns`.
 - `pushRuns.ts` / `qaRuns.ts` / `postMergeHooks.ts` — one-off run lifecycles (start, status poll, forget/abort, subscribe).
 - `projectInit.ts` — Git Setup: `previewProjectInit` (re-POSTed debounced while the `.gitignore` is edited) and `initProjectGit`.
 - `scan.ts` — folder browsing, source scan, git history, `subscribeGitBranch` (`/ws/git-branch`), `subscribeGitStatus` (`/ws/git-status` signature; the timeline dedupes `fetchGitHistory` on `GitHistoryResult.signature`).

@@ -10,9 +10,9 @@ import type { AgentHarness } from '../harnesses.js';
 //   startup  — a configured startup terminal (useStartupTerminals owns
 //              re-seeding these; restore never relaunches them)
 //   the rest — one-shot runs owned by their own recovery machinery
-//              (push / QA / post-merge hook / workflow step / prompt
-//              customization). Restore adopts them while the pty is alive and
-//              marks them ended otherwise — it never resurrects them.
+//              (push / QA / post-merge hook / workflow step / security
+//              review). Restore adopts them while the pty is alive and marks
+//              them ended otherwise — it never resurrects them.
 export type TerminalOwner =
   | 'user'
   | 'task'
@@ -22,7 +22,6 @@ export type TerminalOwner =
   | 'push'
   | 'qa'
   | 'post-merge'
-  | 'prompt-customization'
   | 'security-review';
 
 export type TerminalEndReason =

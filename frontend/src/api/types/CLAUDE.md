@@ -14,7 +14,7 @@ an audit found ten that had). Rules for what may go there:
   (`TerminalRecord` family), `git.ts`, `gitHistory.ts`, `health.ts` (incl.
   `HealthUpdate`), `harnessSystemPrompts.ts`, `instructionTemplates.ts`,
   `postMergeHooks.ts`, `projectEnv.ts`, `runs.ts`, `workflows.ts` (definitions,
-  `WorkflowRun`, prompt customizations), `opengrep.ts` (status, rule packs,
+  `WorkflowRun`), `opengrep.ts` (status, rule packs,
   scan records / envelope, graph result, findings, triage, `SecurityReview` —
   all from `backend/src/opengrep/types.ts`), `scan.ts`'s `DirListing` family,
   and `settings.ts`'s Pi model and `OpengrepSeverity` /
@@ -29,9 +29,7 @@ an audit found ten that had). Rules for what may go there:
   `MergeRunEvent` / `PostMergeHookEvent`, `hello` in `WorkflowRunEvent`
   (`backend/src/ws/endpoints/`); `ProjectInitResult` (`{ ok: true } &` the
   backend result — the route adds `ok`); `RestoreSummary` (optional
-  `relaunchedIds` for an older backend); `PushRunStatus` / `QaRunStatus`;
-  `StartWorkflowPromptCustomizationInput` (stricter than the backend's: the UI
-  always sends `stepTitle` and a concrete `harness`).
+  `relaunchedIds` for an older backend); `PushRunStatus` / `QaRunStatus`.
 - **Frontend-only:** request/response wrappers and UI shapes
   (`WorkflowQueueEntry`, `WorkflowRunStartOptions`, `TerminalLaunchSettings`,
   `PostMergeHookSnapshot`, `ProjectEnvResponse`, …) and runtime values

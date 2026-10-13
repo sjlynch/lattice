@@ -85,7 +85,7 @@ the domain module each router wraps, not here.
 - `qaRuns.ts` — QA e2e run start / status / verdict / done / forget; its
   load-bearing response shapes, duplicate-run guard and tolerant verdict
   parse are in [qaRuns/CLAUDE.md](qaRuns/CLAUDE.md).
-- `workflows.ts` — workflow definitions, runs, prompt customizations; see
+- `workflows.ts` — workflow definitions and runs; see
   [workflows/CLAUDE.md](workflows/CLAUDE.md).
 - `projectParam.ts` — the project/path readers below.
 

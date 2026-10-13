@@ -9,7 +9,6 @@ export type PiExtensionSite =
   | 'push-run-done'
   | 'workflow-step-complete'
   | 'post-merge-hook-complete'
-  | 'workflow-customization-complete'
   | 'security-review-done';
 
 export type PiCompletionExtensionOptions = {
@@ -27,12 +26,6 @@ export type PiCompletionExtensionOptions = {
   respectQuitGate: boolean;
   /** Interactive sessions report each settled turn; existing callers keep shutdown semantics. */
   eventName?: 'session_shutdown' | 'agent_settled';
-  /**
-   * If provided (absolute path), read this file at shutdown and POST its
-   * contents as JSON `{prompt: <contents>}`. Used by the workflow
-   * prompt-customization backstop. Otherwise POSTs an empty body.
-   */
-  promptFile?: string;
   /** Absolute path to the extension `.ts` file. */
   extensionFile: string;
   /** Absolute path to the sentinel `.json` audit log written next to the extension. */
@@ -50,21 +43,19 @@ export function defaultPiExtensionFileName(): string {
   return 'lattice-complete.ts';
 }
 
-// Render the extension source. The per-call inputs (source-tagged URL, the
-// `null`-or-JSON prompt-file literal) are derived here, then handed to the
-// section-assembly in `template.ts`.
+// Render the extension source. The per-call inputs (source-tagged URL,
+// callback-outbox path) are derived here, then handed to the section-assembly
+// in `template.ts`.
 export function renderPiCompletionExtension(
   opts: PiCompletionExtensionOptions,
 ): string {
-  const { callbackUrl, site, respectQuitGate, promptFile, sentinelFile } = opts;
+  const { callbackUrl, site, respectQuitGate, sentinelFile } = opts;
   const urlWithSource = appendSourceParam(callbackUrl, `pi-extension-${site}`);
-  const promptFileLiteral = promptFile ? JSON.stringify(promptFile) : 'null';
 
   return renderExtensionSource({
     urlWithSource,
     sentinelFile,
     outboxFile: callbackOutboxEntryPath(urlWithSource),
-    promptFileLiteral,
     site,
     respectQuitGate,
     eventName: opts.eventName,

@@ -129,8 +129,8 @@ race-safe while every spawn of the project writes identical content.
   (`terminalServerClient/spawnBody.ts`; `createSession.ts` only re-exports it),
   which dispatches per harness to `resolveClaudeSpawn` / `resolveCodexSpawn` /
   `resolvePiSpawn` (`spawnClaude.ts` / `spawnCodex.ts` / `spawnPi.ts`), so all
-  spawn sites (task run/resume, workflow step, prompt customization, post-merge
-  hook, push, QA, sidebar terminal, conflict resolver) are covered. Claude/Codex
+  spawn sites (task run/resume, workflow step, post-merge hook, push, QA,
+  sidebar terminal, conflict resolver) are covered. Claude/Codex
   ride new `SessionWireBody` fields applied by `terminal/launchContext.ts`; Pi's
   files are written directly (like `piMcp`).
 - The Pi extension + sidecar are registered Lattice-owned files in

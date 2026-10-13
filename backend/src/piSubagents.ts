@@ -15,8 +15,8 @@
 //
 // This barrel keeps the historical `./piSubagents.js` import path working for
 // every consumer (server/startup, routes/projectClaude, worktree/setupFiles,
-// workflowRuns/stepSpawner, postMergeHooks/stopHook,
-// workflowPromptCustomizations, the test) — the public surface is unchanged.
+// workflowRuns/stepSpawner, postMergeHooks/stopHook, the test) — the public
+// surface is unchanged.
 
 export {
   ensurePiSubagentsInstalled,

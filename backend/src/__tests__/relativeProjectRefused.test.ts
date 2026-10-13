@@ -87,7 +87,6 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
       ['/api/push-runs', { method: 'POST', headers: json, body: JSON.stringify({ project: rel }) }],
       [`/api/git-check?path=${encodeURIComponent(rel)}`],
       ['/api/qa-runs', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, taskId: 't' }) }],
-      ['/api/workflow-prompt-customizations', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, prompt: 'p' }) }],
       [`/api/mcp-import/scan?${q}`],
       ['/api/project-init/preview', { method: 'POST', headers: json, body: JSON.stringify({ project: rel }) }],
       ['/api/project-init', { method: 'POST', headers: json, body: JSON.stringify({ project: rel }) }],

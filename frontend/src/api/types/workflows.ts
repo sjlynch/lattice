@@ -1,21 +1,15 @@
-// Workflow definitions, runs and prompt customizations. The records and the
-// run event union are the backend's own types (backend/src/workflows/types.ts,
-// workflowRuns/types.ts, workflowPromptCustomizations/types.ts — re-exported
-// through backend/src/shared/wireTypes.ts). Declared here: the WS `hello`
-// envelope, request bodies, and frontend-only queue/run-start shapes.
+// Workflow definitions and runs. The records and the run event union are the
+// backend's own types (backend/src/workflows/types.ts, workflowRuns/types.ts —
+// re-exported through backend/src/shared/wireTypes.ts). Declared here: the WS
+// `hello` envelope and frontend-only queue/run-start shapes.
 import type {
-  StartWorkflowPromptCustomizationInput as BackendStartWorkflowPromptCustomizationInput,
   WorkflowRun,
   WorkflowRunEvent as BackendWorkflowRunEvent,
   WorkflowRunHarnessOverride,
-  WorkflowStepHarness,
 } from '../../../../backend/src/shared/wireTypes';
 
 export type {
   Workflow,
-  WorkflowPromptCustomization,
-  WorkflowPromptCustomizationStatus,
-  WorkflowPromptTemplateId,
   WorkflowRun,
   WorkflowRunHarnessOverride,
   WorkflowRunStatus,
@@ -54,16 +48,6 @@ export type WorkflowQueueEntry = {
   harnessOverride: WorkflowRunHarnessOverride;
   // Pi model override carried alongside harnessOverride when it's `pi`.
   piModelOverride?: string;
-};
-
-// The UI always sends a step title and a concrete harness; the backend's
-// input type accepts them absent / unvalidated.
-export type StartWorkflowPromptCustomizationInput = Omit<
-  BackendStartWorkflowPromptCustomizationInput,
-  'stepTitle' | 'harness'
-> & {
-  stepTitle: string;
-  harness: WorkflowStepHarness;
 };
 
 export type WorkflowRunEvent =

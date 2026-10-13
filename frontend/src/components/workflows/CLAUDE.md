@@ -42,7 +42,7 @@ execution view):
   `useScrollRunningIntoView`).
 - `AgentStepRow.tsx` → `AgentStepHeader.tsx` (collapse, badge, title,
   `StepHarnessSelect` — "Pi — X" rows via `buildHarnessOptions`, sets
-  `harness` + `piModel` — freeze / parallel / customize / remove; memoized on
+  `harness` + `piModel` — freeze / parallel / remove; memoized on
   its specific fields) + `PromptHighlightTextarea.tsx` (textarea over the
   `{{var}}` overlay; memoized on prompt-only props — the per-row hot path; stays
   mounted across collapse, rendering nothing).

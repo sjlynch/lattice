@@ -69,13 +69,11 @@ function renderStep(step: WorkflowStep, postMergeHook: boolean) {
         harnessAvail: { claude: true, pi: true, codex: false },
         piMenu: [],
         definedNames: new Set<string>(),
-        customizing: false,
         postMergeHookConfigured: postMergeHook,
         onChange: noop,
         onRemove: noop,
         onReorder: noop,
         onToggleCollapse: noop,
-        onCustomize: noop,
       }),
     );
   });

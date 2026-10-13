@@ -4,8 +4,8 @@
 //
 // Net scope: the extension is active in exactly the cwds Lattice drops the shim
 // into — every Lattice-spawned Pi session (worktree task, workflow step,
-// post-merge hook, prompt customization) PLUS the project root (so a `pi` the
-// user launches in the Lattice terminal panel, cwd = project root, gets it too).
+// post-merge hook) PLUS the project root (so a `pi` the user launches in the
+// Lattice terminal panel, cwd = project root, gets it too).
 // `-e` would only reach command lines Lattice itself builds; a discovery shim is
 // what reaches a manually-typed `pi`.
 

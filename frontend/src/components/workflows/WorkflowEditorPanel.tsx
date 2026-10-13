@@ -32,7 +32,6 @@ export function WorkflowEditorPanel({ manager }: Props) {
     piMenu,
     projectProfile,
     postMergeHookConfigured,
-    customizingSteps,
     actions,
   } = manager;
 
@@ -155,8 +154,6 @@ export function WorkflowEditorPanel({ manager }: Props) {
                       onRemove={handleRemoveStep}
                       onReorder={actions.reorderSteps}
                       onToggleCollapse={collapsedSteps.toggleCollapsed}
-                      onCustomize={actions.customizeStepPrompt}
-                      customizing={Boolean(customizingSteps[step.id])}
                     />
                   </div>
                 );

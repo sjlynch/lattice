@@ -37,8 +37,8 @@ test('parallel toggle is accessible, pressed when enabled, and shares the rail c
   for (const parallel of [false, true]) {
     const markup = renderToStaticMarkup(createElement(AgentStepHeader, { stepId: 'a', index: 0, collapsed: true,
       title: 'Review', harness: 'claude', frozen: false, parallel,
-      harnessAvail: { claude: true, codex: true, pi: true }, piMenu: [], customizing: false,
-      onChange: () => {}, onRemove: () => {}, onToggleCollapse: () => {}, onCustomize: () => {} }));
+      harnessAvail: { claude: true, codex: true, pi: true }, piMenu: [],
+      onChange: () => {}, onRemove: () => {}, onToggleCollapse: () => {} }));
     assert.match(markup, new RegExp(`workflows-step-parallel${parallel ? ' on' : ''}"`));
     assert.match(markup, new RegExp(`aria-label="Run step in parallel" aria-pressed="${parallel}"`));
   }

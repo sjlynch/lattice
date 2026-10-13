@@ -9,9 +9,8 @@ the TS modules (one level up) that surface and tailor them.
 - `../defaultPrompts.ts` — `DEFAULT_PROMPTS` chip metadata (id / title / label /
   icon / body / optional `tools`). Bodies must stay self-sufficient: a chip may
   be the only step a user runs.
-- `../promptTemplates.ts` — `PROMPT_TEMPLATE_METADATA` matchers,
-  `inferPromptTemplateId` / `promptTemplateTitle` (recognize a saved step), and
-  `promptWithProjectVariant` / `promptsWithProjectVariants`.
+- `../promptTemplates.ts` — `PROJECT_AWARE_PROMPTS` (which ids get a stack
+  variant) and `promptWithProjectVariant` / `promptsWithProjectVariants`.
 - `../projectStackDetection.ts` — `PROJECT_STACKS`, framework signals,
   `detectProjectPromptProfile` (which stacks a scan matches + their guidance).
 - `../projectPromptVariants.ts` — facade re-exporting the two above; import from
@@ -33,9 +32,6 @@ the TS modules (one level up) that surface and tailor them.
   rewording a prompt is a two-file change: also append the old body to that
   entry's `legacy` (saved workflows hold a copy and are migrated on load) and
   update `current`. Otherwise keep bytes stable when refactoring components.
-- **The opener is a matcher key:** `../promptTemplates.ts` recognizes a saved
-  step by `startsWith` on the first sentence. Changing an opener means adding the
-  new one there and keeping the old.
 - A chip may carry `tools` (`opengrep.md` → `tools: ['opengrep']`): the seeded
   step runs that pre-run tool before its harness spawns, and the body is
   written against the report it leaves beside the brief

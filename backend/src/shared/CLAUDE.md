@@ -32,9 +32,9 @@ comments, and several had drifted.
   redeclaring: tasks, terminal registry, project init, git history, health
   (incl. `HealthUpdate`), harness-prompt / instruction-template editor entries,
   post-merge hooks, project env notes, merge / push / QA runs, folder browser,
-  Pi models and providers, workflows, workflow runs, prompt customizations,
-  user and global settings, MCP server entries and Opengrep
-  (status, packs, scans, graph, triage, reviews, project settings). Which
+  Pi models and providers, workflows, workflow runs, user and global settings,
+  MCP server entries and Opengrep (status, packs, scans, graph, triage,
+  reviews, project settings). Which
   frontend types are still hand mirrors, and why:
   `frontend/src/api/types/CLAUDE.md`.
 - Adding one: its backend module — and every module reachable from it, inline

@@ -191,23 +191,6 @@ test('drain replays against a real server: 503 keeps with backoff, then delivers
   }
 });
 
-test('drain forwards a JSON body (Pi prompt-file mode)', async () => {
-  const dir = await tmpDir();
-  try {
-    await withServer(200, async (origin, hits) => {
-      const url = `${origin}/api/workflow-prompt-customizations/c1/complete`;
-      await fs.writeFile(
-        callbackOutboxEntryPath(url, dir),
-        JSON.stringify({ v: 1, url, createdAt: 1, body: '{"prompt":"hi"}', contentType: 'application/json' }),
-      );
-      await drainCallbackOutbox({ backendOrigin: origin, dir, now: () => 5_000 });
-      assert.equal(hits[0]?.body, '{"prompt":"hi"}');
-    });
-  } finally {
-    await fs.rm(dir, { recursive: true, force: true });
-  }
-});
-
 test("drain never POSTs outside its own API, leaves other instances' entries, drops stale ones", async () => {
   const dir = await tmpDir();
   try {

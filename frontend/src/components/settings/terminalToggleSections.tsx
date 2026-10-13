@@ -42,8 +42,8 @@ export const TERMINAL_TOGGLE_SECTIONS: readonly TerminalToggleSectionSpec[] = [
       <>
         <p>
           Launches every Codex session Lattice spawns — task runs, workflow
-          steps, the post-merge hook, prompt customization, and new Codex
-          terminals — with <code>--yolo</code>, Codex’s analogue of Claude’s{' '}
+          steps, the post-merge hook, and new Codex terminals — with{' '}
+          <code>--yolo</code>, Codex’s analogue of Claude’s{' '}
           <code>--dangerously-skip-permissions</code>: it disables Codex's
           sandbox and runs tool calls without pausing for approval.
         </p>

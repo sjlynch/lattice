@@ -18,7 +18,7 @@ from `'../piSubagents.js'`.
   **cwd-exact** (it does not walk up). So we drop a tiny re-export shim
   `lattice-subagents.ts` (`export { default } from "<shared entry>"`) in each
   session cwd we want it in — every Lattice-spawned Pi session (worktree task,
-  workflow step, post-merge hook, prompt customization) **plus the project root**
+  workflow step, post-merge hook) **plus the project root**
   (so a `pi` the user types in the Lattice terminal panel, cwd = project root,
   gets it too). `-e` would only reach command lines Lattice itself builds; the
   discovery shim is what reaches a manually-typed `pi`. The shim coexists with

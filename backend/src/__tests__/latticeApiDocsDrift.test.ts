@@ -159,7 +159,6 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   'POST /api/tasks/:id/activity': 'PreToolUse/PostToolUse hook → graph focus beam',
   'POST /api/merge-runs/:id/stash-resolved': 'post-run snapshot resolver callback',
   'POST /api/workflow-runs/:runId/steps/:stepIndex/complete': 'workflow step Stop hook',
-  'POST /api/workflow-prompt-customizations/:id/complete': 'prompt-customization callback',
   'POST /api/post-merge-hooks/:id/complete': 'post-merge hook Stop-hook callback',
   'POST /api/push-runs/:id/done': 'push-run Stop-hook callback',
   // The dev runner's restart handshake (routes/restartDrain.ts): token-guarded,
@@ -188,8 +187,6 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   'DELETE /api/qa-runs/:id': 'forget a completed QA-run (UI)',
   'GET /api/post-merge-hooks/active': 'post-merge hook state for UI rehydration',
   'POST /api/post-merge-hooks/:id/abort': 'abort an active post-merge hook (UI)',
-  'POST /api/workflow-prompt-customizations': 'spawns a harness to tailor a step prompt (UI)',
-  'GET /api/workflow-prompt-customizations/:id': 'prompt-customization poll (UI)',
 
   // Git Setup. Creating a repo (and choosing what its first commit captures)
   // is a decision the human makes in the dialog — an agent silently running it

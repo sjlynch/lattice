@@ -7,9 +7,9 @@ import { callbackOutboxDir } from './paths.js';
 // side): replay every callback a hook couldn't deliver because the backend
 // was down or still recovering.
 //
-// An entry is a small JSON file `{v, url, createdAt, holdUntil, attempts,
-// body?, contentType?}`. Replay is a plain HTTP POST back to our own origin —
-// the exact request the hook would have made — so it goes through the same
+// An entry is a small JSON file `{v, url, createdAt, holdUntil, attempts}`.
+// Replay is a plain (bodiless) HTTP POST back to our own origin — the exact
+// request the hook would have made — so it goes through the same
 // route, validation and idempotency guard as a live callback, and nothing
 // here needs to know which kind of callback it is.
 //
@@ -31,8 +31,6 @@ export type OutboxEntry = {
   attempts?: number;
   lastAttemptAt?: number;
   lastError?: string;
-  body?: string;
-  contentType?: string;
   writer?: string;
 };
 
@@ -180,13 +178,11 @@ async function replayOne(
   let status: number | null = null;
   let error: string | undefined;
   try {
-    const headers: Record<string, string> = { [OUTBOX_REPLAY_HEADER]: String(entry.createdAt) };
-    const init: RequestInit = { method: 'POST', headers, signal: AbortSignal.timeout(REPLAY_TIMEOUT_MS) };
-    if (entry.body !== undefined) {
-      init.body = entry.body;
-      headers['Content-Type'] = entry.contentType ?? 'application/json';
-    }
-    const res = await opts.fetchImpl(entry.url, init);
+    const res = await opts.fetchImpl(entry.url, {
+      method: 'POST',
+      headers: { [OUTBOX_REPLAY_HEADER]: String(entry.createdAt) },
+      signal: AbortSignal.timeout(REPLAY_TIMEOUT_MS),
+    });
     status = res.status;
     await res.arrayBuffer().catch(() => undefined);
   } catch (err) {

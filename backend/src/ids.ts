@@ -25,7 +25,3 @@ export function generateMergeRunId(): string {
 export function generateWorkflowRunId(): string {
   return `wfrun_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
 }
-
-export function generateWorkflowPromptCustomizationId(): string {
-  return `wfpc_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
-}

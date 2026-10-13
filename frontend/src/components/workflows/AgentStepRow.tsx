@@ -28,8 +28,6 @@ export const AgentStepRow = memo(function AgentStepRow({
   onRemove,
   onReorder,
   onToggleCollapse,
-  onCustomize,
-  customizing,
 }: {
   step: WorkflowStep;
   index: number;
@@ -39,7 +37,6 @@ export const AgentStepRow = memo(function AgentStepRow({
   definedNames: ReadonlySet<string>;
   runStatus?: StepRunStatus;
   autoScroll?: boolean;
-  customizing: boolean;
 } & StepRowCallbacks) {
   const rootRef = useRef<HTMLDivElement>(null);
   const { dragOver, onDragStart, onDragOver, onDragLeave, onDrop } =
@@ -74,11 +71,9 @@ export const AgentStepRow = memo(function AgentStepRow({
           harnessAvail={harnessAvail}
           piMenu={piMenu}
           runStatus={runStatus}
-          customizing={customizing}
           onChange={onChange}
           onRemove={onRemove}
           onToggleCollapse={onToggleCollapse}
-          onCustomize={onCustomize}
         />
         <PromptHighlightTextarea
           index={index}

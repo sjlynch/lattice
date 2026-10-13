@@ -103,8 +103,8 @@ Restore:
   worktree) owners. `merge` NEVER — the merge-run recovery / a re-clicked merge
   spawns its own resolver, and a racing relaunch puts two Claudes on one
   conflict. `startup` never (`useStartupTerminals` re-seeds). One-shot runs
-  (push / QA / post-merge / workflow step / prompt customization / security
-  review) are never resurrected — ended `owner-finished`; their own recovery
+  (push / QA / post-merge / workflow step / security review) are never
+  resurrected — ended `owner-finished`; their own recovery
   owns them (a restore must not launch a second security review). Any owner's
   still-live pty is adopted.
 - Orphan adoption takes only an unclaimed AGENT pty with the same cwd +

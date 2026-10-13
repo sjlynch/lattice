@@ -9,8 +9,7 @@ model detail: [../CLAUDE.md](../CLAUDE.md).
 
 Composition:
 - `useWorkflowManager.ts` — feature composer: list / editor / run / queue state,
-  overrides, prompt customization, intent-level actions (`buildQueueView` /
-  `buildActions`).
+  overrides, intent-level actions (`buildQueueView` / `buildActions`).
 - `useWorkflowEditorNavigation.ts` — select / blank / template replacement
   callbacks over a narrow editor slice; wires `useConfirm` to
   `guardUnsavedSwitch`.
@@ -19,8 +18,6 @@ Composition:
   `{harness, piModel}` object each (model kept only for `pi`).
 - `useWorkflowList.ts` — hydrate / sort saved workflows, synced via
   `/ws/workflows`.
-- `useWorkflowPromptCustomization.ts` — per-step prompt customization (terminal,
-  polling, editor patch, errors).
 - `useWorkflowErrorHandler.ts` — auto-dismissing toast over
   `shared/useAutoDismissMessage`.
 

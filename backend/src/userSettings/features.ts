@@ -28,8 +28,8 @@ export async function isPostMergeHookEnabled(
 // Whether Codex should be launched with `--yolo` for this project (its
 // analogue of Claude's `--dangerously-skip-permissions`). Default is ON — an
 // absent setting counts as `true`; only an explicit `false` runs plain `codex`.
-// Read at every Codex spawn (task run/resume, workflow step, post-merge hook,
-// prompt customization) to decide whether to append the flag.
+// Read at every Codex spawn (task run/resume, workflow step, post-merge hook)
+// to decide whether to append the flag.
 export async function isCodexYoloEnabled(
   projectPath: string,
 ): Promise<boolean> {

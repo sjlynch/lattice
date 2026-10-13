@@ -12,7 +12,7 @@
 //
 //   - `renderHeaderComment`     the banner comment (varies by site + gate)
 //   - `buildExtensionConstants` the `const` declaration block
-//   - `EXTENSION_HELPERS`       writeSentinel / readPromptIfNeeded /
+//   - `EXTENSION_HELPERS`       writeSentinel / writeOutbox / removeOutbox /
 //                               attemptPost / postWithRetries
 //   - `EXTENSION_DEFAULT_HANDLER` the `session_shutdown` handler
 //
@@ -57,16 +57,13 @@ export function buildExtensionConstants(opts: {
   urlWithSource: string;
   sentinelFile: string;
   outboxFile: string;
-  promptFileLiteral: string;
   site: string;
   respectQuitGate: boolean;
 }): string {
-  const { urlWithSource, sentinelFile, outboxFile, promptFileLiteral, site, respectQuitGate } =
-    opts;
+  const { urlWithSource, sentinelFile, outboxFile, site, respectQuitGate } = opts;
   return `const CALLBACK_URL = ${JSON.stringify(urlWithSource)};
 const SENTINEL_FILE = ${JSON.stringify(sentinelFile)};
 const OUTBOX_FILE = ${JSON.stringify(outboxFile)};
-const PROMPT_FILE = ${promptFileLiteral};
 const SITE = ${JSON.stringify(site)};
 const RESPECT_QUIT_GATE = ${respectQuitGate ? 'true' : 'false'};
 const ATTEMPT_TIMEOUT_MS = 4000;
@@ -85,21 +82,11 @@ export const EXTENSION_HELPERS = `function writeSentinel(record) {
   }
 }
 
-function readPromptIfNeeded() {
-  if (!PROMPT_FILE) return { prompt: undefined, promptError: undefined };
-  try {
-    const prompt = fs.readFileSync(PROMPT_FILE, "utf8");
-    return { prompt, promptError: undefined };
-  } catch (err) {
-    return { prompt: "", promptError: String(err && err.message ? err.message : err) };
-  }
-}
-
 // Durable outbox (see backend/src/callbackOutbox/): record the callback
 // before posting so a backend that is restarting right now replays it once it
 // is back; the entry is removed as soon as the backend gives a definitive
 // answer. Same file format + key as the Claude/Codex callback script.
-function writeOutbox(prompt) {
+function writeOutbox() {
   try {
     const now = Date.now();
     const entry = {
@@ -110,10 +97,6 @@ function writeOutbox(prompt) {
       attempts: 0,
       writer: "pi-extension",
     };
-    if (prompt !== undefined) {
-      entry.body = JSON.stringify({ prompt });
-      entry.contentType = "application/json";
-    }
     fs.mkdirSync(path.dirname(OUTBOX_FILE), { recursive: true });
     const tmp = OUTBOX_FILE + "." + process.pid + ".tmp";
     fs.writeFileSync(tmp, JSON.stringify(entry, null, 2));
@@ -136,19 +119,11 @@ function isFinalStatus(status) {
   return typeof status === "number" && status < 500 && status !== 408 && status !== 429;
 }
 
-async function attemptPost(prompt) {
+async function attemptPost() {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), ATTEMPT_TIMEOUT_MS);
   try {
-    const init = {
-      method: "POST",
-      signal: ac.signal,
-    };
-    if (prompt !== undefined) {
-      init.headers = { "Content-Type": "application/json" };
-      init.body = JSON.stringify({ prompt });
-    }
-    const res = await fetch(CALLBACK_URL, init);
+    const res = await fetch(CALLBACK_URL, { method: "POST", signal: ac.signal });
     return { ok: res.ok, status: res.status };
   } catch (err) {
     return { ok: false, error: String(err && err.message ? err.message : err) };
@@ -157,10 +132,10 @@ async function attemptPost(prompt) {
   }
 }
 
-async function postWithRetries(prompt) {
+async function postWithRetries() {
   const attempts = [];
   for (let i = 0; i < MAX_ATTEMPTS; i++) {
-    const result = await attemptPost(prompt);
+    const result = await attemptPost();
     attempts.push(result);
     if (result.ok) return { success: true, attempts };
     if (i < MAX_ATTEMPTS - 1) {
@@ -187,9 +162,8 @@ export const EXTENSION_DEFAULT_HANDLER = `export default function (pi) {
       return;
     }
 
-    const { prompt, promptError } = readPromptIfNeeded();
-    writeOutbox(prompt);
-    const { success, attempts } = await postWithRetries(prompt);
+    writeOutbox();
+    const { success, attempts } = await postWithRetries();
     const last = attempts[attempts.length - 1];
     if (success || (last && isFinalStatus(last.status))) removeOutbox();
 
@@ -199,9 +173,6 @@ export const EXTENSION_DEFAULT_HANDLER = `export default function (pi) {
       finishedAt: Date.now(),
       reason,
       url: CALLBACK_URL,
-      promptFile: PROMPT_FILE,
-      promptError,
-      promptBytes: prompt === undefined ? null : prompt.length,
       attempts,
       success,
     });
@@ -215,13 +186,11 @@ export function renderExtensionSource(opts: {
   urlWithSource: string;
   sentinelFile: string;
   outboxFile: string;
-  promptFileLiteral: string;
   site: string;
   respectQuitGate: boolean;
   eventName?: 'session_shutdown' | 'agent_settled';
 }): string {
-  const { urlWithSource, sentinelFile, outboxFile, promptFileLiteral, site, respectQuitGate } =
-    opts;
+  const { urlWithSource, sentinelFile, outboxFile, site, respectQuitGate } = opts;
   const sections = [
     opts.eventName === 'agent_settled'
       ? renderHeaderComment({ site, respectQuitGate }).replace('when the Pi session exits.', 'when the Pi turn settles.')
@@ -231,7 +200,6 @@ export function renderExtensionSource(opts: {
       urlWithSource,
       sentinelFile,
       outboxFile,
-      promptFileLiteral,
       site,
       respectQuitGate,
     }),

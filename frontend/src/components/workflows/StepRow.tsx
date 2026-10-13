@@ -41,8 +41,6 @@ export const StepRow = memo(function StepRow({
   onRemove,
   onReorder,
   onToggleCollapse,
-  onCustomize,
-  customizing,
 }: {
   step: WorkflowStep;
   index: number;
@@ -55,7 +53,6 @@ export const StepRow = memo(function StepRow({
   // The project has a post-merge hook prompt (the Run tests row notes the
   // possible overlap).
   postMergeHookConfigured?: boolean;
-  customizing: boolean;
 } & StepRowCallbacks) {
   const kind = step.kind ?? 'agent';
   if (kind === 'test') {
@@ -100,8 +97,6 @@ export const StepRow = memo(function StepRow({
       onRemove={onRemove}
       onReorder={onReorder}
       onToggleCollapse={onToggleCollapse}
-      onCustomize={onCustomize}
-      customizing={customizing}
     />
   );
 });

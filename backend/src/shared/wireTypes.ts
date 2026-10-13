@@ -99,12 +99,6 @@ export type {
   WorkflowVariable,
 } from '../workflows/types.js';
 export type {
-  StartWorkflowPromptCustomizationInput,
-  WorkflowPromptCustomization,
-  WorkflowPromptCustomizationStatus,
-  WorkflowPromptTemplateId,
-} from '../workflowPromptCustomizations/types.js';
-export type {
   WorkflowRun,
   WorkflowRunEvent,
   WorkflowRunStatus,

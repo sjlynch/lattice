@@ -4,9 +4,7 @@
 import { asJson, deleteJson, patchJson, postJson } from './http';
 import { subscribeWs } from './ws';
 import type {
-  StartWorkflowPromptCustomizationInput,
   Workflow,
-  WorkflowPromptCustomization,
   WorkflowRun,
   WorkflowRunEvent,
   WorkflowRunResult,
@@ -119,23 +117,6 @@ export async function fetchWorkflowRun(
 export async function cancelWorkflowRun(projectPath: string, runId: string): Promise<void> {
   await postJson<{ ok: true }>(
     withProjectParam(`/api/workflow-runs/${encodeURIComponent(runId)}/cancel`, projectPath),
-  );
-}
-
-export async function startWorkflowPromptCustomization(
-  input: StartWorkflowPromptCustomizationInput,
-): Promise<WorkflowPromptCustomization> {
-  return postJson<WorkflowPromptCustomization>(
-    '/api/workflow-prompt-customizations',
-    input,
-  );
-}
-
-export async function getWorkflowPromptCustomization(
-  id: string,
-): Promise<WorkflowPromptCustomization> {
-  return asJson<WorkflowPromptCustomization>(
-    await fetch(`/api/workflow-prompt-customizations/${encodeURIComponent(id)}`),
   );
 }
 

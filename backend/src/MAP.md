@@ -42,7 +42,6 @@ beside its `x/` folder ("`x.ts` / `x/`" below); "See its doc" = that folder's
 - `diskPressureMerge.ts` — starts a merge run when task runs wait on disk, plus the once-a-minute low-disk monitor (opt-out `autoMergeOnLowDisk: false`).
 - `workflows.ts` / `workflows/` — workflow definitions (`<project>/.lattice/workflows.json`) + `{{var}}` interpolation. See its doc.
 - `workflowRuns.ts` / `workflowRuns/` — workflow-run engine (step groups in order; adjacent `parallel: true` planning steps run as one group). See its doc.
-- `workflowPromptCustomizations.ts` / `workflowPromptCustomizations/` — spawn a harness to tailor a workflow step prompt. See its doc.
 - `homeScratch/` — shared home-scoped scratch contract (path guard, session setup, bounded cleanup, persistence) for push / QA / post-merge runs. **Path-guard / cleanup changes go here.** See its doc.
 - `pushRuns.ts` / `pushRuns/` — one-off push sessions: QA-lane Push (brief `push`) and workflow Push (brief `workflow-push`). See its doc.
 - `qaRuns.ts` / `qaRuns/` — QA-lane Playwright e2e sessions; a confident PASS promotes qa → done. See its doc.
