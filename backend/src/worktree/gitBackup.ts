@@ -19,15 +19,15 @@
 // leftover that can't be deleted yet counts toward the byte budget.
 
 import path from 'node:path';
-import os from 'node:os';
 import fs from 'node:fs/promises';
 import { projectGit } from './projectGit.js';
 import type { ExecOptions, ExecResult } from './exec.js';
 import { projectHash } from '../projectPath.js';
+import { latticeHomeDir } from '../latticeHome.js';
 import { freeBytesAt, formatBytes } from './diskSpace.js';
 import { DEFAULT_MIN_FREE_DISK_GB, getGlobalSettings } from '../globalSettings.js';
 
-const BACKUPS_BASE = path.join(os.homedir(), '.lattice', 'git-backups');
+const BACKUPS_BASE = path.join(latticeHomeDir(), 'git-backups');
 const GiB = 1024 ** 3;
 // How many bundles to keep per project. A merge run produces one; this is
 // "the last N runs' worth of pre-state".

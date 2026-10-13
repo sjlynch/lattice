@@ -28,7 +28,8 @@ DAG.
 - `scripts/` — `npm run dev` orchestration (`scripts/CLAUDE.md`); `e2e/` —
   Playwright specs (`e2e/CLAUDE.md`).
 - State lives in `~/.lattice/` (tasks, worktrees, snapshots, run locks, logs)
-  and gitignored `<project>/.lattice/` scratch. Derive every path through
+  and gitignored `<project>/.lattice/` scratch (`LATTICE_HOME` relocates the
+  former for a second instance). Derive every path through
   `backend/src/projectPath.ts`; never recompute a project hash or derive a
   second store from a new path spelling (`backend/src/PROJECT_IDENTITY.md`).
 - Something died? Check `~/.lattice/logs/` first (`docs/ARCHITECTURE.md` →

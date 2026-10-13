@@ -4,8 +4,8 @@
 // changing canonical spelling must never hide existing tasks or snapshots.
 
 import path from 'node:path';
-import os from 'node:os';
 import { physicalProjectPath, projectStorageHash } from './projectIdentity.js';
+import { latticeHomeDir } from './latticeHome.js';
 
 export function canonicalProjectPath(input: string): string {
   return physicalProjectPath(input);
@@ -49,9 +49,7 @@ export function projectHash(projectPath: string): string {
   return projectStorageHash(projectPath);
 }
 
-export function latticeHomeDir(): string {
-  return path.join(os.homedir(), '.lattice');
-}
+export { latticeHomeDir };
 
 // Per-session terminal scrollback logs: `~/.lattice/terminal-scrollback/`.
 // Home-scoped (never inside a project tree) and wiped on terminal-server boot,

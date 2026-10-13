@@ -7,8 +7,9 @@ import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { latticeHomeDir } from '../../../scripts/latticeHome.mjs';
 
-export const PER_PROJECT_DIR = path.join(os.homedir(), '.lattice', 'per-project');
+export const PER_PROJECT_DIR = path.join(latticeHomeDir(), 'per-project');
 // Slack between a lock's `startedAt` and the OS-reported start time of its
 // PID (mirrors PROCESS_START_FUZZ_MS in backend/src/projectRunLock/liveness.ts).
 export const PROCESS_START_FUZZ_MS = 1000;

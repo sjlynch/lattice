@@ -1,6 +1,6 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { latticeHomeDir } from '../latticeHome.mjs';
 
 // The dev runner's side of crash logging.
 //
@@ -18,7 +18,7 @@ const MAX_LOG_BYTES = 512 * 1024;
 const tails = new Map();
 
 export function logsDir() {
-  return path.join(os.homedir(), '.lattice', 'logs');
+  return path.join(latticeHomeDir(), 'logs');
 }
 
 export function recordOutput(label, line) {

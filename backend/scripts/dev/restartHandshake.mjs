@@ -16,8 +16,8 @@
 // runner that dies after asking can't leave the backend frozen.
 
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { latticeHomeDir } from '../../../scripts/latticeHome.mjs';
 
 // Mirrors backend/src/server/config.ts — the port dist/index.js binds.
 export const HANDSHAKE_BACKEND_PORT = Number(process.env.PORT) || 5184;
@@ -50,7 +50,7 @@ export function readHandshakeToken() {
   // rotates the token (the backend owns it). Missing → the handshake is
   // skipped (fail open).
   try {
-    const token = fs.readFileSync(path.join(os.homedir(), '.lattice', 'terminalServerToken'), 'utf8').trim();
+    const token = fs.readFileSync(path.join(latticeHomeDir(), 'terminalServerToken'), 'utf8').trim();
     return token || null;
   } catch {
     return null;

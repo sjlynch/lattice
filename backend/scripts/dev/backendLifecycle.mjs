@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import net from 'node:net';
-import os from 'node:os';
 import path from 'node:path';
 
 // The dev-runner log lives with the rest of the crash bookkeeping, in the root
@@ -11,6 +10,7 @@ import path from 'node:path';
 // process that actually crashes goes unwritten. That is precisely how the
 // 2026-08-20 access violation escaped every log Lattice keeps.
 import { recordExit } from '../../../scripts/orchestrate/devLog.mjs';
+import { latticeHomeDir } from '../../../scripts/latticeHome.mjs';
 import { inheritStdio } from './deps.mjs';
 import { describeExitCode, isHardFault } from './exitStatus.mjs';
 import { clearLiveLog } from './liveLog.mjs';
@@ -268,7 +268,7 @@ export async function shutdownTerminalServer(terminalPort = TERMINAL_PORT) {
     // Read the backend's persisted token; the dev runner must not create or
     // rotate it while shutting down an existing detached server.
     const token = fs.readFileSync(
-      path.join(os.homedir(), '.lattice', 'terminalServerToken'), 'utf8',
+      path.join(latticeHomeDir(), 'terminalServerToken'), 'utf8',
     ).trim();
     const res = await fetch(`http://127.0.0.1:${terminalPort}/shutdown`, {
       method: 'POST',

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
+import { latticeHomeDir } from '../../../scripts/latticeHome.mjs';
 
 // Retract the live console mirror for a backend we deliberately killed.
 //
@@ -20,7 +20,7 @@ import path from 'node:path';
 export function clearLiveLog(pid, label = 'backend') {
   if (!Number.isInteger(pid) || pid <= 0) return;
   try {
-    fs.unlinkSync(path.join(os.homedir(), '.lattice', 'logs', `live-${label}-${pid}.log`));
+    fs.unlinkSync(path.join(latticeHomeDir(), 'logs', `live-${label}-${pid}.log`));
   } catch {
     /* already gone (the child removed it itself), or no logs dir yet */
   }

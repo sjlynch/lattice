@@ -17,13 +17,14 @@ import fs from 'node:fs/promises';
 import { withClaudeConfigLock } from './configLock.js';
 import { atomicWriteFile } from '../fsAtomic.js';
 import { sleep } from './util.js';
+import { latticeHomeDir } from '../latticeHome.js';
 
 export const CLAUDE_GLOBAL_CONFIG = path.join(os.homedir(), '.claude.json');
 // Known-good copy maintained by claudeConfigGuard. The path + restore logic
 // live here (not in the guard) because the per-spawn heal-on-read path below
 // also restores from it, so they sit with the rest of the ~/.claude.json
 // primitives and the guard becomes a thin policy layer over them.
-export const CLAUDE_JSON_BACKUP = path.join(os.homedir(), '.lattice', 'claude-json-backup.json');
+export const CLAUDE_JSON_BACKUP = path.join(latticeHomeDir(), 'claude-json-backup.json');
 
 // Writes go through ../fsAtomic.ts (temp → rename with a bounded retry: with
 // many concurrent agents, another Claude briefly holding ~/.claude.json open is

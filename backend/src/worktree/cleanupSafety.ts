@@ -14,10 +14,10 @@
 // See backend/src/worktree/CLAUDE.md for the full layered-defence story.
 
 import path from 'node:path';
-import os from 'node:os';
 import fs from 'node:fs/promises';
 import { isPathStrictlyInside } from './paths.js';
 import { projectHash } from '../projectPath.js';
+import { latticeHomeDir } from '../latticeHome.js';
 
 // True if `worktreePath` is inside a directory Lattice manages worktrees
 // in for `repoRoot`: the current home location
@@ -31,7 +31,7 @@ export function isUnderManagedWorktreesDir(
 ): boolean {
   const resolved = path.resolve(worktreePath);
   const homeBase = path.resolve(
-    path.join(os.homedir(), '.lattice', 'worktrees', projectHash(repoRoot)),
+    path.join(latticeHomeDir(), 'worktrees', projectHash(repoRoot)),
   );
   const legacyBase = path.resolve(path.join(repoRoot, '.lattice', 'worktrees'));
   return (

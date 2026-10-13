@@ -7,10 +7,10 @@
 // Both read-modify-write through the same config mutex as the apply path, so they
 // can't race a concurrent spawn-time write.
 import path from 'node:path';
-import os from 'node:os';
 import fs from 'node:fs/promises';
 import { withClaudeConfigLock } from './configLock.js';
 import { TEMP_SUFFIX } from '../fsAtomic.js';
+import { latticeHomeDir } from '../latticeHome.js';
 import {
   CLAUDE_GLOBAL_CONFIG,
   CLAUDE_JSON_BACKUP,
@@ -19,12 +19,9 @@ import {
   writeClaudeConfigAtomic,
 } from './configFile.js';
 
-// Mirrors projectPath.ts `latticeHomeDir()`, inlined (forward-slashed,
-// lowercased) so this module's import surface stays unchanged — it's in the
-// terminal-server's fingerprint set, so we avoid pulling extra deps into the
-// detached executor's import graph.
+// `latticeHomeDir()` forward-slashed and lowercased for key matching.
 function latticeHomeMatchRoot(): string {
-  return path.join(os.homedir(), '.lattice').replace(/\\/g, '/').toLowerCase();
+  return latticeHomeDir().replace(/\\/g, '/').toLowerCase();
 }
 
 // True when a `~/.claude.json` projects-map key points at a Lattice-managed
@@ -151,5 +148,5 @@ export async function sweepOrphanedClaudeConfigTemps(
 }
 
 function mcpSecretsFile(): string {
-  return path.join(os.homedir(), '.lattice', 'mcpSecrets.json');
+  return path.join(latticeHomeDir(), 'mcpSecrets.json');
 }

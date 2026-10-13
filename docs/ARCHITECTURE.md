@@ -15,6 +15,11 @@ shared path/storage helpers: never recompute hashes, rename stores, or derive a
 second lock/worktree dir from a new path spelling
 (`backend/src/PROJECT_IDENTITY.md`).
 
+`LATTICE_HOME` relocates this whole root (`backend/src/latticeHome.ts`;
+`scripts/latticeHome.mjs` for the dev runner). A second instance on its own
+ports (`PORT`, `TERMINAL_PORT`) sets it instead of `HOME`, so its agents keep
+the user's real `~/.claude` / `~/.codex` / `~/.pi` auth.
+
 - `~/.lattice/projects.json` — global index of projects with Lattice tasks
   (`backend/src/taskCache/CLAUDE.md`).
 - `~/.lattice/per-project/<hash>/tasks.json` — the task DB. Moved out of

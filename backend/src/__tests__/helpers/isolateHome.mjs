@@ -29,6 +29,9 @@ process.env.HOME = tempHome;
 // file) otherwise lands their fixtures in the developer's REAL home — which is
 // how a fake rule pack once overwrote a real ~/.lattice/opengrep/state.json.
 process.env.LATTICE_TEST_HOME_ISOLATED = tempHome;
+// An inherited LATTICE_HOME would send ~/.lattice writes past the redirected
+// HOME, into an instance's real state.
+delete process.env.LATTICE_HOME;
 
 // Best-effort cleanup when the test process exits (sync — 'exit' can't await).
 process.on('exit', () => {

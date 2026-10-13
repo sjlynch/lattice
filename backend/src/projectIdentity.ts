@@ -1,18 +1,17 @@
 import fs from 'node:fs';
-import path from 'node:path';
-import os from 'node:os';
 import {
   boundStorage, hashPath, inventories, legacyPath, physicalPaths, remember, reservationKey, storageHashes,
 } from './projectIdentity/caches.js';
 import { addCandidate, inventoryFor } from './projectIdentity/inventory.js';
 import { bindingFile, publishBinding, readBinding } from './projectIdentity/binding.js';
 import { ProjectIdentityConflictError } from './projectIdentity/errors.js';
+import { latticeHomeDir } from './latticeHome.js';
 
 export { ProjectIdentityConflictError };
 
-// Not latticeHomeDir(): projectPath.ts imports this module, so that would be circular.
+// The leaf latticeHome.ts, not projectPath.ts: projectPath imports this module.
 function identityHome(): string {
-  return path.join(os.homedir(), '.lattice');
+  return latticeHomeDir();
 }
 
 // Existing directories use physical identity, including Windows' on-disk case

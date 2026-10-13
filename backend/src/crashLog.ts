@@ -21,6 +21,7 @@ import { Console } from 'node:console';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { latticeHomeDir } from './latticeHome.js';
 
 import { createSinkStream } from './consoleSink.js';
 import {
@@ -48,7 +49,7 @@ const MAX_LINE_CHARS = 2000;
 const POSIX_SIGNAL_EXIT_BASE = 128;
 
 export function crashLogDir(): string {
-  return path.join(os.homedir(), '.lattice', 'logs');
+  return path.join(latticeHomeDir(), 'logs');
 }
 
 const ring: string[] = [];

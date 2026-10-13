@@ -88,6 +88,7 @@ export const FINGERPRINT_FILES = [
   'terminalConfig.js',
   'ids.js',
   'projectPath.js',
+  'latticeHome.js',
   'projectIdentity.js',
   'projectIdentity/binding.js',
   'projectIdentity/caches.js',
