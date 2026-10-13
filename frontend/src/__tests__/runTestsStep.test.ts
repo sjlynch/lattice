@@ -84,9 +84,10 @@ function textOf(node: TestRenderer.ReactTestRenderer): string {
   return JSON.stringify(node.toJSON());
 }
 
-test('StepRow renders a test step with a harness picker, a timeout input and the hint', () => {
+test('StepRow renders a test step with harness + effort pickers, a timeout input and the hint', () => {
   const tree = renderStep({ id: 's1', title: 'Run tests', prompt: '', harness: 'pi', kind: 'test', timeoutMinutes: 30 }, false);
-  assert.equal(tree.root.findAllByType('select').length, 1, 'harness picker');
+  // Harness + effort; Pi has no model select (its model rides the harness one).
+  assert.equal(tree.root.findAllByType('select').length, 2, 'harness + effort pickers');
   const timeout = tree.root.findByProps({ 'aria-label': 'Timeout in minutes' });
   assert.equal(timeout.props.value, 30);
   assert.ok(textOf(tree).includes('Usually right before Push'));

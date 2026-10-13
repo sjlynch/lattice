@@ -42,13 +42,17 @@ execution view):
   `useScrollRunningIntoView`).
 - `AgentStepRow.tsx` → `AgentStepHeader.tsx` (collapse, badge, title,
   `StepHarnessSelect` — "Pi — X" rows via `buildHarnessOptions`, sets
-  `harness` + `piModel` — freeze / parallel / remove; memoized on
+  `harness` + `piModel` — `StepLaunchSelects` for `model` / `effort`, freeze /
+  parallel / remove; memoized on
   its specific fields) + `PromptHighlightTextarea.tsx` (textarea over the
   `{{var}}` overlay; memoized on prompt-only props — the per-row hot path; stays
   mounted across collapse, rendering nothing).
-- `ControlStepRow.tsx` — compact start/merge/push row via `CONTROL_STEP_META`.
+- `ControlStepRow.tsx` — compact start/merge/push row via `CONTROL_STEP_META`;
+  a Start step's `StepLaunchSelects` set the model / effort of the tasks it starts.
+- `StepLaunchSelects.tsx` — model (Claude presets; none under Pi) + effort
+  selects; empty = the harness default.
 - `TestStepRow.tsx` — Run tests row: no prompt (backend brief `RUN_TESTS.md` is
-  fixed), harness select, `timeoutMinutes`, post-merge-hook note.
+  fixed), harness + launch selects, `timeoutMinutes`, post-merge-hook note.
 - `StepRowShared.tsx` — `StepIndexBadge` (`#N` / status glyph),
   `StepFreezeButton`, `StepOpengrepBadge`, `StepRowCallbacks`.
 - `stepRunStatus.ts` — pure row-status mapping; `parallelSteps.ts` — authored

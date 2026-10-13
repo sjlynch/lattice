@@ -10,6 +10,7 @@ import {
 } from '../../api';
 import { normalizeAgentHarness } from '../../harnesses';
 import { StepHarnessSelect } from './AgentStepHeader';
+import { StepLaunchSelects } from './StepLaunchSelects';
 import {
   useScrollRunningIntoView,
   useWorkflowStepDragDrop,
@@ -102,6 +103,12 @@ export const TestStepRow = memo(function TestStepRow({
             selectedHarness={normalizeAgentHarness(step.harness)}
             selectedPiModel={step.piModel}
             onChange={(h, pm) => onChange(index, { harness: h, piModel: pm })}
+          />
+          <StepLaunchSelects
+            harness={normalizeAgentHarness(step.harness)}
+            model={step.model}
+            effort={step.effort}
+            onChange={(patch) => onChange(index, patch)}
           />
           <label
             className="workflows-step-timeout"

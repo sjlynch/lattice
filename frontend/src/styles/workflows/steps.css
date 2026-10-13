@@ -434,3 +434,8 @@
   border-color: var(--accent);
   color: var(--accent);
 }
+/* Model / effort selects beside the harness select: short labels. */
+.workflows-step-launch {
+  min-width: 0;
+  max-width: 120px;
+}

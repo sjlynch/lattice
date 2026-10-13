@@ -20,6 +20,7 @@ import {
   type StepRowCallbacks,
 } from './StepRowShared';
 import type { StepRunStatus } from './stepRunStatus';
+import { StepLaunchSelects } from './StepLaunchSelects';
 
 // Per-step harness select ("Pi — X" rows included). Shared by the agent header
 // and the Run tests row.
@@ -77,6 +78,8 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   title,
   harness,
   piModel,
+  model,
+  effort,
   frozen,
   parallel = false,
   tools,
@@ -93,6 +96,8 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   title: string;
   harness: WorkflowStep['harness'];
   piModel?: string;
+  model?: string;
+  effort?: WorkflowStep['effort'];
   frozen: boolean;
   parallel?: boolean;
   tools?: WorkflowStep['tools'];
@@ -127,6 +132,12 @@ export const AgentStepHeader = memo(function AgentStepHeader({
         selectedHarness={selectedHarness}
         selectedPiModel={piModel}
         onChange={(h, pm) => onChange(index, { harness: h, piModel: pm })}
+      />
+      <StepLaunchSelects
+        harness={selectedHarness}
+        model={model}
+        effort={effort}
+        onChange={(patch) => onChange(index, patch)}
       />
       <StepOpengrepBadge on={opengrepOn} />
       <button

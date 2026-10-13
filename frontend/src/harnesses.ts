@@ -1,14 +1,23 @@
 // The agent-harness vocabulary and the Pi model pattern are the backend's own
 // (backend/src/shared/harnesses.ts), imported rather than mirrored.
 import {
+  ALL_AGENT_EFFORTS,
   ALL_AGENT_HARNESSES,
   isAgentHarness,
   isPiModelPattern,
   normalizeAgentHarness,
+  type AgentEffort,
   type AgentHarness,
 } from '../../backend/src/shared/harnesses';
 
-export { ALL_AGENT_HARNESSES, isAgentHarness, normalizeAgentHarness, type AgentHarness };
+export {
+  ALL_AGENT_EFFORTS,
+  ALL_AGENT_HARNESSES,
+  isAgentHarness,
+  normalizeAgentHarness,
+  type AgentEffort,
+  type AgentHarness,
+};
 
 export type HarnessChoice = AgentHarness | 'interleave';
 

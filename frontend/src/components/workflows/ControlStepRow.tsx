@@ -11,6 +11,7 @@ import {
   type StepRowCallbacks,
 } from './StepRowShared';
 import type { StepRunStatus } from './stepRunStatus';
+import { StepLaunchSelects } from './StepLaunchSelects';
 
 // The headless kinds this row renders. `agent` and `test` (Run tests) spawn
 // an agent and have their own rows.
@@ -96,6 +97,14 @@ export const ControlStepRow = memo(function ControlStepRow({
             onChange={(e) => onChange(index, { title: e.target.value })}
             title={meta.hint}
           />
+          {kind === 'start' && (
+            <StepLaunchSelects
+              subject="tasks"
+              model={step.model}
+              effort={step.effort}
+              onChange={(patch) => onChange(index, patch)}
+            />
+          )}
           <span className="workflows-step-control-tag" title={meta.hint}>
             {kind}
           </span>
