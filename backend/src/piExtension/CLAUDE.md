@@ -14,7 +14,7 @@ workflow-step-complete, post-merge-hook-complete, plus security-review-done
 share one hardening (retry loop + per-attempt timeout + sentinel audit log).
 Security reviews use `agent_settled` (after retries/compaction/queued messages),
 with no quit gate: the callback records awaiting-decision and preserves the
-conversation. All existing shutdown callers keep byte-identical output.
+conversation.
 
 ## Modules
 
@@ -27,8 +27,9 @@ conversation. All existing shutdown callers keep byte-identical output.
   handler (or its opt-in `agent_settled` variant), joined by `renderExtensionSource`.
   **The produced string is
   byte-significant** (Pi loads it verbatim; the on-disk up-to-date check compares
-  it character-for-character) — reorganize the assembly freely, but never change
-  the output bytes. `appendSourceParam` tags the callback URL with `?source=` so
+  it character-for-character) — reorganize the assembly freely; an intended
+  output change rewrites every installed copy on its next install (and dirties
+  a tracked one), so change the bytes only on purpose. `appendSourceParam` tags the callback URL with `?source=` so
   the backend can log which mechanism fired.
 - `install.ts` — the filesystem side: `installPiCompletionExtension({dir, …})`
   writes (or skips, when contents already match, to avoid dirtying `git status`)
