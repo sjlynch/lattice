@@ -4,6 +4,7 @@
 // backend/src/shared/wireTypes.ts. The registry, emitter and persistence that
 // build these stay in state.ts (which re-exports everything here).
 
+import type { AgentEffort } from '../harnesses.js';
 import type { Workflow, WorkflowStepHarness, WorkflowStepKind } from '../workflows/types.js';
 
 export type WorkflowRunStatus = 'running' | 'completed' | 'errored' | 'cancelled';
@@ -36,6 +37,10 @@ export type WorkflowRun = {
   // Pi model override for the run, applied to every step when harnessOverride
   // is `pi`. Sibling to harnessOverride (two-field model, see piModels.ts).
   piModelOverride?: string;
+  // Run-wide reasoning effort and Claude/Codex model for every agent the run
+  // launches (steps and Start-step tasks), over each step's own setting.
+  effortOverride?: AgentEffort;
+  agentModelOverride?: string;
   error?: string;
   // The run's task round: every task Open or In Progress when the run started,
   // plus every task its Start step launched or queued. The Merge step waits

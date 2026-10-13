@@ -2,7 +2,12 @@
 // prompt text stays here; shared harness syntax (Claude permissions, Pi model
 // flag, Codex prompt quoting) lives in agentCommandBuilder.ts.
 
-import { buildAgentCommand, promptFileName, shellDoubleQuoted } from '../agentCommandBuilder.js';
+import {
+  buildAgentCommand,
+  promptFileName,
+  shellDoubleQuoted,
+  type AgentLaunchOptions,
+} from '../agentCommandBuilder.js';
 import type { Workflow } from '../workflows.js';
 
 const CLAUDE_PREFIX = 'claude --dangerously-skip-permissions ';
@@ -24,11 +29,12 @@ export function buildWorkflowStepCommand(
   // — otherwise Claude's Bash tool resets a `cd` outside the session cwd.
   // Emitted in the `--add-dir=<path>` form: the flag is variadic, and with a
   // separate value it would swallow the trailing prompt as a second directory.
-  opts: { claudeAddDir?: string } = {},
+  opts: { claudeAddDir?: string; launch?: AgentLaunchOptions } = {},
 ): string {
   const resolvedHarness = harness ?? 'claude';
   const fileName = promptFileName(stepFile);
   const command = buildAgentCommand({
+    ...opts.launch,
     harness: resolvedHarness,
     piModel,
     codexYolo,

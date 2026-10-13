@@ -32,6 +32,7 @@ export function buildTaskRunRoute(backendOrigin: string): Router {
       backendOrigin,
       req.body?.harness,
       req.body?.piModel,
+      { model: req.body?.model, effort: req.body?.effort },
     );
     res.json({ accepted: true, queued });
   });

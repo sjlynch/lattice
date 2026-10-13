@@ -155,7 +155,8 @@ Resume:
 
 - **Harness default**: a body with no valid `harness` resumes under the
   harness the task ran with (`Task.harness` via `resolveResumeHarness`), and
-  a Pi resume reuses the recorded `piModel`; only a task with no recorded
+  a Pi resume reuses the recorded `piModel` (any resume: the recorded `effort`,
+  and `model` while the harness is unchanged); only a task with no recorded
   harness falls back to Claude. An explicit body harness wins, and what the
   resume spawned is written back. Don't reintroduce "default to Claude" — it
   silently moved Pi/Codex tasks onto Claude.

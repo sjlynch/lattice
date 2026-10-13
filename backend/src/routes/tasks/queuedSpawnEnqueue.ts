@@ -8,7 +8,7 @@
 
 import { getTask, updateTask } from '../../tasks.js';
 import { cancelSpawn, enqueueSpawn } from '../../spawnQueue.js';
-import { isAgentHarness } from '../../harnesses.js';
+import { isAgentHarness, normalizeAgentEffort, normalizeAgentModel } from '../../harnesses.js';
 import { normalizePiModel } from '../../piModels.js';
 import { startTaskById } from './startTask.js';
 import { resumeTaskById } from './resumeTask.js';
@@ -20,14 +20,18 @@ import {
 } from './queuedSpawnAdmission.js';
 import { runSpawnThunk } from './queuedSpawnFailure.js';
 
+// The Claude/Codex model and effort a run requests (unvalidated input).
+export type RequestedLaunch = { model?: unknown; effort?: unknown };
+
 // Enqueue an Open task's run. Persists `runQueued` plus the requested harness/
-// Pi model so the card shows a badge and boot recovery can re-enqueue — with
-// the ORIGINAL harness/model — if the backend restarts while it waits.
+// Pi model / model / effort so the card shows a badge and boot recovery can
+// re-enqueue — with the ORIGINAL policy — if the backend restarts while it waits.
 export async function enqueueTaskRun(
   taskId: string,
   backendOrigin: string,
   requestedHarness: unknown,
   requestedPiModel?: unknown,
+  requestedLaunch: RequestedLaunch = {},
 ): Promise<EnqueueTaskResult> {
   const task = await getTask(taskId);
   if (task && !task.runQueued) {
@@ -41,6 +45,8 @@ export async function enqueueTaskRun(
         ? requestedHarness
         : undefined,
       runQueuedPiModel: normalizePiModel(requestedPiModel),
+      runQueuedModel: normalizeAgentModel(requestedLaunch.model),
+      runQueuedEffort: normalizeAgentEffort(requestedLaunch.effort),
       // A fresh enqueue starts from clean queue state: a disk wait left over
       // from an earlier run would otherwise pin the card's "waiting for disk"
       // pill (noteWaitingForDisk never rewrites a set one).
@@ -60,6 +66,8 @@ export async function enqueueTaskRun(
         startTaskById(taskId, backendOrigin, {
           requestedHarness,
           requestedPiModel,
+          requestedModel: requestedLaunch.model,
+          requestedEffort: requestedLaunch.effort,
           throwOnCapacity: true,
           signal,
         }),

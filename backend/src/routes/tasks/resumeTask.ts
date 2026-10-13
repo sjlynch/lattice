@@ -203,6 +203,13 @@ export async function resumeTaskById(
     mode: 'resume',
     piModel,
     codexYolo,
+    // A fresh-conversation resume keeps the recorded effort, and the recorded
+    // model only under the harness it names (a conversation resume keeps the
+    // original launch's flags instead).
+    launch: {
+      model: harness === task.harness ? task.model : undefined,
+      effort: task.effort,
+    },
     commandOverride,
   });
   // Settings and conversation lookup can take long enough for deletion or a
@@ -235,6 +242,8 @@ export async function resumeTaskById(
         patch.agentSession = { harness: spawn.agentSession.harness, id: spawn.agentSession.id };
       }
       if (current.harness !== harness || (harness === 'pi' && current.piModel !== piModel)) {
+        // A recorded Claude/Codex model belongs to the harness it ran under.
+        if (current.harness !== harness) patch.model = undefined;
         patch.harness = harness;
         patch.piModel = harness === 'pi' ? piModel : undefined;
       }

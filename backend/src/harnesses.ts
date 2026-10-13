@@ -4,7 +4,10 @@ import { isAgentHarness, type AgentHarness } from './shared/harnesses.js';
 export {
   ALL_AGENT_HARNESSES,
   isAgentHarness,
+  normalizeAgentEffort,
   normalizeAgentHarness,
+  normalizeAgentModel,
+  type AgentEffort,
   type AgentHarness,
 } from './shared/harnesses.js';
 

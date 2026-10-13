@@ -7,7 +7,7 @@ export type TaskStatus =
   | 'done'
   | 'deleted';
 
-import type { AgentHarness } from '../harnesses.js';
+import type { AgentEffort, AgentHarness } from '../harnesses.js';
 
 export type Task = {
   id: string;
@@ -60,6 +60,9 @@ export type Task = {
   // queued run is resolved (started / cancelled / failed / given up).
   runQueuedHarness?: AgentHarness;
   runQueuedPiModel?: string;
+  // The requested Claude/Codex model and effort, same lifecycle.
+  runQueuedModel?: string;
+  runQueuedEffort?: AgentEffort;
   // Set (once, on the first deferral) while a queued run is held back because
   // its worktree checkout would push the disk below the free-space reserve —
   // the message the card shows instead of a bare "queued". Cleared with the
@@ -83,6 +86,11 @@ export type Task = {
   // the harness was `pi`. Recorded at spawn so a resume re-uses the same model
   // without the UI having to re-send it. Absent for non-Pi tasks.
   piModel?: string;
+  // The Claude/Codex model and the reasoning effort the worktree agent ran
+  // with, when requested (absent = the harness's default). Recorded at spawn;
+  // a resume under the same harness reuses them.
+  model?: string;
+  effort?: AgentEffort;
   // A stable palette slot assigned at spawn time (smallest index free among
   // the project's currently-active tasks). Drives the per-task accent color
   // shared by the card's left edge, the Claude node, and the `W` worktree

@@ -9,6 +9,7 @@ import {
 import { proxyCreateSession } from '../../terminalProxy.js';
 import type { Task } from '../../tasks.js';
 import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
+import type { AgentLaunchOptions } from '../../agentCommandBuilder.js';
 import { taskTerminalLabel } from '../../terminalRegistry/labels.js';
 import type { AgentSessionRef } from '../../terminalRegistry/types.js';
 
@@ -28,6 +29,9 @@ type SelectHarnessCommandOptions = {
   // caller resolves it from UserSettings.codexYolo (default ON); this binds it
   // into the Codex command builder. Absent means "use the default (ON)".
   codexYolo?: boolean;
+  // Model + effort flags (the task's `model` / `effort`); already normalized
+  // by the caller, re-checked by the command builder.
+  launch?: AgentLaunchOptions;
   // When set, the pty is created with THIS command instead of the mode's
   // builder — the true-resume path (resumeTask.ts hands in a
   // `--resume <id>`-style command that continues the previous conversation).
@@ -61,16 +65,17 @@ function getCommandBuilder(
   mode: HarnessMode,
   piModel?: string,
   codexYolo?: boolean,
+  launch: AgentLaunchOptions = {},
 ): CommandBuilder {
   if (mode === 'resume') {
-    if (harness === 'pi') return (taskFile) => buildPiResumeCommand(taskFile, piModel);
-    if (harness === 'codex') return (taskFile) => buildCodexResumeCommand(taskFile, codexYolo);
-    return buildResumeCommand;
+    if (harness === 'pi') return (taskFile) => buildPiResumeCommand(taskFile, piModel, launch);
+    if (harness === 'codex') return (taskFile) => buildCodexResumeCommand(taskFile, codexYolo, launch);
+    return (taskFile) => buildResumeCommand(taskFile, launch);
   }
 
-  if (harness === 'pi') return (taskFile) => buildPiCommand(taskFile, piModel);
-  if (harness === 'codex') return (taskFile) => buildCodexCommand(taskFile, codexYolo);
-  return buildClaudeCommand;
+  if (harness === 'pi') return (taskFile) => buildPiCommand(taskFile, piModel, launch);
+  if (harness === 'codex') return (taskFile) => buildCodexCommand(taskFile, codexYolo, launch);
+  return (taskFile) => buildClaudeCommand(taskFile, launch);
 }
 
 export function selectHarnessCommand(
@@ -84,6 +89,7 @@ export function selectHarnessCommand(
     options.mode,
     options.piModel,
     options.codexYolo,
+    options.launch,
   );
 
   return {

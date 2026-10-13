@@ -11,6 +11,7 @@
 import { canonicalProjectPath } from '../projectPath.js';
 import { matchesStoredProjectIdentity } from '../projectIdentity.js';
 import { normalizePiModel } from '../agentCommandBuilder.js';
+import { normalizeAgentEffort, normalizeAgentModel } from '../harnesses.js';
 import { normalizeWorkflowRunHarnessOverride } from '../workflows/normalization.js';
 import type { WorkflowRun, WorkflowStepExecution } from './state.js';
 import { nextStepGroup } from './execution.js';
@@ -71,6 +72,10 @@ export function deserializeWorkflowRun(raw: unknown, owningProject?: string): Wo
   if (harnessOverride) run.harnessOverride = harnessOverride;
   const piModelOverride = normalizePiModel(r.piModelOverride);
   if (piModelOverride) run.piModelOverride = piModelOverride;
+  const effortOverride = normalizeAgentEffort(r.effortOverride);
+  if (effortOverride) run.effortOverride = effortOverride;
+  const agentModelOverride = normalizeAgentModel(r.agentModelOverride);
+  if (agentModelOverride) run.agentModelOverride = agentModelOverride;
   if (r.definition !== undefined) {
     run.definition = readWorkflowDefinition(r.definition, workflowId, run.projectPath);
     // Preserve an invalid snapshot as an explicit failed definition. Never

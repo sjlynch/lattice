@@ -83,7 +83,7 @@ export function renderCommand(tokens: CommandToken[]): string {
 // table honest when a new flag is added to agentCommandBuilder.
 const VALUE_FLAGS: Record<string, ReadonlySet<string>> = {
   claude: new Set([
-    '--model', '--session-id', '--resume', '-r', '--fallback-model',
+    '--model', '--effort', '--session-id', '--resume', '-r', '--fallback-model',
     '--permission-mode', '--append-system-prompt', '--append-system-prompt-file',
     '--system-prompt', '--system-prompt-file', '--mcp-config', '--add-dir',
     '--settings', '--plugin-dir', '-n', '--name', '--output-format',

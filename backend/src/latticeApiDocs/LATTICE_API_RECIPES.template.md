@@ -36,7 +36,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | PATCH  | /api/tasks/:id                     | Update title / description / status. Accepts JSON OR `text/markdown` body (replaces description; `# Heading` replaces title too) |
 | POST   | /api/tasks/:id/append-summary      | Append a summary section. JSON `{summary}` OR `text/markdown` body |
 | DELETE | /api/tasks/:id                     | PERMANENTLY remove a task (not a move to the `deleted` lane — PATCH `status` for that) and tear down its worktree + branch. A branch with commits not on HEAD is KEPT: the response then carries `keptBranch: {name, unmergedCommits, hint}`. **409** while the task is mid-merge — retry. Irreversible |
-| POST   | /api/tasks/:id/run                 | Run an Open task. Optional `{harness, piModel}`. Returns `{accepted, queued}` — see the async note below |
+| POST   | /api/tasks/:id/run                 | Run an Open task. Optional `{harness, piModel, model, effort}` (`model`: Claude/Codex alias or id; `effort`: `low`/`medium`/`high`/`xhigh`/`max`; both recorded and reused on resume). Returns `{accepted, queued}` — see the async note below |
 | POST   | /api/tasks/:id/resume              | Re-spawn the agent in an existing in-progress worktree. Same body and `{accepted, queued}` shape as `/run` |
 | POST   | /api/tasks/:id/cancel-queued-run   | Drop a queued run back to plain Open, or abort an admitted start still in flight (`inFlight:true` while it backs out). Idempotent; no-op for a fully settled start. Targets only the `task-run` key, not `task-resume`; does not kill an established running agent |
 | POST   | /api/tasks/:id/merge               | Attempt git merge of a Ready-to-Merge task |
@@ -46,7 +46,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | GET    | /api/merge-runs/:id                | Snapshot one merge run by id (404 once it's been forgotten) |
 | POST   | /api/merge-runs/:id/cancel         | Cancel a merge run |
 | GET    | /api/workflows?project=            | List workflow definitions — this is how you get the `:id` for the run call below |
-| POST   | /api/workflows/:id/run             | Start a workflow run; optional `{harnessOverride, piModelOverride}` (Pi model applies only with `harnessOverride: "pi"`). One run per project: **409** `active-run-exists` while another is active; transient **503** `workflow-recovering` with `Retry-After: 2` while recovery is loading; optional `?project=` pin → **404** for another project's workflow |
+| POST   | /api/workflows/:id/run             | Start a workflow run; optional `{harnessOverride, piModelOverride, effortOverride, agentModelOverride}` (Pi model applies only with `harnessOverride: "pi"`; effort/model override every step's and Start-step task's own). One run per project: **409** `active-run-exists` while another is active; transient **503** `workflow-recovering` with `Retry-After: 2` while recovery is loading; optional `?project=` pin → **404** for another project's workflow |
 | GET    | /api/workflow-runs/active?project= | Active workflow runs |
 | GET    | /api/workflow-runs/:runId?project= | `{run}` — one run by id, incl. a recently finished one (404 once forgotten / after a restart) |
 | POST   | /api/workflow-runs/:runId/cancel   | Cancel an active workflow run |
@@ -336,6 +336,8 @@ Workflows are the same shape — `GET /api/workflows?project=` for the ids,
 To override the run's harness and Pi model, send
 `{"harnessOverride":"pi","piModelOverride":"provider/model"}`. The model override
 is ignored without the Pi harness override; omit both to keep step selections.
+`effortOverride` / `agentModelOverride` set every agent's effort / Claude-Codex
+model for the run (steps carry their own `model` / `effort` otherwise).
 **409** `active-run-exists` means the project is busy.
 
 For workflow starts and task Resume (`POST /api/tasks/:id/resume`), retry only

@@ -16,6 +16,7 @@ import {
   type WorkflowStepHarness,
 } from '../workflows.js';
 import type { WorkflowRun } from './state.js';
+import type { AgentLaunchOptions } from '../agentCommandBuilder.js';
 import { activeStepIndices } from './execution.js';
 import {
   renderDirtyStateWarning,
@@ -41,6 +42,24 @@ export function effectiveStepPiModel(
 ): string | undefined {
   if (effectiveStepHarness(wf, run, stepIndex) !== 'pi') return undefined;
   return run.harnessOverride ? run.piModelOverride : wf.steps[stepIndex].piModel;
+}
+
+// The model + effort a step's agent launches with: the run-wide override, else
+// the step's own. The step's model applies only under the harness it was
+// authored for (a run harness override to another harness drops it), and
+// never under Pi, whose model is `piModel`.
+export function effectiveStepLaunch(
+  wf: Workflow,
+  run: WorkflowRun,
+  stepIndex: number,
+): AgentLaunchOptions {
+  const step = wf.steps[stepIndex];
+  const harness = effectiveStepHarness(wf, run, stepIndex);
+  const stepModel = harness === (step.harness ?? 'claude') ? step.model : undefined;
+  return {
+    model: harness === 'pi' ? undefined : run.agentModelOverride ?? stepModel,
+    effort: run.effortOverride ?? step.effort,
+  };
 }
 
 // The `{{completion_instructions}}` block of a workflow-step brief. Claude is

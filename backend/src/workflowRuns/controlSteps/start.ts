@@ -23,7 +23,8 @@ import type { AgentHarness } from '../../harnesses.js';
 import type { Workflow } from '../../workflows.js';
 import { addRoundTasks, checkpointWorkflowRun, notify, subscribe, type WorkflowRun } from '../state.js';
 import { emitControlProgress } from './shared.js';
-import { resolveStartStepHarnessPicker } from './startHarness.js';
+import { resolveStartStepHarnessPicker, startStepTaskLaunch } from './startHarness.js';
+import type { AgentLaunchOptions } from '../../agentCommandBuilder.js';
 
 export {
   startStepTaskPiModel,
@@ -130,6 +131,8 @@ type StartOneTaskContext = {
   stepIndex: number;
   backendOrigin: string;
   deps: StartStepDeps;
+  // Model + effort for every task this step starts (startStepTaskLaunch).
+  launch: AgentLaunchOptions;
 };
 
 type StartOneTaskResult =
@@ -165,6 +168,8 @@ async function startTaskForStep(
     const spawned = await deps.startTask(task.id, backendOrigin, {
       requestedHarness: harness,
       requestedPiModel: piModel,
+      requestedModel: ctx.launch.model,
+      requestedEffort: ctx.launch.effort,
       throwOnCapacity: true,
       signal: controller.signal,
     });
@@ -198,7 +203,7 @@ async function startOneTask(
     if (!isCurrentStartStep(run, stepIndex)) return { outcome: 'withdrawn' };
     if (runAlreadyQueued(task, deps)) return { outcome: 'deferred' };
     try {
-      await deps.enqueueRun(task.id, backendOrigin, harness, piModel);
+      await deps.enqueueRun(task.id, backendOrigin, harness, piModel, ctx.launch);
     } catch (enqErr) {
       if (!isCurrentStartStep(run, stepIndex)) return { outcome: 'withdrawn' };
       console.error(
@@ -337,7 +342,14 @@ export async function runStartStep(
     `starting ${open.length} task(s)`,
   );
 
-  const ctx: StartOneTaskContext = { wf, run, stepIndex, backendOrigin, deps };
+  const ctx: StartOneTaskContext = {
+    wf,
+    run,
+    stepIndex,
+    backendOrigin,
+    deps,
+    launch: startStepTaskLaunch(run, wf.steps?.[stepIndex]),
+  };
   for (const [index, task] of open.entries()) {
     if (!isCurrentStartStep(run, stepIndex)) return;
     const { harness, piModel } = pickHarness(index);

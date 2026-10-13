@@ -6,8 +6,8 @@
 // bypass, and shell quoting.
 
 import path from 'node:path';
-import type { AgentHarness } from './harnesses.js';
-import { isPiModelPattern } from './shared/harnesses.js';
+import type { AgentEffort, AgentHarness } from './harnesses.js';
+import { isPiModelPattern, normalizeAgentEffort, normalizeAgentModel } from './shared/harnesses.js';
 
 // A Pi model selector is a `provider/model` pattern, optionally with a
 // `:thinking`-style suffix (e.g. `qwen-local/qwen`, `openai-codex/gpt-5.5`).
@@ -41,6 +41,30 @@ export function buildPiModelFlag(piModel?: string): string {
   return model ? ` --model "${model}"` : '';
 }
 
+// Model + effort for one launch. `model` is a Claude / Codex model (Pi's is
+// `piModel`); both are normalized here, so an unsafe value only drops its flag.
+export type AgentLaunchOptions = {
+  model?: string;
+  effort?: AgentEffort;
+};
+
+// The per-harness flags for a launch's model + effort, with a leading space
+// (empty when neither applies). Claude: `--model "<m>" --effort <e>`; Codex:
+// `-m "<m>" -c model_reasoning_effort=<e>` (no `max` there → `xhigh`); Pi:
+// `--thinking <e>` (its model is the separate piModel flag).
+export function buildLaunchFlags(harness: AgentHarness, launch: AgentLaunchOptions = {}): string {
+  const model = normalizeAgentModel(launch.model);
+  const effort = normalizeAgentEffort(launch.effort);
+  if (harness === 'claude') {
+    return (model ? ` --model "${model}"` : '') + (effort ? ` --effort ${effort}` : '');
+  }
+  if (harness === 'codex') {
+    const codexEffort = effort === 'max' ? 'xhigh' : effort;
+    return (model ? ` -m "${model}"` : '') + (codexEffort ? ` -c model_reasoning_effort=${codexEffort}` : '');
+  }
+  return effort ? ` --thinking ${effort}` : '';
+}
+
 export function promptFileName(instructionsFile: string): string {
   return path.basename(instructionsFile);
 }
@@ -63,10 +87,11 @@ export function buildAgentCommand(args: {
   // sites (isCodexYoloEnabled); the default here keeps un-threaded call sites
   // matching the default-on setting.
   codexYolo?: boolean;
-}): string {
+} & AgentLaunchOptions): string {
   const quotedPrompt = shellDoubleQuoted(args.prompt);
+  const launchFlags = buildLaunchFlags(args.harness, args);
   if (args.harness === 'claude') {
-    return `claude --dangerously-skip-permissions ${quotedPrompt}`;
+    return `claude --dangerously-skip-permissions${launchFlags} ${quotedPrompt}`;
   }
   if (args.harness === 'pi') {
     // `--approve` trusts the session cwd's project-local files for this run —
@@ -74,7 +99,7 @@ export function buildAgentCommand(args: {
     // Lattice's cwd-local `.pi/extensions/` shims (MCP adapter, subagents,
     // completion) and `.pi/mcp.json` in a non-interactive/never-trusted spawn.
     // Per-run only; never persists trust to the user's global Pi config.
-    return `pi --approve${buildPiModelFlag(args.piModel)} ${quotedPrompt}`;
+    return `pi --approve${buildPiModelFlag(args.piModel)}${launchFlags} ${quotedPrompt}`;
   }
   const yolo = args.codexYolo === false ? '' : ' --yolo';
   // `--dangerously-bypass-hook-trust` runs the Lattice-injected
@@ -83,5 +108,5 @@ export function buildAgentCommand(args: {
   // flag from `--yolo` (which bypasses approvals/sandbox), and is applied to
   // every Lattice-spawned Codex session — consistent with Lattice's existing
   // full-auto posture for its own agents.
-  return `codex${yolo} --dangerously-bypass-hook-trust ${quotedPrompt}`;
+  return `codex${yolo} --dangerously-bypass-hook-trust${launchFlags} ${quotedPrompt}`;
 }

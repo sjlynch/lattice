@@ -84,6 +84,8 @@ export async function resumeQueuedTaskRuns(
             runQueuedAt: undefined,
             runQueuedHarness: undefined,
             runQueuedPiModel: undefined,
+            runQueuedModel: undefined,
+            runQueuedEffort: undefined,
             runFailureCount: undefined,
           });
         } catch (err) {
@@ -105,6 +107,7 @@ export async function resumeQueuedTaskRuns(
             backendOrigin,
             task.runQueuedHarness,
             task.runQueuedPiModel,
+            { model: task.runQueuedModel, effort: task.runQueuedEffort },
           );
         } catch (err) {
           console.warn(`[startup] could not re-enqueue queued run for task ${task.id}:`, err);

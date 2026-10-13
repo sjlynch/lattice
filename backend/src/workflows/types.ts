@@ -1,4 +1,4 @@
-import type { AgentHarness } from '../harnesses.js';
+import type { AgentEffort, AgentHarness } from '../harnesses.js';
 
 export type WorkflowStepHarness = AgentHarness;
 export type WorkflowRunHarnessOverride = WorkflowStepHarness | null;
@@ -43,6 +43,11 @@ export type WorkflowStep = {
   // Pi model ("provider/model") for this step, used only when `harness` is
   // `pi`. Absent = Pi's configured default. See piModels.ts.
   piModel?: string;
+  // Claude / Codex model (alias or full id) and reasoning effort for the
+  // step's agent; on a Start step, for the tasks it starts. Absent = the
+  // harness default. Ignored on Merge steps; `model` is ignored under Pi.
+  model?: string;
+  effort?: AgentEffort;
   // Defaults to 'agent' (legacy steps that have no `kind` field on disk).
   kind?: WorkflowStepKind;
   // "Frozen" (the editor's snowflake toggle): the step stays in the workflow —

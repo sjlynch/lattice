@@ -1,7 +1,9 @@
 import { generateWorkflowId } from '../ids.js';
 import {
   isAgentHarness,
+  normalizeAgentEffort,
   normalizeAgentHarness,
+  normalizeAgentModel,
 } from '../harnesses.js';
 import { normalizePiModel } from '../worktree/commands.js';
 import { normalizeVariableName, USER_INSTRUCTIONS_VAR } from '../shared/workflowVariables.js';
@@ -78,6 +80,9 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
       prompt: typeof step.prompt === 'string' ? step.prompt : '',
       harness: normalizeWorkflowStepHarness(step.harness),
       piModel: normalizePiModel(step.piModel),
+      // A Merge step launches no agent of its own.
+      model: kind === 'merge' ? undefined : normalizeAgentModel(step.model),
+      effort: kind === 'merge' ? undefined : normalizeAgentEffort(step.effort),
       kind,
       // Only a literal `true` freezes a step, and `undefined` (not `false`)
       // keeps the flag out of the JSON for the overwhelmingly common

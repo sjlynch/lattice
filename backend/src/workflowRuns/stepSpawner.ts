@@ -27,6 +27,7 @@ import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { isCodexYoloEnabled } from '../userSettings.js';
 import {
   effectiveStepHarness,
+  effectiveStepLaunch,
   effectiveStepPiModel,
   renderStepMarkdown,
 } from './stepMarkdown.js';
@@ -269,7 +270,10 @@ function spawnStepSession(args: {
     harness,
     effectiveStepPiModel(wf, run, stepIndex),
     codexYolo,
-    runTests ? { claudeAddDir: runTests.addDir } : {},
+    {
+      launch: effectiveStepLaunch(wf, run, stepIndex),
+      ...(runTests ? { claudeAddDir: runTests.addDir } : {}),
+    },
   );
 
   if (isWorkflowStepActive(run, stepIndex)) {

@@ -49,6 +49,8 @@ export function buildWorkflowRunsRouter(backendOrigin: string): Router {
         harnessOverride,
         piModelOverride:
           typeof body.piModelOverride === 'string' ? body.piModelOverride : undefined,
+        effortOverride: body.effortOverride,
+        agentModelOverride: body.agentModelOverride,
       });
       res.json({ run });
     } catch (err) {

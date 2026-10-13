@@ -28,6 +28,7 @@ import {
   type WorkflowRunHarnessOverride,
 } from './workflows.js';
 import { normalizePiModel } from './worktree/commands.js';
+import { normalizeAgentEffort, normalizeAgentModel } from './harnesses.js';
 import { generateWorkflowRunId } from './ids.js';
 import { listTasks } from './tasks.js';
 import {
@@ -66,6 +67,9 @@ export type StartWorkflowRunOptions = {
   harnessOverride?: WorkflowRunHarnessOverride;
   // Pi model override, applied to every step when harnessOverride is `pi`.
   piModelOverride?: string;
+  // Run-wide effort / Claude-Codex model over every step's own (unvalidated).
+  effortOverride?: unknown;
+  agentModelOverride?: unknown;
 };
 
 // Thrown by `startWorkflowRun` when a run is already active for the project —
@@ -130,6 +134,8 @@ export async function startWorkflowRun(
   // Only carry a model override when the run is overriding to Pi.
   const piModelOverride =
     harnessOverride === 'pi' ? normalizePiModel(options.piModelOverride) : undefined;
+  const effortOverride = normalizeAgentEffort(options.effortOverride);
+  const agentModelOverride = normalizeAgentModel(options.agentModelOverride);
   const run: WorkflowRun = {
     id: generateWorkflowRunId(),
     workflowId: wf.id,
@@ -144,6 +150,8 @@ export async function startWorkflowRun(
     stepPhase: 'pending',
     ...(harnessOverride ? { harnessOverride } : {}),
     ...(piModelOverride ? { piModelOverride } : {}),
+    ...(effortOverride ? { effortOverride } : {}),
+    ...(agentModelOverride ? { agentModelOverride } : {}),
   };
   openStepGroup(run, run.definition!.steps, firstGroup);
   runs.set(run.id, run);

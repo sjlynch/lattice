@@ -12,7 +12,8 @@ import { getTask, updateTaskWith, type Task, type TaskUpdates } from '../../task
 import { setupTaskWorktree } from '../../worktree.js';
 import { SpawnCapacityError, isSpawnDiskSpaceError } from '../../spawnQueue.js';
 import { requestMergeToFreeDiskSpace } from '../../diskPressureMerge.js';
-import { normalizeAgentHarness } from '../../harnesses.js';
+import { normalizeAgentEffort, normalizeAgentHarness, normalizeAgentModel } from '../../harnesses.js';
+import type { AgentLaunchOptions } from '../../agentCommandBuilder.js';
 import { normalizePiModel, resolvePiModel } from '../../piModels.js';
 import { isCodexYoloEnabled } from '../../userSettings.js';
 import {
@@ -67,6 +68,9 @@ export type StartTaskByIdOptions = {
   // Explicit Pi model from the run request body. Falls back to the per-project
   // default (UserSettings.piModel) when absent. Ignored unless harness is `pi`.
   requestedPiModel?: unknown;
+  // Claude/Codex model and effort (unvalidated); recorded on the task.
+  requestedModel?: unknown;
+  requestedEffort?: unknown;
   // Retained for callers' compatibility. Capacity always throws
   // SpawnCapacityError and leaves the task runnable; a start requires a PTY.
   throwOnCapacity?: boolean;
@@ -174,7 +178,7 @@ async function startTaskExclusive(
   }
   if (signal?.aborted) throw new TaskStartWithdrawnError(taskId, 'cancelled');
 
-  const { selectedHarness, piModel } = await resolveStartHarness(task, options, deps);
+  const { selectedHarness, piModel, launch } = await resolveStartHarness(task, options, deps);
   let result: WorktreeSetup;
   try {
     result = await deps.setupTaskWorktree(
@@ -225,7 +229,7 @@ async function startTaskExclusive(
 
   if (!spawn.serverId) throw new Error(`task ${taskId}: terminal allocation returned no session id`);
 
-  const outcome = await flipToInProgress(taskId, signal, result, spawn, selectedHarness, piModel);
+  const outcome = await flipToInProgress(taskId, signal, result, spawn, selectedHarness, piModel, launch);
   if (!outcome) return backOut({ withdrawal: 'deleted', current: null }, spawn.serverId);
   if (outcome.result) {
     return backOut({ withdrawal: outcome.result, current: outcome.task }, spawn.serverId);
@@ -247,7 +251,11 @@ async function resolveStartHarness(
   task: Task,
   options: StartTaskByIdOptions,
   deps: StartTaskDeps,
-): Promise<{ selectedHarness: SelectedHarnessCommand; piModel: string | undefined }> {
+): Promise<{
+  selectedHarness: SelectedHarnessCommand;
+  piModel: string | undefined;
+  launch: AgentLaunchOptions;
+}> {
   // Resolve the Pi model only for a Pi run: explicit request body wins, else
   // the per-project default. Avoids a settings read for Claude/Codex tasks.
   const harness = normalizeAgentHarness(options.requestedHarness);
@@ -259,13 +267,19 @@ async function resolveStartHarness(
   // Resolve the Codex `--yolo` toggle only for a Codex run (default ON).
   const codexYolo =
     harness === 'codex' ? await isCodexYoloEnabled(task.projectPath) : undefined;
+  // A Pi model is `piModel`; `model` only names a Claude / Codex model.
+  const launch: AgentLaunchOptions = {
+    model: harness === 'pi' ? undefined : normalizeAgentModel(options.requestedModel),
+    effort: normalizeAgentEffort(options.requestedEffort),
+  };
   const selectedHarness = deps.selectHarnessCommand(task, {
     requestedHarness: options.requestedHarness,
     mode: 'run',
     piModel,
     codexYolo,
+    launch,
   });
-  return { selectedHarness, piModel };
+  return { selectedHarness, piModel, launch };
 }
 
 // The flip, as a compare-and-set under the task lock: re-read the task and
@@ -286,6 +300,7 @@ async function flipToInProgress(
   spawn: CreateSessionOutcome,
   selectedHarness: SelectedHarnessCommand,
   piModel: string | undefined,
+  launch: AgentLaunchOptions,
 ): Promise<{ task: Task; result: Withdrawal | null } | null> {
   const reservationRef: { current: ColorSlotReservation | null } = { current: null };
   try {
@@ -316,6 +331,8 @@ async function flipToInProgress(
       harness: selectedHarness.harness,
       // Persist the model used so a resume re-spawns with the same one.
       piModel: selectedHarness.harness === 'pi' ? piModel : undefined,
+      model: launch.model,
+      effort: launch.effort,
       colorIndex: slot,
       // The pinned harness conversation (Claude / Pi); a Codex id lands later
       // via the registry's rollout discovery (resumeTask reads the registry).

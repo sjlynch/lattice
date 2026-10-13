@@ -5,6 +5,8 @@ import { normalizeAgentHarness, type AgentHarness } from '../../harnesses.js';
 import { normalizePiModel } from '../../piModels.js';
 import { getUserSettings } from '../../userSettings.js';
 import type { WorkflowRun } from '../state.js';
+import type { WorkflowStep } from '../../workflows.js';
+import type { AgentLaunchOptions } from '../../agentCommandBuilder.js';
 
 // The Pi model the Start step's spawned task agents should use FOR A RUN-LEVEL
 // OVERRIDE. Mirrors the run-level harness resolution and `effectiveStepPiModel`
@@ -21,6 +23,19 @@ export function startStepTaskPiModel(
   return normalizeAgentHarness(run.harnessOverride) === 'pi'
     ? run.piModelOverride
     : undefined;
+}
+
+// The model + effort every task a Start step starts runs with: the run-wide
+// override, else the Start step's own. startTaskById drops the model for a
+// Pi task (its model is piModel).
+export function startStepTaskLaunch(
+  run: Pick<WorkflowRun, 'effortOverride' | 'agentModelOverride'>,
+  step: Pick<WorkflowStep, 'model' | 'effort'> | undefined,
+): AgentLaunchOptions {
+  return {
+    model: run.agentModelOverride ?? step?.model,
+    effort: run.effortOverride ?? step?.effort,
+  };
 }
 
 export type StartStepTaskHarness = {
