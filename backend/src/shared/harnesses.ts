@@ -31,8 +31,7 @@ export function isPiModelPattern(value: string): boolean {
 }
 
 // Reasoning effort for an agent launch, Claude Code's `--effort` vocabulary.
-// Codex gets it as `-c model_reasoning_effort=<x>` (no `max`: it maps to
-// `xhigh`), Pi as `--thinking <x>`. Absent = the harness's own default.
+// Codex gets it as `-c model_reasoning_effort=<x>`, Pi as `--thinking <x>`. Absent = the harness's own default.
 export type AgentEffort = 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 
 export const ALL_AGENT_EFFORTS: readonly AgentEffort[] = [

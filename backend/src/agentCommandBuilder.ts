@@ -50,7 +50,7 @@ export type AgentLaunchOptions = {
 
 // The per-harness flags for a launch's model + effort, with a leading space
 // (empty when neither applies). Claude: `--model "<m>" --effort <e>`; Codex:
-// `-m "<m>" -c model_reasoning_effort=<e>` (no `max` there → `xhigh`); Pi:
+// `-m "<m>" -c model_reasoning_effort=<e>` (Codex ≥0.160 models take max too); Pi:
 // `--thinking <e>` (its model is the separate piModel flag).
 export function buildLaunchFlags(harness: AgentHarness, launch: AgentLaunchOptions = {}): string {
   const model = normalizeAgentModel(launch.model);
@@ -59,8 +59,7 @@ export function buildLaunchFlags(harness: AgentHarness, launch: AgentLaunchOptio
     return (model ? ` --model "${model}"` : '') + (effort ? ` --effort ${effort}` : '');
   }
   if (harness === 'codex') {
-    const codexEffort = effort === 'max' ? 'xhigh' : effort;
-    return (model ? ` -m "${model}"` : '') + (codexEffort ? ` -c model_reasoning_effort=${codexEffort}` : '');
+    return (model ? ` -m "${model}"` : '') + (effort ? ` -c model_reasoning_effort=${effort}` : '');
   }
   return effort ? ` --thinking ${effort}` : '';
 }

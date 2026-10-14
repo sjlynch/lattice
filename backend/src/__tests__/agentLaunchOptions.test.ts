@@ -21,10 +21,10 @@ test('claude: --model "<m>" --effort <e> before the prompt', () => {
   assert.equal(buildLaunchFlags('claude', { model: 'claude-opus-5-5[1m]' }), ' --model "claude-opus-5-5[1m]"');
 });
 
-test('codex: -m + model_reasoning_effort, with max mapped to xhigh', () => {
+test('codex: -m + model_reasoning_effort (max passes through)', () => {
   assert.equal(
     buildAgentCommand({ harness: 'codex', prompt: 'go', model: 'gpt-5.5', effort: 'max' }),
-    'codex --yolo --dangerously-bypass-hook-trust -m "gpt-5.5" -c model_reasoning_effort=xhigh "go"',
+    'codex --yolo --dangerously-bypass-hook-trust -m "gpt-5.5" -c model_reasoning_effort=max "go"',
   );
   assert.equal(buildLaunchFlags('codex', { effort: 'low' }), ' -c model_reasoning_effort=low');
 });
