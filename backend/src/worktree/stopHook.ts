@@ -9,6 +9,7 @@ import {
 import { installCodexStopHook } from '../codexStopHook.js';
 import { installPiActivityExtension } from '../piActivity.js';
 import { installPiRetryExtension } from '../piRetry.js';
+import { installPiGuardExtension } from '../piGuard.js';
 import { exec } from './exec.js';
 import { appendMissingExcludeEntries } from './projectGuards/repoExclude.js';
 
@@ -141,6 +142,7 @@ export async function installPiCompletionExtension(
     activityUrl: taskActivityUrlForHook(taskId, backendOrigin, 'pi-activity-extension'),
   });
   await installPiRetryExtension(worktreePath);
+  await installPiGuardExtension(worktreePath);
 }
 
 // Codex Stop hook — the Codex analogue of installStopHook (Claude) /

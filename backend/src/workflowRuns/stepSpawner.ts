@@ -20,6 +20,7 @@ import { installPiCompletionExtension } from '../piExtension.js';
 import { installCodexStopHook } from '../codexStopHook.js';
 import { installPiActivityExtension } from '../piActivity.js';
 import { installPiRetryExtension } from '../piRetry.js';
+import { installPiGuardExtension } from '../piGuard.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
 import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 import type { Workflow, WorkflowStepHarness } from '../workflows.js';
@@ -235,6 +236,7 @@ async function installStepCallbacks(args: {
   });
   await installPiActivityExtension({ dir: stepDir, activityUrl });
   await installPiRetryExtension(stepDir);
+  await installPiGuardExtension(stepDir);
   // Codex Stop hook (the Codex analogue). Fires once at turn completion and
   // advances the step even if the model forgets to curl — this is what stops a
   // Codex workflow step from lingering/overlapping the next one. The step cwd is

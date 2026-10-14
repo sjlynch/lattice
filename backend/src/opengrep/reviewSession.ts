@@ -10,6 +10,7 @@ import { installCodexStopHook } from '../codexStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
 import { installPiActivityExtension } from '../piActivity.js';
 import { installPiRetryExtension } from '../piRetry.js';
+import { installPiGuardExtension } from '../piGuard.js';
 import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 import type { AgentHarness } from '../harnesses.js';
 import { isActiveReview, updateReviewStore, type ReviewRun } from './reviewStore.js';
@@ -67,6 +68,7 @@ export async function startReviewSession(args: { project: string; scanId: string
         await installPiCompletionExtension({ dir: cwd, callbackUrl, site: 'security-review-done', respectQuitGate: false, eventName: 'agent_settled' });
         await installPiActivityExtension({ dir: cwd, activityUrl });
         await installPiRetryExtension(cwd);
+        await installPiGuardExtension(cwd);
       },
       renderInstructions: async ({ cwd, id }) => {
         materializedId = id;

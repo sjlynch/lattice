@@ -4,6 +4,7 @@ import { installPiCompletionExtension } from '../piExtension.js';
 import { installCodexStopHook } from '../codexStopHook.js';
 import { installPiActivityExtension } from '../piActivity.js';
 import { installPiRetryExtension } from '../piRetry.js';
+import { installPiGuardExtension } from '../piGuard.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
 import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 
@@ -71,6 +72,7 @@ export async function installPostMergeHookStopHook(args: {
   });
   await installPiActivityExtension({ dir: scratchDir, activityUrl });
   await installPiRetryExtension(scratchDir);
+  await installPiGuardExtension(scratchDir);
   // Codex Stop hook (the Codex analogue). Home-scoped scratch is fresh, so
   // 'always'. Advances the merge gate on turn completion even if the model
   // forgets the explicit curl.
