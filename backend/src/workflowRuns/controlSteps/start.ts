@@ -323,7 +323,7 @@ export async function runStartStep(
   // does — a run-level override pins every task, otherwise the per-project
   // default harness applies (interleave expands to a claude/pi mix). Resolved
   // once here, applied per task below.
-  const pickHarness = await resolveStartStepHarnessPicker(run, wf.projectPath);
+  const pickHarness = await resolveStartStepHarnessPicker(run, wf.projectPath, wf.steps?.[stepIndex]);
   if (!isCurrentStartStep(run, stepIndex)) return;
   // Everything this step launches or leaves queued joins the run's round, which
   // the Merge step waits for in full. Durable before the first launch: after a

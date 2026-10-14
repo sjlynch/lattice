@@ -48,6 +48,12 @@ export type WorkflowStep = {
   // harness default. Ignored on Merge steps; `model` is ignored under Pi.
   model?: string;
   effort?: AgentEffort;
+  // Start step only: the harness (and, for Pi, model) of the tasks it starts,
+  // instead of the project's default task harness. A run's harness override
+  // still wins. Lets one workflow plan with a frontier model and implement
+  // with another (e.g. a local Pi model).
+  tasksHarness?: AgentHarness;
+  tasksPiModel?: string;
   // Defaults to 'agent' (legacy steps that have no `kind` field on disk).
   kind?: WorkflowStepKind;
   // "Frozen" (the editor's snowflake toggle): the step stays in the workflow —

@@ -136,3 +136,21 @@ test('Start step run-level override still pins every task (and beats the project
     await fs.rm(project, { recursive: true, force: true });
   }
 });
+
+test('a Start step that names its tasks harness beats the project default, not a run override', async () => {
+  const project = await mkProject();
+  try {
+    await patchUserSettings(project, { harness: 'claude', piModel: 'vllm/qwen' });
+    const local = await resolveStartStepHarnessPicker(noOverride, project, { tasksHarness: 'pi', tasksPiModel: 'endpoint-2/ornith' });
+    assert.deepEqual(local(0), { harness: 'pi', piModel: 'endpoint-2/ornith' });
+    // A Pi pick without a model takes the project's default Pi model.
+    const piDefault = await resolveStartStepHarnessPicker(noOverride, project, { tasksHarness: 'pi' });
+    assert.deepEqual(piDefault(0), { harness: 'pi', piModel: 'vllm/qwen' });
+    const codex = await resolveStartStepHarnessPicker(noOverride, project, { tasksHarness: 'codex', tasksPiModel: 'x/y' });
+    assert.deepEqual(codex(0), { harness: 'codex', piModel: undefined });
+    const overridden = await resolveStartStepHarnessPicker({ harnessOverride: 'claude', piModelOverride: undefined }, project, { tasksHarness: 'pi' });
+    assert.deepEqual(overridden(0), { harness: 'claude', piModel: undefined });
+  } finally {
+    await fs.rm(project, { recursive: true, force: true });
+  }
+});

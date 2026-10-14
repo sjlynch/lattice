@@ -83,6 +83,8 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
       // A Merge step launches no agent of its own.
       model: kind === 'merge' ? undefined : normalizeAgentModel(step.model),
       effort: kind === 'merge' ? undefined : normalizeAgentEffort(step.effort),
+      tasksHarness: kind === 'start' && isAgentHarness(step.tasksHarness) ? step.tasksHarness : undefined,
+      tasksPiModel: kind === 'start' && step.tasksHarness === 'pi' ? normalizePiModel(step.tasksPiModel) : undefined,
       kind,
       // Only a literal `true` freezes a step, and `undefined` (not `false`)
       // keeps the flag out of the JSON for the overwhelmingly common

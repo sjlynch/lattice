@@ -63,6 +63,7 @@ export type StartStepTaskHarness = {
 export async function resolveStartStepHarnessPicker(
   run: Pick<WorkflowRun, 'harnessOverride' | 'piModelOverride'>,
   projectPath: string,
+  step?: Pick<WorkflowStep, 'tasksHarness' | 'tasksPiModel'>,
 ): Promise<(taskIndex: number) => StartStepTaskHarness> {
   // Run-level override → pin every task to that harness + its Pi model override.
   if (run.harnessOverride) {
@@ -70,9 +71,16 @@ export async function resolveStartStepHarnessPicker(
     const piModel = startStepTaskPiModel(run);
     return () => ({ harness, piModel });
   }
-  // No override → the per-project default, read from UserSettings like Run All.
+  // The Start step's own task harness, when it names one; a Pi pick without a
+  // model takes the project's default Pi model.
   const settings = await getUserSettings(projectPath);
   const piModel = normalizePiModel(settings.piModel);
+  if (step?.tasksHarness) {
+    const harness = normalizeAgentHarness(step.tasksHarness);
+    const stepPiModel = harness === 'pi' ? normalizePiModel(step.tasksPiModel) ?? piModel : undefined;
+    return () => ({ harness, piModel: stepPiModel });
+  }
+  // Otherwise the per-project default, read from UserSettings like Run All.
   if (settings.harness === 'interleave') {
     return (taskIndex) => {
       const harness: AgentHarness = taskIndex % 2 === 0 ? 'claude' : 'pi';

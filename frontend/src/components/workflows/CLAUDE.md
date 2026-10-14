@@ -48,7 +48,9 @@ execution view):
   `{{var}}` overlay; memoized on prompt-only props — the per-row hot path; stays
   mounted across collapse, rendering nothing).
 - `ControlStepRow.tsx` — compact start/merge/push row via `CONTROL_STEP_META`;
-  a Start step's `StepLaunchSelects` set the model / effort of the tasks it starts.
+  a Start step's `StartTasksHarnessSelect` (`tasksHarness` / `tasksPiModel`; empty =
+  the project's task harness) and `StepLaunchSelects` set the harness, model and
+  effort of the tasks it starts.
 - `StepLaunchSelects.tsx` — model (Claude presets; none under Pi) + effort
   selects; empty = the harness default.
 - `TestStepRow.tsx` — Run tests row: no prompt (backend brief `RUN_TESTS.md` is

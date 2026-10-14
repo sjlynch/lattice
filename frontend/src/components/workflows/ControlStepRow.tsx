@@ -1,6 +1,6 @@
 import { memo, useRef } from 'react';
 import { GitMerge, GripVertical, Play, UploadCloud, X } from 'lucide-react';
-import type { WorkflowStep, WorkflowStepKind } from '../../api';
+import type { HarnessAvailability, PiMenuEntry, WorkflowStep, WorkflowStepKind } from '../../api';
 import {
   useScrollRunningIntoView,
   useWorkflowStepDragDrop,
@@ -12,6 +12,7 @@ import {
 } from './StepRowShared';
 import type { StepRunStatus } from './stepRunStatus';
 import { StepLaunchSelects } from './StepLaunchSelects';
+import { StartTasksHarnessSelect } from './StartTasksHarnessSelect';
 
 // The headless kinds this row renders. `agent` and `test` (Run tests) spawn
 // an agent and have their own rows.
@@ -50,6 +51,8 @@ export const ControlStepRow = memo(function ControlStepRow({
   step,
   index,
   kind,
+  harnessAvail,
+  piMenu,
   runStatus,
   onChange,
   onRemove,
@@ -58,6 +61,8 @@ export const ControlStepRow = memo(function ControlStepRow({
   step: WorkflowStep;
   index: number;
   kind: ControlStepKind;
+  harnessAvail: HarnessAvailability;
+  piMenu: PiMenuEntry[];
   runStatus?: StepRunStatus;
 } & Pick<StepRowCallbacks, 'onChange' | 'onRemove' | 'onReorder'>) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -97,6 +102,15 @@ export const ControlStepRow = memo(function ControlStepRow({
             onChange={(e) => onChange(index, { title: e.target.value })}
             title={meta.hint}
           />
+          {kind === 'start' && (
+            <StartTasksHarnessSelect
+              harnessAvail={harnessAvail}
+              piMenu={piMenu}
+              harness={step.tasksHarness}
+              piModel={step.tasksPiModel}
+              onChange={(tasksHarness, tasksPiModel) => onChange(index, { tasksHarness, tasksPiModel })}
+            />
+          )}
           {kind === 'start' && (
             <StepLaunchSelects
               subject="tasks"
