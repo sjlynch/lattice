@@ -125,6 +125,13 @@ async function respondToResolverFinalize(
 // `?source=` is absent only for very-old workers that pre-date the
 // hardened extension; their callbacks still work, they just log as
 // "unknown".
+// Shown to an agent that reported completion with nothing committed (a local
+// model in an experiment stopped like this and stalled its workflow's Merge).
+const AWAITING_COMMIT_MESSAGE =
+  'Not complete: your task branch has no commits, so there is nothing to merge. ' +
+  'Commit your changes (git add -A && git commit -m "<summary>") and call this URL again. ' +
+  'If the task truly needs no change, explain why with the append-summary route, then commit nothing.';
+
 export function handleTaskComplete(backendOrigin: string) {
   return async (req: Request<{ id: string }>, res: Response): Promise<Response | void> => {
     const source = typeof req.query.source === 'string' ? req.query.source : 'unknown';
@@ -177,7 +184,8 @@ export function handleTaskComplete(backendOrigin: string) {
           `[complete] task ${task.id} (${task.title}) hit Stop hook with ` +
             `no commits on ${task.branch} — leaving at in_progress.`,
         );
-        return res.json({ ok: true, awaitingCommit: true });
+        // The agent that curled /complete reads this body: say what to do next.
+        return res.json({ ok: true, awaitingCommit: true, message: AWAITING_COMMIT_MESSAGE });
       }
     }
     // Crash-safe (disk-before-cache), NOT the debounced updateTask. The Stop
