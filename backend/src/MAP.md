@@ -80,7 +80,7 @@ beside its `x/` folder ("`x.ts` / `x/`" below); "See its doc" = that folder's
 - `agentActivityTokens.ts` — HMAC token minted into `/api/agent-activity/:token` hook URLs; secret persisted under `~/.lattice`.
 - `piActivity.ts` / `piActivity/` — generates Pi's `.pi/extensions/lattice-activity.ts`, posting Claude-shaped bodies from `tool_execution_start/end`. See its doc.
 - `piGuard.ts` — generates `.pi/extensions/lattice-guard.ts` for unattended Lattice Pi sessions: blocks whole-filesystem scans (`find /`), gives untimed bash calls a 20-min timeout.
-- `piRetry.ts` — generates `.pi/extensions/lattice-retry.ts` for unattended Lattice Pi sessions: sends "continue" (backoff, capped) after a transient server error Pi's own retry misses (a local endpoint's admission-queue expiry, a model still loading).
+- `piRetry.ts` — generates `.pi/extensions/lattice-retry.ts` for unattended Lattice Pi sessions: sends "continue" (backoff, capped) after a transient server error Pi's own retry misses (a local endpoint's admission-queue expiry, a model still loading), and re-prompts after a tool call written as plain text.
 - `projectClaudeHooks.ts` — merge-installs activity hooks into the project's own `.claude/settings.local.json`; never overwrites an unparseable or unreadable file (only `ENOENT` is absent).
 - `projectCodexHooks.ts` — Codex analogue for user-opened Codex tabs: per-launch `--config hooks.*` overrides + `--dangerously-bypass-hook-trust`; nothing written to the repo or `~/.codex`.
 - `projectClaude/` — project-root Claude instrumentation behind `routes/projectClaude.ts`: hook reconcile, session presence lifecycle, activity fan-out. See its doc.

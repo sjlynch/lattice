@@ -4,6 +4,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  PI_MALFORMED_MAX,
+  PI_MALFORMED_PROMPT,
   PI_CONTINUE_ERROR_PATTERN,
   PI_CONTINUE_MAX,
   PI_CONTINUE_PROMPT,
@@ -28,7 +30,11 @@ async function loadExtension() {
     });
     handlers.get('agent_settled')!();
   };
-  return { turn, sent, handlers };
+  const reply = (content: unknown[]) => {
+    handlers.get('agent_end')!({ messages: [{ role: 'assistant', stopReason: 'stop', content }] });
+    handlers.get('agent_settled')!();
+  };
+  return { turn, reply, sent, handlers };
 }
 
 const ADMISSION = 'inference request expired while waiting for admission';
@@ -77,5 +83,22 @@ test('shutdown cancels a pending continuation', async (t) => {
   turn(ADMISSION);
   handlers.get('session_shutdown')!();
   t.mock.timers.tick(10 * 60_000);
+  assert.equal(sent.length, 0);
+});
+
+test('a tool call written as plain text is nudged at once, at most twice in a row', async () => {
+  const { reply, sent } = await loadExtension();
+  const leaked = [{ type: 'text', text: 'Let me look.\n<tool_call>\n<function=read>\n<parameter=path>x</parameter>\n</function>\n</tool_call>' }];
+  for (let i = 0; i < PI_MALFORMED_MAX + 2; i += 1) reply(leaked);
+  assert.deepEqual(sent, Array(PI_MALFORMED_MAX).fill(PI_MALFORMED_PROMPT));
+  reply([{ type: 'text', text: 'All done.' }]);
+  reply(leaked);
+  assert.equal(sent.length, PI_MALFORMED_MAX + 1, 'a clean reply resets the streak');
+});
+
+test('markup beside a real tool call, or plain prose, is left alone', async () => {
+  const { reply, sent } = await loadExtension();
+  reply([{ type: 'text', text: '<tool_call>' }, { type: 'toolCall', id: 't1', name: 'read', arguments: {} }]);
+  reply([{ type: 'text', text: 'Finished: tests pass.' }]);
   assert.equal(sent.length, 0);
 });
