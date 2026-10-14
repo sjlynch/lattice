@@ -3,6 +3,7 @@ import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 import { installCodexStopHook } from '../codexStopHook.js';
 import { installPiCompletionExtension } from '../piExtension.js';
 import { installPiActivityExtension } from '../piActivity.js';
+import { installPiRetryExtension } from '../piRetry.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
 
 export function pushDoneCallbackUrl(id: string, backendOrigin: string): string {
@@ -40,5 +41,6 @@ export async function installPushStopHook(
     respectQuitGate: true,
   });
   await installPiActivityExtension({ dir: cwd, activityUrl });
+  await installPiRetryExtension(cwd);
   await installPiSubagentsShim({ dir: cwd });
 }
