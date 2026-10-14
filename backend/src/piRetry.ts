@@ -8,8 +8,9 @@
 // at its prompt: the task or workflow step never finishes. The generated
 // `<dir>/.pi/extensions/lattice-retry.ts` sends a "continue" after such an
 // error, with backoff and a cap, once Pi has settled (its own retries done).
-// It also re-prompts (twice at most) after a reply whose tool call the model
-// wrote as plain text, which otherwise ends the turn with nothing run.
+// It also re-prompts (twice at most) after a reply cut off at the output limit
+// or one whose tool call the model wrote as plain text: either ends the turn
+// mid-work with nothing run.
 // Never installed for the user's own project-root Pi (no surprise input there).
 
 import path from 'node:path';
@@ -36,6 +37,10 @@ export const PI_MALFORMED_TOOL_CALL_PATTERN = /<tool_call>|<function=[^>]*>|<\/p
 export const PI_MALFORMED_MAX = 2;
 export const PI_MALFORMED_PROMPT =
   'Your last message contained a tool call written as plain text, so it was not executed. Call the tool again using the proper tool-calling format.';
+// A reply cut off at the model's output limit (stopReason "length") likewise
+// ends the turn mid-work and leaves the session idle; it shares the cap.
+export const PI_LENGTH_PROMPT =
+  'Your last reply was cut off at the output limit. Continue where you left off; split large edits or files into smaller steps.';
 
 // The delay before continuation `attempt` (1-based): exponential, capped.
 export function piContinueDelayMs(attempt: number): number {
@@ -55,11 +60,12 @@ const PROMPT = ${JSON.stringify(PI_CONTINUE_PROMPT)};
 const MALFORMED = ${PI_MALFORMED_TOOL_CALL_PATTERN.toString()};
 const MAX_MALFORMED_NUDGES = ${PI_MALFORMED_MAX};
 const MALFORMED_PROMPT = ${JSON.stringify(PI_MALFORMED_PROMPT)};
+const LENGTH_PROMPT = ${JSON.stringify(PI_LENGTH_PROMPT)};
 
 export default function (pi) {
   let attempts = 0;
   let lastError = null;
-  let malformed = false;
+  let nudge = null;
   let malformedNudges = 0;
   let timer = null;
   pi.on("agent_end", (event) => {
@@ -73,14 +79,16 @@ export default function (pi) {
     // A tool call the model wrote as plain text ends the turn without running it.
     const content = last && Array.isArray(last.content) ? last.content : [];
     const text = content.filter((c) => c && c.type === "text").map((c) => c.text || "").join("\\n");
-    malformed = !lastError && !content.some((c) => c && c.type === "toolCall") && MALFORMED.test(text);
-    if (!malformed) malformedNudges = 0;
+    const malformed = !lastError && !content.some((c) => c && c.type === "toolCall") && MALFORMED.test(text);
+    nudge = lastError ? null : last && last.stopReason === "length" ? LENGTH_PROMPT : malformed ? MALFORMED_PROMPT : null;
+    if (!nudge) malformedNudges = 0;
   });
   pi.on("agent_settled", () => {
-    if (malformed && malformedNudges < MAX_MALFORMED_NUDGES) {
-      malformed = false;
+    if (nudge && malformedNudges < MAX_MALFORMED_NUDGES) {
+      const text = nudge;
+      nudge = null;
       malformedNudges += 1;
-      pi.sendUserMessage(MALFORMED_PROMPT);
+      pi.sendUserMessage(text);
       return;
     }
     const err = lastError;

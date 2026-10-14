@@ -4,6 +4,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  PI_LENGTH_PROMPT,
   PI_MALFORMED_MAX,
   PI_MALFORMED_PROMPT,
   PI_CONTINUE_ERROR_PATTERN,
@@ -94,6 +95,16 @@ test('a tool call written as plain text is nudged at once, at most twice in a ro
   reply([{ type: 'text', text: 'All done.' }]);
   reply(leaked);
   assert.equal(sent.length, PI_MALFORMED_MAX + 1, 'a clean reply resets the streak');
+});
+
+test('a reply cut off at the output limit is continued, sharing the nudge cap', async () => {
+  const { handlers, sent } = await loadExtension();
+  const cutOff = () => {
+    handlers.get('agent_end')!({ messages: [{ role: 'assistant', stopReason: 'length', content: [{ type: 'text', text: 'partial…' }] }] });
+    handlers.get('agent_settled')!();
+  };
+  for (let i = 0; i < PI_MALFORMED_MAX + 1; i += 1) cutOff();
+  assert.deepEqual(sent, Array(PI_MALFORMED_MAX).fill(PI_LENGTH_PROMPT));
 });
 
 test('markup beside a real tool call, or plain prose, is left alone', async () => {
