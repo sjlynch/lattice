@@ -33,6 +33,13 @@ const SUGGESTIONS: ReadonlyArray<{
   },
   {
     harness: 'codex',
+    role: 'tasks',
+    model: /sol/i,
+    effort: 'low',
+    why: '31 real fixes: low passed as many as medium and high (77%) in 55-75% of their time.',
+  },
+  {
+    harness: 'codex',
     role: 'step',
     effort: 'high',
     why: 'Planning steps: high filed the most valid tasks per minute; xhigh/max ran far longer for no more.',
