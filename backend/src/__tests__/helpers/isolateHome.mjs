@@ -21,7 +21,16 @@ import os from 'node:os';
 import path from 'node:path';
 import fs from 'node:fs';
 
-const tempHome = fs.mkdtempSync(path.join(os.tmpdir(), 'lattice-test-home-'));
+// Per-process temp root: TEMP/TMP/TMPDIR point into it, so every os.tmpdir()
+// a test (or a child it spawns) uses lands inside, and the exit cleanup below
+// removes whatever a test forgot to. Without it, tests that skip their own
+// cleanup — or are killed mid-run — had left ~30k `lattice-*` dirs in the real
+// %TEMP% (2026-10-15), and a workflow's Run tests step re-runs the suite.
+const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'lattice-test-'));
+process.env.TEMP = tempRoot;
+process.env.TMP = tempRoot;
+process.env.TMPDIR = tempRoot;
+const tempHome = fs.mkdtempSync(path.join(tempRoot, 'lattice-test-home-'));
 process.env.USERPROFILE = tempHome;
 process.env.HOME = tempHome;
 // Tests that write under ~/.lattice check this marker and refuse to run
@@ -36,7 +45,7 @@ delete process.env.LATTICE_HOME;
 // Best-effort cleanup when the test process exits (sync — 'exit' can't await).
 process.on('exit', () => {
   try {
-    fs.rmSync(tempHome, { recursive: true, force: true });
+    fs.rmSync(tempRoot, { recursive: true, force: true, maxRetries: 2 });
   } catch {
     /* best effort; the OS temp dir is reclaimed eventually anyway */
   }
