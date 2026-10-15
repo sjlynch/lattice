@@ -2,6 +2,11 @@
 // Leaf module: a plain-markdown default with `{{token}}` placeholders. See
 // ../defs.ts for the catalog entry (token docs) and ../CLAUDE.md for the
 // subsystem overview.
+//
+// "Spec gaps" in the summary (2026-10): the decisions the implementer had to
+// make itself show the reviewer what the agent decided, and are the signal a
+// planner brief learns from — on replayed real fixes, rules distilled from
+// implementers' gap reports took held-out pass rates 21/31 → 30/31.
 
 export const DEFAULT_TASK_TEMPLATE = `# {{task_title}}
 
@@ -80,7 +85,10 @@ export const DEFAULT_TASK_TEMPLATE = `# {{task_title}}
    curl --fail-with-body --silent --show-error --retry 15 --retry-delay 3 --retry-connrefused -X POST "{{backend_origin}}/api/tasks/{{task_id}}/append-summary" -H "Content-Type: text/markdown; charset=utf-8" --data-binary "@<absolute-path-to-summary.md>"
    \`\`\`
 
-   Keep it concise (1-3 bullet points). The file contains only your summary,
+   Keep it concise (1-3 bullet points), then end with a **Spec gaps** line:
+   the decisions the task description left to you (names, signatures,
+   messages, constants, edge-case behavior, where the change belongs), one
+   short bullet each — or "Spec gaps: none". The file contains only your summary,
    with ordinary quotes, backslashes, and newlines — no JSON wrapper or manual
    escaping. Check that the request succeeds before finishing. This appends
    beneath the original description; both remain visible on the task board.
