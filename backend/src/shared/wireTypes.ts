@@ -66,6 +66,7 @@ export type {
   PiProvider,
   PiProviderModel,
 } from '../piModels/types.js';
+export type { CodexModelInfo } from '../codexModels/types.js';
 export type { GlobalSettings } from '../globalSettings/types.js';
 export type {
   McpHarnessSupport,

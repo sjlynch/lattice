@@ -31,6 +31,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | GET | `/api/global-settings` | Read machine-global settings |
 | PATCH | `/api/global-settings` | Update machine-global settings (softCap applied live; `piProviders` reconciled into models.json) |
 | GET | `/api/pi-models` | Pi models + curated "Pi — X" `menu` + Pi's `defaultPattern` |
+| GET | `/api/codex-models` | Codex models Codex lists in its own picker (from `~/.codex/models_cache.json`; empty when absent) |
 | POST | `/api/pi-endpoints/probe` | `{baseUrl, apiKey?, headers?}` → models an OpenAI-compatible server serves (+ context window) |
 | GET | `/api/mcp-catalog` | Merged MCP catalog (definitions only, no secrets) |
 | GET | `/api/mcp-secrets` | Redacted MCP secret presence (booleans + last-4 hints) |

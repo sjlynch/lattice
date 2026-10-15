@@ -207,6 +207,7 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   'GET /api/instruction-templates': 'agent-prompt editor data (Settings UI)',
   'GET /api/harness-system-prompts': 'system-prompt editor data (Settings UI)',
   'GET /api/pi-models': 'Pi model dropdown data (Settings UI)',
+  'GET /api/codex-models': 'Codex model dropdown data (workflow step selects)',
   'POST /api/pi-endpoints/probe': 'Pi endpoint "Detect models" button (Settings UI)',
 
   // Terminal-tab registry (backend/src/terminalRegistry/). The sidebar's own

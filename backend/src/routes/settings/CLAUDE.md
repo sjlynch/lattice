@@ -17,5 +17,7 @@ is not significant within this folder.
   menu from global settings.
 - `piEndpoints.ts` — `POST /api/pi-endpoints/probe`; OpenAI-compatible
   `/models` probe for Settings → Pi, answering `{models: [{id, contextWindow?}]}`.
+- `codexModels.ts` — `GET /api/codex-models`; the Codex CLI's own model
+  catalog cache (`../../codexModels.ts`), read-only.
 - Keep per-project settings separate from machine-global settings; the latter
   live in `routes/globalSettings.ts`.

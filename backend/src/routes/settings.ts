@@ -7,6 +7,7 @@
 //   - harnessSystemPrompts.ts: /api/harness-system-prompts (Agent prompts tab)
 //   - piModels.ts            : /api/pi-models (Pi model list + curated menu)
 //   - piEndpoints.ts         : /api/pi-endpoints/probe (Pi "Detect models")
+//   - codexModels.ts         : /api/codex-models (Codex model dropdown list)
 //
 // Paths are all distinct, so mount order is not significant.
 
@@ -17,6 +18,7 @@ import { buildInstructionTemplatesRouter } from './settings/instructionTemplates
 import { buildHarnessSystemPromptsRouter } from './settings/harnessSystemPrompts.js';
 import { buildPiModelsRouter } from './settings/piModels.js';
 import { buildPiEndpointsRouter } from './settings/piEndpoints.js';
+import { buildCodexModelsRouter } from './settings/codexModels.js';
 
 export function buildSettingsRouter(): Router {
   const r = Router();
@@ -26,5 +28,6 @@ export function buildSettingsRouter(): Router {
   r.use(buildHarnessSystemPromptsRouter());
   r.use(buildPiModelsRouter());
   r.use(buildPiEndpointsRouter());
+  r.use(buildCodexModelsRouter());
   return r;
 }

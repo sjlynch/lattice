@@ -27,12 +27,14 @@ comments, and several had drifted.
 - `workflowVariables.ts` — the `{{name}}` grammar, `normalizeVariableName`,
   `USER_INSTRUCTIONS_VAR`.
 - `terminalLabels.ts` — `shortLabel` for terminal tabs.
+- `launchGuidance.ts` — `effortSuggestion`: evidence-backed effort hints for
+  the workflow launch selects (each entry cites its benchmark result).
 - `wireTypes.ts` — type-only re-exports (`export type { … } from`, nothing
   else) of the wire types `frontend/src/api/types/*` re-export instead of
   redeclaring: tasks, terminal registry, project init, git history, health
   (incl. `HealthUpdate`), harness-prompt / instruction-template editor entries,
   post-merge hooks, project env notes, merge / push / QA runs, folder browser,
-  Pi models and providers, workflows, workflow runs, user and global settings,
+  Pi models and providers, Codex models, workflows, workflow runs, user and global settings,
   MCP server entries and Opengrep (status, packs, scans, graph, triage,
   reviews, project settings). Which
   frontend types are still hand mirrors, and why:

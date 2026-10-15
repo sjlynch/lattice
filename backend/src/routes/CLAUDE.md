@@ -30,7 +30,7 @@ the domain module each router wraps, not here.
 - `debug.ts` — `/api/debug/*` memory diagnostics, mounted right after health
   (`../memDiag/CLAUDE.md`).
 - `search.ts` — `/api/search` file-content grep (rg fast path, JS fallback).
-- `settings.ts` — per-project settings, env notes, instruction templates, Pi
+- `settings.ts` — per-project settings, env notes, instruction templates, Codex models, Pi
   models/endpoint probe; see [settings/CLAUDE.md](settings/CLAUDE.md).
 - `globalSettings.ts` — `/api/global-settings`; a PATCH applies the spawn
   `softCap` live and reconciles Pi providers when they change.

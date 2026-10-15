@@ -51,8 +51,10 @@ execution view):
   a Start step's `StartTasksHarnessSelect` (`tasksHarness` / `tasksPiModel`; empty =
   the project's task harness) and `StepLaunchSelects` set the harness, model and
   effort of the tasks it starts.
-- `StepLaunchSelects.tsx` — model (Claude presets; none under Pi) + effort
-  selects; empty = the harness default.
+- `StepLaunchSelects.tsx` — model (Claude presets / Codex's own model list via
+  `useCodexModels`; none under Pi) + effort selects; empty = the harness
+  default. An effort with benchmark evidence is labelled "suggested"
+  (`backend/src/shared/launchGuidance.ts`), never auto-applied.
 - `TestStepRow.tsx` — Run tests row: no prompt (backend brief `RUN_TESTS.md` is
   fixed), harness + launch selects, `timeoutMinutes`, post-merge-hook note.
 - `StepRowShared.tsx` — `StepIndexBadge` (`#N` / status glyph),

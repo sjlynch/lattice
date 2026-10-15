@@ -157,6 +157,10 @@ posts) has to be keyed so it can't fire on a mismatched pair. Pinned by
   providers/menu save) refetches and re-renders every mounted dropdown without a
   page reload. Built on `useSyncExternalStore` (the store's `getMenu` keeps a
   stable reference between loads).
+- `useCodexModels(enabled)` — the models Codex lists in its own picker
+  (`GET /api/codex-models`), fetched once per page and shared by every
+  workflow model select; a failed fetch leaves it empty and retries on the
+  next mount.
 - `useFocusTrap(open)` — shared modal/dialog focus management. Returns a ref for
   the dialog container; moves focus inside on open (respecting a child's
   `autoFocus`), wraps Tab/Shift+Tab within it, and restores focus to the opener

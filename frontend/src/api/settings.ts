@@ -2,6 +2,7 @@
 
 import { asJson, patchJson, postJson } from './http';
 import type {
+  CodexModelInfo,
   HarnessAvailability,
   HarnessSystemPromptEntry,
   InstructionTemplate,
@@ -22,6 +23,12 @@ import { subscribeWsShared } from './ws';
 // "Pi — X" row until the next settings save.
 export async function getPiModels(): Promise<PiModelsResult> {
   return asJson<PiModelsResult>(await fetch('/api/pi-models'));
+}
+
+// The models Codex lists in its own picker (read from the Codex CLI's catalog
+// cache; empty until Codex has cached it). Machine-global. Throws on failure.
+export async function getCodexModels(): Promise<CodexModelInfo[]> {
+  return (await asJson<{ models: CodexModelInfo[] }>(await fetch('/api/codex-models'))).models;
 }
 
 // "Detect models" for the Settings → Pi endpoint form: ask the backend to GET

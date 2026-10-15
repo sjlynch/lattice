@@ -125,6 +125,7 @@ beside its `x/` folder ("`x.ts` / `x/`" below); "See its doc" = that folder's
 ## Pi / MCP / tools
 
 - `piModels.ts` / `piModels/` — Pi model discovery/menu, models.json reconcile, endpoint probes. See its doc.
+- `codexModels.ts` / `codexModels/types.ts` — the models Codex lists in its own picker, read (never written) from the Codex CLI's `models_cache.json`; `GET /api/codex-models`.
 - `piProviderValidation.ts` — `PiProvider` types + validation of `globalSettings.piProviders` (re-exported from `globalSettings.ts`).
 - `spawnWithTimeout.ts` — spawn + capture + kill-the-whole-tree-on-timeout for bounded external CLI calls (Pi, Opengrep).
 - `piSubagents.ts` / `piSubagents/` — auto-installs `@tintinweb/pi-subagents` + cwd-exact shims (incl. the project root). See its doc.
