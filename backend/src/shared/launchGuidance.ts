@@ -27,14 +27,14 @@ const SUGGESTIONS: ReadonlyArray<{
   {
     harness: 'codex',
     role: 'tasks',
-    model: /luna/i,
+    model: /^gpt-6-luna$/,
     effort: 'medium',
     why: '70 real fixes: low passed 9 points fewer; high passed the same at 1.6× the time and 2× the tokens.',
   },
   {
     harness: 'codex',
     role: 'tasks',
-    model: /sol/i,
+    model: /^gpt-6.1-sol$/,
     effort: 'low',
     why: '31 real fixes: low passed as many as medium and high (77%) in 55-75% of their time.',
   },
