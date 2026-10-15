@@ -34,7 +34,7 @@ const SUGGESTIONS: ReadonlyArray<{
   {
     harness: 'codex',
     role: 'tasks',
-    model: /^gpt-6.1-sol$/,
+    model: /^gpt-6\.1-sol$/,
     effort: 'low',
     why: '31 real fixes: low passed as many as medium and high (77%) in 55-75% of their time.',
   },
