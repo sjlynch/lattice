@@ -29,7 +29,9 @@ const SUGGESTIONS: ReadonlyArray<{
     role: 'tasks',
     model: /^gpt-6-luna$/,
     effort: 'medium',
-    why: '70 real fixes: low passed 9 points fewer; high passed the same at 1.6× the time and 2× the tokens.',
+    why:
+      '70 real fixes: low passed 9 points fewer; high passed the same at 1.6× the time. ' +
+      'Need more? gpt-6.1-sol at low matched luna xhigh in 40% of its time.',
   },
   {
     harness: 'codex',
