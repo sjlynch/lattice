@@ -62,7 +62,10 @@ export function NewTaskOverlay({
           />
           <textarea
             className="task-card-form-input task-card-form-textarea"
-            placeholder="Description (optional)"
+            placeholder={
+              "Description (optional) — the agent's whole spec: the expected behavior, " +
+              "each edge case and its outcome, exact names, messages and constants"
+            }
             value={desc}
             onChange={(e) => setDesc(e.target.value)}
             onKeyDown={(e) => {

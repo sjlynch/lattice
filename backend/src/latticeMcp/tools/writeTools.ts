@@ -24,7 +24,11 @@ export function registerWriteTools(
         description: z
           .string()
           .optional()
-          .describe('Markdown brief the worktree agent will be given.'),
+          .describe(
+            'Markdown brief the worktree agent will be given — its whole spec: the expected ' +
+              'behavior, every edge case with its observable outcome, and exact names, ' +
+              'signatures, strings and constants.',
+          ),
       },
     },
     async (client, { title, description }) =>
@@ -44,7 +48,10 @@ export function registerWriteTools(
           .array(
             z.object({
               title: z.string().describe('Short task title.'),
-              description: z.string().optional().describe('Markdown brief.'),
+              description: z
+                .string()
+                .optional()
+                .describe("Markdown brief — the implementer's whole spec (see create_task)."),
             }),
           )
           .min(1)
