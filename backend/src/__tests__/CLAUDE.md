@@ -4,7 +4,9 @@ Backend tests use Node's built-in `node:test` runner with `tsx` (`npm test`
 from `backend/`, which collects `src/__tests__/*.test.ts` — one level only).
 The `test` script `--import`s `helpers/isolateHome.mjs` first: it points
 `HOME`/`USERPROFILE` at a throwaway temp dir so the suite never writes into the
-real `~/.lattice` (task DBs, `projects.json`, snapshots). It must load before
+real `~/.lattice` (task DBs, `projects.json`, snapshots), inside a per-process
+`TEMP`/`TMP` root it removes at exit (so a test's leaked temp dirs go too —
+still clean up your own). It must load before
 any test imports the task cache, whose home path binds once at module load. It
 also sets `LATTICE_TEST_HOME_ISOLATED`; a test that writes under `~/.lattice`
 (`opengrepScan`, `opengrepInstall`) throws at import without that marker, so a
