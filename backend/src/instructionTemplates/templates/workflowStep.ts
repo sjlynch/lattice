@@ -19,6 +19,14 @@
 // list defaults are now narrow (active lanes, compact, newest 100) and every
 // response carries a `hint`, so the brief teaches summary → list → find → get
 // and tells the agent to follow the hint rather than guess a parameter.
+//
+// "Writing each task" (2026-10): on 31 replayed real fixes, the same informed
+// planner filing under the old implicit wording ("files, failure mode,
+// expected behavior, suggested fix") got a gpt-6-luna implementer to 68%;
+// told to enumerate every edge case with its observable outcome plus exact
+// interfaces, strings and constants — behavior only, no recipe — 90% (an
+// implementation recipe reached 100%). What moved it was the number of
+// explicit decisions (~25 vs ~11 per task), not leaked implementation.
 
 export const DEFAULT_WORKFLOW_STEP_TEMPLATE = [
   '# Workflow Step {{step_number}} of {{total_steps}}: {{step_title}}',
@@ -124,6 +132,21 @@ export const DEFAULT_WORKFLOW_STEP_TEMPLATE = [
   '',
   '{{harness_override_note}}Read anything you need under the project path — the',
   'whole tree is yours to inspect. Just do not write to it.',
+  '',
+  "## Writing each task — the description is the implementer's whole spec",
+  '',
+  'The agent that runs a task sees only its title and description, and is',
+  'often a cheaper or local model. For each task state:',
+  '',
+  '- the problem and the expected behavior;',
+  '- acceptance criteria that enumerate every edge case and exactly what must',
+  '  be observable in each (inputs → outputs, errors, side effects);',
+  '- exact names, module paths and signatures of anything new or changed in a',
+  '  public surface (exports, options, fields, injectable dependencies);',
+  '- exact user-visible strings and constants.',
+  '',
+  'Describe observable behavior; leave internal helpers, data structures and',
+  'algorithms to the implementer unless they matter.',
   '',
   '## Creating tasks — use the helper script',
   '',
