@@ -34,7 +34,7 @@ comments, and several had drifted.
   redeclaring: tasks, terminal registry, project init, git history, health
   (incl. `HealthUpdate`), harness-prompt / instruction-template editor entries,
   post-merge hooks, project env notes, merge / push / QA runs, folder browser,
-  Pi models and providers, Codex models, workflows, workflow runs, user and global settings,
+  Pi models and providers, Codex models, workflows, workflow runs, user and global settings, recent Spec gaps,
   MCP server entries and Opengrep (status, packs, scans, graph, triage,
   reviews, project settings). Which
   frontend types are still hand mirrors, and why:

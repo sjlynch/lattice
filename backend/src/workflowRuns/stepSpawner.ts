@@ -26,7 +26,9 @@ import { buildAgentActivityUrl } from '../agentActivityTokens.js';
 import type { Workflow, WorkflowStepHarness } from '../workflows.js';
 import { renderHelperScript } from './renderHelperScript.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
-import { isCodexYoloEnabled } from '../userSettings.js';
+import { getUserSettingsStrict, isCodexYoloEnabled, plannerSpecGapsIn } from '../userSettings.js';
+import { listTasks } from '../tasks.js';
+import { recentSpecGaps, renderTaskWritingGuidance } from '../specGaps.js';
 import {
   effectiveStepHarness,
   effectiveStepLaunch,
@@ -123,6 +125,18 @@ function logDirtyState(run: WorkflowRun, stepIndex: number, dirtyState: DirtySta
   );
 }
 
+export async function readTaskWritingGuidance(project: string): Promise<string> {
+  try {
+    const [settings, tasks] = await Promise.all([getUserSettingsStrict(project), listTasks(project)]);
+    return renderTaskWritingGuidance(
+      settings.taskWritingRules ?? [], plannerSpecGapsIn(settings) ? recentSpecGaps(tasks) : [],
+    );
+  } catch {
+    // Optional guidance must never prevent a planning step from starting.
+    return '';
+  }
+}
+
 async function writeStepAssets(args: {
   wf: Workflow;
   run: WorkflowRun;
@@ -183,9 +197,10 @@ async function writeStepAssets(args: {
   }
 
   const stepTemplate = await resolveInstructionTemplate(wf.projectPath, 'workflow-step');
+  const taskWritingGuidance = await readTaskWritingGuidance(wf.projectPath);
   await fs.writeFile(
     stepFile,
-    renderStepMarkdown(wf, run, stepIndex, backendOrigin, dirtyState, stepTemplate, tools.markdown),
+    renderStepMarkdown(wf, run, stepIndex, backendOrigin, dirtyState, stepTemplate, tools.markdown, taskWritingGuidance),
     'utf8',
   );
 

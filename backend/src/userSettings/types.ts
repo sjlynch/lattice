@@ -154,6 +154,10 @@ export type UserSettings = {
   // `{{verification}}` block AND the spawn's system-prompt append — see
   // `taskVerification.ts`. Settings → Agent prompts.
   taskAgentTypecheck?: boolean;
+  // Project task-description rules shown in every planning brief. Absent = none.
+  taskWritingRules?: string[];
+  // Show recent implementer Spec gaps to planners. Absent = on; only false is stored.
+  plannerSpecGaps?: boolean;
   // How a task worktree checks out Git LFS files. `'pointers'` (the DEFAULT —
   // absent counts as pointers) runs the worktree's checkout / merge git with
   // `GIT_LFS_SKIP_SMUDGE=1`, so LFS files land as ~130-byte pointer stubs

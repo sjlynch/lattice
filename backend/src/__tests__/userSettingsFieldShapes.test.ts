@@ -25,6 +25,21 @@ async function mkProject(settings?: unknown): Promise<string> {
   return dir;
 }
 
+test('task-writing fields heal malformed stored values before reaching the editor', async () => {
+  const dir = await mkProject({ taskWritingRules: [null, '  rule  ', 'rule', '', 7], plannerSpecGaps: 'false' });
+  try {
+    const settings = await getUserSettings(dir);
+    assert.deepEqual(settings.taskWritingRules, ['rule']);
+    assert.equal(settings.plannerSpecGaps, undefined);
+    await fs.writeFile(path.join(dir, '.lattice', 'userSettings.json'), JSON.stringify({ taskWritingRules: 'rule', plannerSpecGaps: false }));
+    const malformed = await getUserSettings(dir);
+    assert.equal(malformed.taskWritingRules, undefined);
+    assert.equal(malformed.plannerSpecGaps, false);
+  } finally {
+    await fs.rm(dir, { recursive: true, force: true });
+  }
+});
+
 test('getUserSettings heals a non-array deadCodeEntryGlobs / metricsIgnoredExts and non-string prompts', async () => {
   const dir = await mkProject({
     deadCodeEntryGlobs: 'src/**',

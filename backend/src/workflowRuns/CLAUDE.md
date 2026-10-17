@@ -34,6 +34,9 @@ definitions + `{{var}}` interpolation (`../workflows/`), routes
   `WorkflowStepHarness` aliases it), `buildWorkflowStepCommand`
   (`commandBuilder.ts`), `installStepCallbacks`,
   `renderStepCompletionInstructions`.
+- `stepSpawner.ts` also reads task-writing rules and recent Spec gaps before
+  rendering `{{task_writing_guidance}}`; any settings/task read failure yields
+  empty guidance (`readTaskWritingGuidance`).
 - `stepMarkdown.ts` — `renderStepMarkdown` (WORKFLOW_STEP.md, template
   `../instructionTemplates/templates/workflowStep.ts`), `effectiveStepHarness`
   / `effectiveStepPiModel`, `renderStepCompletionInstructions`.

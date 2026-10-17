@@ -40,6 +40,9 @@ the tab: Pi → [piEndpoints/CLAUDE.md](piEndpoints/CLAUDE.md), MCP →
 - `useOverrideDraft.ts` — shared draft engine for the two override-merge tabs,
   `InstructionTemplatesTab.tsx` (one `TemplateCard.tsx` each; `{{token}}`
   click-to-insert via `useTokenInsertion.ts`) and `EnvNotesTab.tsx`.
+- `useTaskWritingDraft.ts` + `TaskWritingSection.tsx` — Agent prompts' project
+  task-writing rules and default-on recent-gap toggle, patched only when edited;
+  a collapsed-by-default preview fetches recent reports only on expansion.
 - `HarnessSystemPromptsTab.tsx` + `HarnessSystemPromptCard.tsx` — per-harness
   `{append, replace}` over `GET /api/harness-system-prompts`; bespoke draft hook
   (nested shape), same clobber-guard; `getHarnessSystemPromptsPatch()` returns

@@ -17,6 +17,8 @@ When: a preference stored in `<project>/.lattice/userSettings.json` (`PATCH /api
 
 Gotchas: a patch stays `undefined` until loaded or touched — an unloaded default written by an unrelated Save resets the saved value (`saveSettingsUnloaded`, `settingsDraftLateFetch` tests). An editor saving a whole sub-object loads with `fetchUserSettingsStrict`. An accessor nobody reads fails `deadExports`.
 
+Agent prompts' `taskWritingRules` and `plannerSpecGaps` follow this pattern in `useTaskWritingDraft.ts`: per-field touched patches, consumed by `workflowRuns/stepSpawner.ts` for the workflow-step template's `{{task_writing_guidance}}` token. The recent-gap preview reads `/api/spec-gaps` only when expanded.
+
 ## 2. Machine-global setting
 
 When: a fact about the machine (`~/.lattice/globalSettings.json`, `PATCH /api/global-settings`). Owner: BE `globalSettings/CLAUDE.md`.

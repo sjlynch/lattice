@@ -51,6 +51,7 @@ Before acting on any response, confirm its `canonicalProject` matches
 | GET    | /api/workflow-runs/:runId?project= | `{run}` — one run by id, incl. a recently finished one (404 once forgotten / after a restart) |
 | POST   | /api/workflow-runs/:runId/cancel   | Cancel an active workflow run |
 | GET    | /api/settings?project=             | Per-project user settings (read) |
+| GET    | /api/spec-gaps?project=&limit=      | Recent implementer Spec gaps; limit 1–100 (default 25), returns `{gaps}` |
 | PATCH  | /api/settings?project=             | Per-project user settings (update) |
 | GET    | /api/project-env?project=          | Auto-detected package-manager envs + injected worktree notes |
 | GET    | /api/health/dead-code?project=     | Files the analyzer flags as unreachable: `{files:[{path,ext}], total, scannedAt}` (empty if the confidence guard tripped) |

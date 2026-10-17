@@ -223,3 +223,29 @@
   border-radius: var(--radius-sm);
   padding: 7px 9px;
 }
+.task-writing-label {
+  font-size: 12px;
+}
+
+.task-writing-rules {
+  box-sizing: border-box;
+  width: 100%;
+  resize: vertical;
+}
+
+.task-writing-recent {
+  margin-top: 12px;
+}
+
+.task-writing-recent > summary {
+  cursor: pointer;
+}
+
+.task-writing-gap-list {
+  padding-left: 20px;
+  overflow-wrap: anywhere;
+}
+
+.task-writing-gap-list > li + li {
+  margin-top: 8px;
+}

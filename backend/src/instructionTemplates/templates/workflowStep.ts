@@ -148,6 +148,7 @@ export const DEFAULT_WORKFLOW_STEP_TEMPLATE = [
   'Describe observable behavior; leave internal helpers, data structures and',
   'algorithms to the implementer unless they matter.',
   '',
+  '{{task_writing_guidance}}',
   '## Creating tasks — use the helper script',
   '',
   'A `create-task.cjs` script is in this directory. It handles JSON serialization',

@@ -65,6 +65,11 @@ default = the built-in) argument. The **spawn callers** (`setupFiles.ts`,
 
 ## Invariants
 
+- `workflow-step`'s `{{task_writing_guidance}}` follows Writing each task:
+  project task-writing rules first, then recent implementer Spec gaps. The
+  spawn caller reads settings/tasks best-effort; the renderer stays synchronous.
+  Overrides lacking the token receive no added guidance.
+
 - A blank/whitespace-only override is ignored (falls back to the default).
 - **A project override freezes that template.** Migrations only reach the
   built-in defaults, so a user who overrode `workflow-step` keeps their own

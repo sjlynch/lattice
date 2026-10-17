@@ -9,6 +9,7 @@ import type {
 // The backend's own per-project settings types (backend/src/userSettings/types.ts,
 // re-exported through backend/src/shared/wireTypes.ts). Add a field THERE.
 export type {
+  RecentSpecGap,
   StartupTerminal,
   TerminalDefaultHarness,
   UserSettings,

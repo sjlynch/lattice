@@ -69,6 +69,7 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
     const json = { 'Content-Type': 'application/json' };
     const calls: Array<[string, RequestInit?]> = [
       [`/api/settings?${q}`],
+      [`/api/spec-gaps?${q}`],
       [`/api/settings?${q}`, { method: 'PATCH', headers: json, body: JSON.stringify({ sidebarWidth: 400 }) }],
       [`/api/instruction-templates?${q}`],
       [`/api/harness-system-prompts?${q}`],

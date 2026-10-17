@@ -13,6 +13,7 @@
 
 import { Router } from 'express';
 import { buildUserSettingsRouter } from './settings/userSettings.js';
+import { buildSpecGapsRouter } from './settings/specGaps.js';
 import { buildProjectEnvRouter } from './settings/projectEnv.js';
 import { buildInstructionTemplatesRouter } from './settings/instructionTemplates.js';
 import { buildHarnessSystemPromptsRouter } from './settings/harnessSystemPrompts.js';
@@ -23,6 +24,7 @@ import { buildCodexModelsRouter } from './settings/codexModels.js';
 export function buildSettingsRouter(): Router {
   const r = Router();
   r.use(buildUserSettingsRouter());
+  r.use(buildSpecGapsRouter());
   r.use(buildProjectEnvRouter());
   r.use(buildInstructionTemplatesRouter());
   r.use(buildHarnessSystemPromptsRouter());

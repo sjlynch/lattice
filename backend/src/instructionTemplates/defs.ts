@@ -216,6 +216,10 @@ export const INSTRUCTION_TEMPLATE_CATALOG: InstructionTemplateDef[] = [
       'The brief for an agent step in a workflow run. The planner reads it and creates tasks on the board via the bundled helper script.',
     defaultTemplate: DEFAULT_WORKFLOW_STEP_TEMPLATE,
     tokens: [
+      {
+        name: 'task_writing_guidance',
+        description: 'Project task-writing rules (Settings → Agent prompts) and the newest Spec gaps implementers reported; empty when there are none.',
+      },
       { name: 'step_number', description: 'This step’s position (1-based).' },
       { name: 'total_steps', description: 'Total number of steps in the workflow.' },
       { name: 'step_title', description: 'This step’s title.' },

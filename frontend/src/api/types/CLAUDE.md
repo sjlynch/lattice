@@ -17,7 +17,7 @@ an audit found ten that had). Rules for what may go there:
   `WorkflowRun`), `opengrep.ts` (status, rule packs,
   scan records / envelope, graph result, findings, triage, `SecurityReview` —
   all from `backend/src/opengrep/types.ts`), `scan.ts`'s `DirListing` family,
-  and `settings.ts`'s Pi model and `OpengrepSeverity` /
+  and `settings.ts`'s `RecentSpecGap`, Pi model and `OpengrepSeverity` /
   `OpengrepProjectSettings` types. Outside this folder, `../globalSettings.ts`
   (`GlobalSettings`, `PiProvider` / `PiProviderModel`) and `../mcp.ts` (the
   `McpServerEntry` family) re-export theirs beside their fetch helpers. Local

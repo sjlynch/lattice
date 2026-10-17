@@ -22,7 +22,8 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   defaults, but a PATCH rejects unreadable/corrupt existing state (incl. valid JSON that is not an object) and preserves
   its bytes; only ENOENT starts from empty settings.
 - `features.ts` — feature-specific accessors layered on `getUserSettings`, each
-  encoding a field's default semantics: `isClaudeMemoryDisabled`,
+  encoding a field's default semantics: `plannerSpecGapsIn` (default ON,
+  planning briefs' recent implementer reports), `isClaudeMemoryDisabled`,
   `isPostMergeHookEnabled`, `isCodexYoloEnabled`, `isTaskAgentsLatticeMcpOnly`
   (+ its pure `taskAgentsLatticeMcpOnlyIn(settings)` for callers that already
   hold the settings) (all default ON — an absent field counts as `true`) and `isQaTerminalAutoCloseEnabled` (default
@@ -37,6 +38,13 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   for feature Y" helpers go here.
 
 ## Invariants
+
+- `taskWritingRules` (absent = none) is trimmed, de-duplicated and cleared when
+  empty in storage; PATCH validates at most 12 strings, 300 characters each.
+  `plannerSpecGaps` defaults ON (`plannerSpecGapsIn` in `features.ts`); only
+  `false` is stored. Both feed planning briefs via `../specGaps.ts`.
+  `getUserSettingsStrict` rejects corrupt/unreadable files so optional brief
+  enrichment can suppress itself on a failed read.
 
 - **No taskCache import chain.** `storage.ts` imports `PROJECT_DIR_NAME` from
   `../taskCache/paths.js` (the leaf), **not** `../tasks.js` (which re-exports

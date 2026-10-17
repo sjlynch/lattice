@@ -106,6 +106,7 @@ export function renderStepMarkdown(
   template: string = DEFAULT_WORKFLOW_STEP_TEMPLATE,
   // The rendered `{{tool_reports}}` block from stepTools.ts ('' = no tools).
   toolReports: string = '',
+  taskWritingGuidance: string = '',
 ): string {
   const step = wf.steps[stepIndex];
   const harness = effectiveStepHarness(wf, run, stepIndex);
@@ -159,6 +160,7 @@ export function renderStepMarkdown(
   // agent. Unknown variables are left intact so a typo is visible, not silent.
   const renderedPrompt = interpolateWorkflowVariables(step.prompt, wf.variables);
   const markdown = applyTemplate(template, {
+    task_writing_guidance: taskWritingGuidance,
     step_number: String(stepIndex + 1),
     total_steps: String(wf.steps.length),
     step_title: step.title,

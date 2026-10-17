@@ -1,6 +1,11 @@
 import { getUserSettings } from './storage.js';
 import type { UserSettings } from './types.js';
 
+// Default ON: only an explicit false hides recent implementer reports.
+export function plannerSpecGapsIn(settings: UserSettings): boolean {
+  return settings.plannerSpecGaps !== false;
+}
+
 // Whether Claude's auto-memory should be OFF for this project. Default is
 // disabled (memory off) — an absent setting counts as `true`, matching the
 // opt-out model used by instrumentProjectClaudeSessions. Read at every Claude

@@ -25,6 +25,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | GET | `/api/list-dir?path=` | Folder browser |
 | POST | `/api/create-dir` | Folder-picker create-directory `{parent, name}` |
 | GET | `/api/settings?project=` | Read per-project user settings |
+| GET | `/api/spec-gaps?project=&limit=` | Recent implementer Spec gaps for this project (limit 1–100, default 25) |
 | PATCH | `/api/settings?project=` | Merge-update per-project user settings |
 | GET | `/api/instruction-templates?project=` | Editable agent brief templates (default, current, `{{token}}` docs); saved via PATCH `/api/settings` |
 | GET | `/api/harness-system-prompts?project=` | Per-harness system-prompt editor data (default overview + Append/Replace override) |

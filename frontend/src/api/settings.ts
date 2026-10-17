@@ -9,9 +9,17 @@ import type {
   PiModelsResult,
   PiProbeModel,
   ProjectEnvResponse,
+  RecentSpecGap,
   UserSettings,
 } from './types';
 import { subscribeWsShared } from './ws';
+
+export async function fetchRecentSpecGaps(projectPath: string): Promise<RecentSpecGap[]> {
+  const data = await asJson<{ gaps: RecentSpecGap[] }>(
+    await fetch(`/api/spec-gaps?project=${encodeURIComponent(projectPath)}&limit=25`),
+  );
+  return data.gaps;
+}
 
 // The Pi models available for the harness dropdowns: the full
 // `pi --list-models` list, the curated "Pi — X" menu, and Pi's current default.

@@ -5,6 +5,8 @@ is not significant within this folder.
 
 - `userSettings.ts` — per-project `GET/PATCH /api/settings`; persists to the
   project's `.lattice/userSettings.json` via `userSettings.ts`.
+- `specGaps.ts` — project-scoped `GET /api/spec-gaps`, recent implementer reports
+  for the Agent prompts preview; selection/parsing lives in `../../specGaps.ts`.
 - `projectEnv.ts` — read-only `GET /api/project-env`, exposing detected
   package-manager env notes used in task instructions.
 - `instructionTemplates.ts` — editable prompt templates for task/merge/QA/push/

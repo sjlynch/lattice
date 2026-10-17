@@ -8,6 +8,8 @@ import {
 } from '../../api';
 import { useOverrideDraft } from './useOverrideDraft';
 import { TemplateCard } from './TemplateCard';
+import { useTaskWritingDraft } from './useTaskWritingDraft';
+import { TaskWritingSection } from './TaskWritingSection';
 
 type Props = {
   active: boolean;
@@ -22,6 +24,7 @@ export type InstructionTemplatesTabHandle = {
   getInstructionTemplateOverridesPatch: () => Record<string, string> | undefined;
   // `taskAgentTypecheck`, or undefined unless the user flipped the checkbox.
   getTaskAgentTypecheckPatch: () => boolean | undefined;
+  getTaskWritingPatch: () => Pick<UserSettings, 'taskWritingRules' | 'plannerSpecGaps'> | undefined;
 };
 
 // Stable (module-level) config for the shared override-draft engine. A draft
@@ -110,14 +113,16 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
     const [expanded, setExpanded] = useState<string | null>(null);
     const verification = useTaskAgentTypecheckDraft(open, activeFolder);
     const typecheckPatch = verification.patch;
+    const taskWriting = useTaskWritingDraft(open, activeFolder);
 
     useImperativeHandle(
       ref,
       () => ({
         getInstructionTemplateOverridesPatch,
         getTaskAgentTypecheckPatch: () => typecheckPatch,
+        getTaskWritingPatch: taskWriting.getPatch,
       }),
-      [getInstructionTemplateOverridesPatch, typecheckPatch],
+      [getInstructionTemplateOverridesPatch, typecheckPatch, taskWriting.getPatch],
     );
 
     if (!active) return null;
@@ -127,74 +132,77 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
     );
 
     return (
-      <div className="settings-section">
-        <div className="settings-section-header">
-          <div>
-            <div className="settings-section-title">Instruction templates</div>
-            <div className="settings-section-sub">
-              The briefs Lattice writes for the agents it spawns. Edit any of
-              them to change what every agent is told — your text is saved per
-              project. The <code>{'{{tokens}}'}</code> are the dynamic parts
-              Lattice fills in at spawn (task title, IDs, callback URLs, computed
-              blocks); leave them in place. Clear a box or click Reset to fall
-              back to Lattice's default.
+      <>
+        <div className="settings-section">
+          <div className="settings-section-header">
+            <div>
+              <div className="settings-section-title">Instruction templates</div>
+              <div className="settings-section-sub">
+                The briefs Lattice writes for the agents it spawns. Edit any of
+                them to change what every agent is told — your text is saved per
+                project. The <code>{'{{tokens}}'}</code> are the dynamic parts
+                Lattice fills in at spawn (task title, IDs, callback URLs, computed
+                blocks); leave them in place. Clear a box or click Reset to fall
+                back to Lattice's default.
+              </div>
             </div>
+            {templates.length > 0 && (
+              <button
+                type="button"
+                className="btn-ghost sm"
+                onClick={resetAll}
+                disabled={!anyModified}
+                title="Reset every prompt back to Lattice's default"
+              >
+                <RotateCcw size={12} />
+                Reset all
+              </button>
+            )}
           </div>
-          {templates.length > 0 && (
-            <button
-              type="button"
-              className="btn-ghost sm"
-              onClick={resetAll}
-              disabled={!anyModified}
-              title="Reset every prompt back to Lattice's default"
-            >
-              <RotateCcw size={12} />
-              Reset all
-            </button>
+          <label className="settings-checkbox-row">
+            <input
+              type="checkbox"
+              checked={verification.typecheck}
+              onChange={(e) => verification.setTypecheck(e.target.checked)}
+            />
+            <span>Task agents may type-check what they edited</span>
+          </label>
+          <div className="settings-section-sub">
+            By default task agents (and their merge-conflict resolvers) run no
+            tests, builds or type-checks — a workflow's Run tests step verifies
+            the merged work once instead of every agent at once. On, an agent may
+            type-check the package(s) it edited; in a fresh worktree that costs a
+            dependency install plus a cold build per task. The rule rides the
+            Task brief's <code>{'{{verification}}'}</code> token (appended if a
+            custom brief drops it) and the agent's system prompt, so it applies
+            to resumed tasks and custom briefs too.
+          </div>
+          {loading ? (
+            <div className="settings-empty">Loading…</div>
+          ) : error ? (
+            <div className="error-msg">{error}</div>
+          ) : templates.length === 0 ? (
+            <div className="settings-empty">No instruction templates.</div>
+          ) : (
+            <div className="prompt-tpl-list">
+              {templates.map((tpl) => (
+                <TemplateCard
+                  key={tpl.id}
+                  tpl={tpl}
+                  draft={drafts[tpl.id] ?? tpl.currentTemplate}
+                  expanded={expanded === tpl.id}
+                  onToggle={() =>
+                    setExpanded((cur) => (cur === tpl.id ? null : tpl.id))
+                  }
+                  onChange={(text) => setDraft(tpl.id, text)}
+                  onReset={() => resetDraft(tpl)}
+                />
+              ))}
+            </div>
           )}
         </div>
-        <label className="settings-checkbox-row">
-          <input
-            type="checkbox"
-            checked={verification.typecheck}
-            onChange={(e) => verification.setTypecheck(e.target.checked)}
-          />
-          <span>Task agents may type-check what they edited</span>
-        </label>
-        <div className="settings-section-sub">
-          By default task agents (and their merge-conflict resolvers) run no
-          tests, builds or type-checks — a workflow's Run tests step verifies
-          the merged work once instead of every agent at once. On, an agent may
-          type-check the package(s) it edited; in a fresh worktree that costs a
-          dependency install plus a cold build per task. The rule rides the
-          Task brief's <code>{'{{verification}}'}</code> token (appended if a
-          custom brief drops it) and the agent's system prompt, so it applies
-          to resumed tasks and custom briefs too.
-        </div>
-        {loading ? (
-          <div className="settings-empty">Loading…</div>
-        ) : error ? (
-          <div className="error-msg">{error}</div>
-        ) : templates.length === 0 ? (
-          <div className="settings-empty">No instruction templates.</div>
-        ) : (
-          <div className="prompt-tpl-list">
-            {templates.map((tpl) => (
-              <TemplateCard
-                key={tpl.id}
-                tpl={tpl}
-                draft={drafts[tpl.id] ?? tpl.currentTemplate}
-                expanded={expanded === tpl.id}
-                onToggle={() =>
-                  setExpanded((cur) => (cur === tpl.id ? null : tpl.id))
-                }
-                onChange={(text) => setDraft(tpl.id, text)}
-                onReset={() => resetDraft(tpl)}
-              />
-            ))}
-          </div>
-        )}
-      </div>
+        <TaskWritingSection key={activeFolder} open={open} activeFolder={activeFolder} draft={taskWriting} />
+      </>
     );
   },
 );

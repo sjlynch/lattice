@@ -15,6 +15,7 @@ export type {
 } from './userSettings/types.js';
 export {
   getUserSettings,
+  getUserSettingsStrict,
   patchUserSettings,
   updateUserSettings,
   userSettingsShapeError,
@@ -29,6 +30,7 @@ export {
   taskAgentsLatticeMcpOnlyIn,
   isTaskAgentTypecheckEnabled,
   taskAgentTypecheckIn,
+  plannerSpecGapsIn,
   getTaskWorktreeLfsContent,
   taskWorktreeLfsContentIn,
 } from './userSettings/features.js';

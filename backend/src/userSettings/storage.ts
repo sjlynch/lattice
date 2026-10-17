@@ -87,6 +87,18 @@ const STRING_FIELDS = ['postMergeHookPrompt', 'piModel', 'postMergeHookPiModel']
 // The route 400s on this so an API caller learns about the mistake instead of
 // having it silently healed (normalizeUserSettings still heals it on read).
 export function userSettingsShapeError(partial: Record<string, unknown>): string | null {
+  if ('taskWritingRules' in partial) {
+    const rules = partial.taskWritingRules;
+    if (!Array.isArray(rules) || rules.some((rule) => typeof rule !== 'string')) {
+      return 'taskWritingRules must be an array of strings';
+    }
+    const cleaned = cleanTaskWritingRules(rules);
+    if (cleaned.length > 12) return 'taskWritingRules allows at most 12 rules';
+    if (cleaned.some((rule) => rule.length > 300)) return 'each task-writing rule must be at most 300 characters';
+  }
+  if ('plannerSpecGaps' in partial && typeof partial.plannerSpecGaps !== 'boolean') {
+    return 'plannerSpecGaps must be a boolean';
+  }
   for (const field of STRING_ARRAY_FIELDS) {
     const v = partial[field];
     if (v === undefined || v === null) continue;
@@ -102,11 +114,23 @@ export function userSettingsShapeError(partial: Record<string, unknown>): string
   return null;
 }
 
+function cleanTaskWritingRules(rules: unknown[]): string[] {
+  return [...new Set(rules.filter((rule): rule is string => typeof rule === 'string')
+    .map((rule) => rule.trim()).filter(Boolean))];
+}
+
 // Coerce the fields whose shape the rest of the app takes on trust. Applied on
 // every read AND to every incoming patch, so a corrupt file heals on read and a
 // bad write never lands. Only fields that can brick a consumer belong here —
 // this is a boundary guard, not a schema validator.
 function normalizeUserSettings<T extends Partial<UserSettings>>(settings: T): T {
+  if ('taskWritingRules' in settings) {
+    const rules = Array.isArray(settings.taskWritingRules) ? cleanTaskWritingRules(settings.taskWritingRules) : [];
+    settings.taskWritingRules = rules.length ? rules : undefined;
+  }
+  if ('plannerSpecGaps' in settings) {
+    settings.plannerSpecGaps = settings.plannerSpecGaps === false ? false : undefined;
+  }
   if ('startupTerminals' in settings) {
     settings.startupTerminals = normalizeStartupTerminals(
       settings.startupTerminals,
@@ -174,6 +198,11 @@ async function readUserSettings(
 
 export async function getUserSettings(projectPath: string): Promise<UserSettings> {
   return readUserSettings(projectPath, true);
+}
+
+// Brief enrichment must distinguish a failed settings read from an empty project.
+export async function getUserSettingsStrict(projectPath: string): Promise<UserSettings> {
+  return readUserSettings(projectPath, false);
 }
 
 // Read-modify-write under the same per-project lock as patchUserSettings, with
