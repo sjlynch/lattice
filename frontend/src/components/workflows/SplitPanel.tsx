@@ -28,7 +28,7 @@ export function SplitPanel({ project, identity, split, onChange }: {
       <button type="button" className="btn-ghost" onClick={() => onChange(undefined)}>Remove split</button>
     </div>
     {split.mode === 'auto' ? <>
-      <p>Areas are worked out again when the run starts, so they follow the repository.</p>
+      <p>Areas are worked out again when the run starts, so they follow the repository. On a 30-bug benchmark, 10 areas found 13–15 bugs where one step found 1 (sol), for about 9× the tokens.</p>
       {preview && <ul>{preview.areas.map((a, i) => <li key={i}>{a.label} <span>{a.files} files</span></li>)}</ul>}
       <button type="button" className="btn-ghost" disabled={!preview?.areas.length} onClick={() => custom(preview!.areas.map((a) => ({ label: a.label, paths: [...a.paths] })))}>Pin and edit</button>
     </> : <>

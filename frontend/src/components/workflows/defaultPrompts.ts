@@ -29,6 +29,8 @@ export type DefaultPrompt = {
   // Pre-run tools the seeded step carries (`WorkflowStep.tools`) — the
   // Opengrep chip sets `['opengrep']` so the scan runs before the agent starts.
   tools?: WorkflowStepTool[];
+  // One line of benchmark evidence shown above the prompt in the chip's tooltip.
+  hint?: string;
 };
 
 // Quick-insert prompts surfaced as chips at the bottom of the editor. Each
@@ -62,6 +64,9 @@ export const DEFAULT_PROMPTS: DefaultPrompt[] = [
     label: 'Bug Catcher',
     icon: Bug,
     prompt: bugCatcherPrompt,
+    hint:
+      'On a whole repo, one step finds few bugs: of 30 real bugs planted in Lattice, sol and Astra found 1 and Opus 7. ' +
+      'Split the step across the repo (the Split button) to cover it all: 10 areas found 13–15 with sol, 16 areas 17.',
   },
   {
     id: 'test-coverage',

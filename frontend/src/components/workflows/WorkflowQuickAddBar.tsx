@@ -86,7 +86,7 @@ export function WorkflowQuickAddBar({
             onClick={() => onAddDefaultPromptStep(prompt)}
             draggable
             onDragStart={(event) => startQuickAddDrag(event, { kind: 'prompt', promptId: prompt.id })}
-            title={prompt.prompt}
+            title={prompt.hint ? `${prompt.hint}\n\n${prompt.prompt}` : prompt.prompt}
           >
             <Icon size={11} />
             {prompt.label}
