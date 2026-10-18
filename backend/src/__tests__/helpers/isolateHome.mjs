@@ -41,6 +41,12 @@ process.env.LATTICE_TEST_HOME_ISOLATED = tempHome;
 // An inherited LATTICE_HOME would send ~/.lattice writes past the redirected
 // HOME, into an instance's real state.
 delete process.env.LATTICE_HOME;
+// Code under test that reaches the terminal proxy (kill-by-cwd on cleanup,
+// session probes) defaulted to the developer's LIVE executor on :5185: a 401
+// at best, and under load a stalled request that hung postMergeHookTrigger for
+// minutes. Point it at a port nothing listens on; tests that need an executor
+// start a fake one and set TERMINAL_PORT themselves before importing.
+process.env.TERMINAL_PORT ??= '9';
 
 // Best-effort cleanup when the test process exits (sync — 'exit' can't await).
 process.on('exit', () => {

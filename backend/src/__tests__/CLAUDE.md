@@ -8,7 +8,9 @@ real `~/.lattice` (task DBs, `projects.json`, snapshots), inside a per-process
 `TEMP`/`TMP` root it removes at exit (so a test's leaked temp dirs go too —
 still clean up your own). It must load before
 any test imports the task cache, whose home path binds once at module load. It
-also sets `LATTICE_TEST_HOME_ISOLATED`; a test that writes under `~/.lattice`
+also points `TERMINAL_PORT` at a closed port (unless set), so code under test
+never reaches the developer's live executor on :5185, and sets
+`LATTICE_TEST_HOME_ISOLATED`; a test that writes under `~/.lattice`
 (`opengrepScan`, `opengrepInstall`) throws at import without that marker, so a
 bare `node --test <file>` can't land fixtures in your real home. Run one file
 (or every file of a module) from the repo root with
