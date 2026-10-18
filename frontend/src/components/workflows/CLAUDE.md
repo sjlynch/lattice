@@ -66,8 +66,9 @@ execution view):
   strip, chips and saved list.
 
 Editor model and helpers:
-- `splitStep.ts` — copies one planning step into scoped parallel steps, preserving
-  authored fields and using the backend-shared scope preface.
+- `splitAreas.ts` - split toggle and custom area rename / merge / split helpers.
+- `SplitPanel.tsx` - nested automatic/custom editor and folder picker.
+- `splitRunGroups.ts` / `WorkflowRunSteps.tsx` - grouped members in run views.
 - `editorState.ts` — `EditorState`, `emptyEditor` / `fromTemplate` /
   `fromWorkflow`, step factories, `collapsibleStepIds` (agent ids only),
   `nextEditorAfterSave`; editor carries `dirty` and an in-memory `identity`
@@ -160,10 +161,13 @@ optional insertion index.
 
 ## Parallel reviews
 
-"Split across the repo" beside the parallel toggle requests 4/6/8/10/12 source
-areas (10 suggested: the benchmarked count), replaces the step with scoped
-copies, and marks the draft dirty. It uses the existing error toast for unreadable/small projects. Async
-results are fenced by editor/project lifetime and resolve the target by step id.
+"Split across the repo" toggles one agent step's `split` property; its prompt
+stays authored once. `SplitPanel.tsx` previews automatic areas or edits custom
+scopes (including a folder picker and optional rest). `useSourceAreaPreview.ts`
+fences every response with project, editor identity and request tokens, hiding
+stale results during render and aborting on replacement/unmount. Split changes
+mark the draft dirty. Only run startup expands the definition; resume uses the
+persisted members. Run views collapse `splitOf` members under their parent.
 
 Agent rows only (not Start / Merge / Run tests / Push) have a branching toggle
 (`parallel: true`, `aria-pressed`). Adjacent marked rows share a connector and

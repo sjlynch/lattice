@@ -1,8 +1,5 @@
-import { memo, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { memo } from 'react';
 import { ChevronDown, ChevronRight, GitFork, Split, X } from 'lucide-react';
-import { useDismissOnOutside } from '../../hooks/useDismissOnOutside';
-import { useEscapeToClose } from '../shared/useEscapeToClose';
 import type {
   HarnessAvailability,
   PiMenuEntry,
@@ -86,13 +83,14 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   frozen,
   parallel = false,
   tools,
+  split,
   harnessAvail,
   piMenu,
   runStatus,
   onChange,
   onRemove,
   onToggleCollapse,
-  onSplit,
+  onToggleSplit,
 }: {
   stepId: string;
   index: number;
@@ -105,17 +103,13 @@ export const AgentStepHeader = memo(function AgentStepHeader({
   frozen: boolean;
   parallel?: boolean;
   tools?: WorkflowStep['tools'];
+  split?: WorkflowStep['split'];
   harnessAvail: HarnessAvailability;
   piMenu: PiMenuEntry[];
   runStatus?: StepRunStatus;
-} & Pick<StepRowCallbacks, 'onChange' | 'onRemove' | 'onToggleCollapse' | 'onSplit'>) {
+} & Pick<StepRowCallbacks, 'onChange' | 'onRemove' | 'onToggleCollapse' | 'onToggleSplit'>) {
   const selectedHarness = normalizeAgentHarness(harness);
   const opengrepOn = tools?.includes('opengrep') === true;
-  const [splitMenu, setSplitMenu] = useState<{ top: number; left: number } | null>(null);
-  const [splitting, setSplitting] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
-  useDismissOnOutside(splitMenu !== null, menuRef, () => setSplitMenu(null));
-  useEscapeToClose(splitMenu !== null, () => setSplitMenu(null));
   return (
     <div className="workflows-step-row">
       <button
@@ -159,46 +153,15 @@ export const AgentStepHeader = memo(function AgentStepHeader({
       >
         <GitFork size={12} />
       </button>
-      <button
-        type="button"
-        className="icon-btn sm"
-        title="Split this step into parallel copies, one per area of the repository"
-        aria-label="Split across the repo"
-        aria-haspopup="dialog"
-        aria-expanded={splitMenu !== null}
-        disabled={splitting || !onSplit}
-        onPointerDown={(event) => event.stopPropagation()}
-        onClick={(event) => {
-          const rect = event.currentTarget.getBoundingClientRect();
-          setSplitMenu(splitMenu ? null : {
-            top: Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 270)),
-            left: Math.max(8, Math.min(rect.right - 300, window.innerWidth - 308)),
-          });
-        }}
-      >
+      {/* The area count rides on the toggle: a separate chip pushed the
+          header past narrow editor widths and clipped the remove button. */}
+      <button type="button" className={`icon-btn sm workflows-split-toggle${split ? ' on' : ''}`}
+        title={split ? `Split · ${split.mode === 'auto' ? `${split.count ?? 10} areas` : `${split.areas?.length ?? 0} custom areas`}. Click to remove the split.` : 'Split across the repo'}
+        aria-label="Split across the repo" aria-pressed={!!split} disabled={!onToggleSplit}
+        onClick={() => onToggleSplit?.(stepId)}>
         <Split size={12} />
+        {split && <span className="workflows-split-count">{split.mode === 'auto' ? split.count ?? 10 : split.areas?.length ?? 0}</span>}
       </button>
-      {splitMenu && createPortal(
-        <div ref={menuRef} className="popover workflows-split-menu" style={splitMenu} role="dialog" aria-label="Split across the repo">
-          {[4, 6, 8, 10, 12].map((count) => (
-            <button
-              key={count}
-              type="button"
-              className="popover-item"
-              autoFocus={count === 10}
-              onClick={async () => {
-                setSplitMenu(null);
-                setSplitting(true);
-                try { await onSplit?.(stepId, count); }
-                finally { setSplitting(false); }
-              }}
-            >
-              {count} areas{count === 10 ? ' · suggested' : ''}
-            </button>
-          ))}
-          <p>Each copy reviews one area; together they cover the repository. More areas find more but cost more tokens.</p>
-        </div>, document.body,
-      )}
       <StepFreezeButton
         frozen={frozen}
         onToggle={() => onChange(index, { frozen: !frozen })}

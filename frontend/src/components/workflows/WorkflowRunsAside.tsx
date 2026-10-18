@@ -1,3 +1,4 @@
+import { WorkflowRunSteps } from './WorkflowRunSteps';
 import { workflowRunProgress } from './parallelSteps';
 import { Square, X } from 'lucide-react';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
@@ -40,6 +41,7 @@ export function WorkflowRunsAside({ manager }: Props) {
                     <div className="workflows-run-progress" aria-hidden>
                       <span style={{ width: `${pct}%` }} />
                     </div>
+                    <WorkflowRunSteps run={run} />
                   </div>
                   <button
                     className="icon-btn sm danger"
@@ -73,6 +75,7 @@ export function WorkflowRunsAside({ manager }: Props) {
                       {label}
                       {run.error ? ` — ${run.error}` : ''}
                     </span>
+                    <WorkflowRunSteps run={run} />
                   </div>
                   <button
                     className="icon-btn sm"

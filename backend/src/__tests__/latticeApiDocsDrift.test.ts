@@ -231,6 +231,8 @@ const UNDOCUMENTED_ROUTES: Record<string, string> = {
   // all of these (its own file read/grep/git), so pointing it at the HTTP
   // versions would be a downgrade.
   'GET /api/scan': 'source-tree scan powering the 3D graph',
+  'POST /api/source-areas/resolve': 'custom area preview for the workflow editor (UI)',
+  'GET /api/source-tree': 'source folder picker for the workflow editor (UI)',
   'GET /api/source-areas': 'repository areas for the workflow editor split action (UI)',
   'GET /api/search': 'file-contents grep powering the graph search bar',
   'GET /api/git-history': 'timeline-scrubber history',

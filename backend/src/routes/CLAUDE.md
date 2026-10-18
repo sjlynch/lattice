@@ -27,8 +27,9 @@ the domain module each router wraps, not here.
   across subscribers and detects a disconnect via the unfinished
   *response's* `close` — never the request's, which a fully consumed GET can
   emit while its response still waits.
-  `scan.ts` also serves `/api/source-areas` using the scanner's gitignore-aware
-  file list and `shared/sourceAreas.ts` for workflow planning-step splits.
+  `scan.ts` also serves `/api/source-areas`, its `/resolve` preview and
+  `/api/source-tree`, using `sourceAreasCollect.ts` for weighted, generated-free
+  source and package roots; shared logic lives in `shared/sourceAreas.ts`.
 - `debug.ts` — `/api/debug/*` memory diagnostics, mounted right after health
   (`../memDiag/CLAUDE.md`).
 - `search.ts` — `/api/search` file-content grep (rg fast path, JS fallback).

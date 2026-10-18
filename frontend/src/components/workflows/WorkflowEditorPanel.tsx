@@ -1,3 +1,4 @@
+import { SplitPanel } from './SplitPanel';
 import { useCallback, useMemo, useState } from 'react';
 import { Plus } from 'lucide-react';
 import type { WorkflowManager } from './hooks/useWorkflowManager';
@@ -148,14 +149,17 @@ export function WorkflowEditorPanel({ manager }: Props) {
                       piMenu={piMenu}
                       definedNames={definedNames}
                       runStatus={stepRunStatus(index, statusRun, step.frozen === true, step.id)}
-                      autoScroll={!statusRun?.activeStepIndices || statusRun.stepStates?.[statusRun.activeStepIndices[0]]?.stepId === step.id}
+                      autoScroll={!statusRun?.activeStepIndices || statusRun.stepStates?.[statusRun.activeStepIndices[0]]?.stepId === step.id || statusRun.definition?.steps[statusRun.activeStepIndices[0]]?.splitOf === step.id}
                       postMergeHookConfigured={postMergeHookConfigured}
                       onChange={actions.patchStep}
-                      onSplit={actions.splitAcrossRepo}
+                      onToggleSplit={actions.toggleSplit}
                       onRemove={handleRemoveStep}
                       onReorder={actions.reorderSteps}
                       onToggleCollapse={collapsedSteps.toggleCollapsed}
                     />
+                    {step.split && (step.kind ?? 'agent') === 'agent' && <SplitPanel
+                      project={activeFolder} identity={editor.identity} split={step.split}
+                      onChange={(split) => actions.patchStep(index, { split })} />}
                   </div>
                 );
               })}

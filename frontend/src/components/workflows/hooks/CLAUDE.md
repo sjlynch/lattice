@@ -22,8 +22,9 @@ Composition:
   `shared/useAutoDismissMessage`.
 
 Editor:
-- `useWorkflowEditor.ts` — draft + save / discard / delete / templates / scoped
-  parallel-step splits; composes
+- `useSourceAreaPreview.ts` - lifetime-fenced automatic/custom previews and source tree.
+- `useWorkflowEditor.ts` — draft + save / discard / delete / templates /
+  split toggle; composes
   `useEditorDraftLifecycle.ts` (reconcile against the live list, restore /
   persist the never-saved draft, cross-project guards) and
   `useEditorMutationActions.ts` (pure `setEditor` step / variable updaters; the

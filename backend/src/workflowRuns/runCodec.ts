@@ -93,6 +93,7 @@ export function deserializeWorkflowRun(raw: unknown, owningProject?: string): Wo
   if (Array.isArray(r.roundTaskIds)) {
     run.roundTaskIds = [...new Set(r.roundTaskIds.filter((id): id is string => !!str(id)))];
   }
+  if (Array.isArray(r.notes)) run.notes = r.notes.filter((note): note is string => typeof note === 'string');
   const summaries = readStepSummaries(r.stepSummaries);
   if (summaries) run.stepSummaries = summaries;
   const testStep = readTestStepCheckpoint(r.testStep);

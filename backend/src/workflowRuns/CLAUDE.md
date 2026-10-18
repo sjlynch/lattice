@@ -16,6 +16,7 @@ definitions + `{{var}}` interpolation (`../workflows/`), routes
 - `state.ts` — the `runs` map, `notify`, `checkpointWorkflowRun`, round
   helpers. Sole source of `/ws/workflow-runs` payloads: keep event shapes
   (esp. `step-spawned`) stable.
+- `split.ts` - start-only expansion; source resolution failures produce persisted notes.
 - `definition.ts` — the frozen per-run definition copy + validated read-back.
 - `execution.ts` — group policy (`nextStepGroup`, `openStepGroup`) +
   per-member state helpers.
@@ -99,7 +100,8 @@ Tests: feature-named `__tests__/workflow*.test.ts`.
 
 **Grouping / briefs**
 - Groups run in order. Only adjacent `parallel: true` `agent` (planning) steps
-  form a group; Start / Merge / Run tests / Push are always barriers, even
+  form a group; `splitGroup` isolates expanded members of a serial parent.
+  Start / Merge / Run tests / Push are always barriers, even
   frozen. `nextStepGroup` forms authored boundaries *before* skipping frozen
   members (a frozen unmarked agent still separates groups; a frozen marked
   member is skipped in place). Every member goes through the spawn queue.

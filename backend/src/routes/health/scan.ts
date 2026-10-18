@@ -3,11 +3,10 @@
 // burn CPU on a response no one will read.
 
 import { Router } from 'express';
-import path from 'node:path';
 import { canonicalProjectPath } from '../../projectPath.js';
-import { collectSourceFiles } from '../../scanner/collectSourceTree.js';
-import { loadGitignore } from '../../scanner/ignore.js';
-import { partitionSourceAreas, type SourceAreasResult } from '../../shared/sourceAreas.js';
+import { collectAreaSourceFiles } from '../../sourceAreasCollect.js';
+import { normalizeWorkflowSplit, normalizeAreaPaths } from '../../shared/workflowSplit.js';
+import { partitionSourceAreas, resolveCustomAreas, buildSourceTree, type SourceAreasResult } from '../../shared/sourceAreas.js';
 import { scanCoordinator } from '../../scanner/coordinator.js';
 import { ScanCancelledError } from '../../scanner/fileMetrics.js';
 import { getDeadCodeSummary } from '../../deadCode.js';
@@ -28,10 +27,31 @@ export function buildScanRouter(
       return;
     }
     const root = canonicalProjectPath(project);
-    const files = await collectSourceFiles(root, await loadGitignore(root));
-    const areas = partitionSourceAreas(files.map((file) => path.relative(root, file)), count);
+    const { files, packageRoots } = await collectAreaSourceFiles(root);
+    const areas = partitionSourceAreas(files, count, { packageRoots });
     const result: SourceAreasResult = { areas, totalFiles: areas.reduce((sum, area) => sum + area.files, 0) };
     res.json(result);
+  });
+
+  r.post('/api/source-areas/resolve', async (req, res) => {
+    const project = readProjectParam(req, res);
+    if (project === null) return;
+    const { areas, includeRest } = req.body ?? {};
+    if (!Array.isArray(areas) || areas.length > 16 || (includeRest !== undefined && typeof includeRest !== 'boolean') || areas.some((a) =>
+      !a || typeof a.label !== 'string' || !a.label.trim() || a.label.trim().length > 80 || !Array.isArray(a.paths) || !a.paths.length || normalizeAreaPaths(a.paths).length !== a.paths.length)) {
+      res.status(400).json({ error: 'areas must contain at most 16 labelled areas with repo-relative POSIX paths; includeRest must be boolean' });
+      return;
+    }
+    const split = normalizeWorkflowSplit({ mode: 'custom', areas, includeRest })!;
+    const { files } = await collectAreaSourceFiles(project);
+    res.json({ ...resolveCustomAreas(files, split.areas!, split.includeRest !== false), totalFiles: files.length });
+  });
+
+  r.get('/api/source-tree', async (req, res) => {
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
+    const { files } = await collectAreaSourceFiles(project);
+    res.json(buildSourceTree(files));
   });
 
   r.get('/api/scan', async (req, res) => {

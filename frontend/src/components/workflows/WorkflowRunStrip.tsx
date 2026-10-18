@@ -1,3 +1,4 @@
+import { WorkflowRunSteps } from './WorkflowRunSteps';
 import { workflowRunProgress } from './parallelSteps';
 import { Square, X } from 'lucide-react';
 import type { WorkflowRun } from '../../api';
@@ -65,6 +66,8 @@ export function WorkflowRunStrip({
   return (
     <>
       {strip}
+      {(active ?? summary)?.notes?.map((note, i) => <p key={i} className="workflows-split-warning">{note}</p>)}
+      <WorkflowRunSteps run={(active ?? summary)!} />
       <RunTestsSummaries run={active ?? summary} />
     </>
   );

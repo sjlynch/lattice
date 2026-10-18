@@ -40,6 +40,10 @@ export function stepRunStatus(
   stepId?: string,
 ): StepRunStatus | undefined {
   if (!run) return undefined;
+  if (stepId && run.definition) {
+    const members = run.definition.steps.flatMap((s, i) => s.splitOf === stepId ? [i] : []);
+    if (members.length) return combinedStepStatus(members.map((i) => stepRunStatus(i, run, false, run.definition!.steps[i].id) ?? 'pending'));
+  }
   if (run.stepStates) {
     const entry = stepId ? Object.entries(run.stepStates).find(([, s]) => s.stepId === stepId)
       : run.stepStates[index] ? [String(index), run.stepStates[index]] as const : undefined;
@@ -70,4 +74,14 @@ export function stepRunStatus(
     default:
       return 'pending';
   }
+}
+
+export function combinedStepStatus(statuses: StepRunStatus[]): StepRunStatus {
+  if (statuses.includes('error')) return 'error';
+  if (statuses.includes('running')) return 'running';
+  if (statuses.includes('queued')) return 'queued';
+  if (statuses.includes('cancelled')) return 'cancelled';
+  if (statuses.every((s) => s === 'skipped')) return 'skipped';
+  if (statuses.every((s) => s === 'done' || s === 'skipped')) return 'done';
+  return 'pending';
 }

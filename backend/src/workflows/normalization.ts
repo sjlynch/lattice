@@ -1,3 +1,4 @@
+import { normalizeWorkflowSplit, normalizeAreaPaths } from '../shared/workflowSplit.js';
 import { generateWorkflowId } from '../ids.js';
 import {
   isAgentHarness,
@@ -90,6 +91,10 @@ export function normalizeSteps(steps: unknown): WorkflowStep[] {
       // keeps the flag out of the JSON for the overwhelmingly common
       // not-frozen case — same shape convention as `piModel`.
       frozen: step.frozen === true ? true : undefined,
+      split: kind === 'agent' ? normalizeWorkflowSplit(step.split) : undefined,
+      splitOf: kind === 'agent' && typeof step.splitOf === 'string' ? step.splitOf : undefined,
+      splitGroup: kind === 'agent' && typeof step.splitGroup === 'string' ? step.splitGroup : undefined,
+      splitArea: kind === 'agent' && step.splitArea && typeof step.splitArea.label === 'string' ? { label: step.splitArea.label.trim().slice(0, 80), paths: normalizeAreaPaths(step.splitArea.paths), files: Math.max(0, Math.trunc(Number(step.splitArea.files)) || 0) } : undefined,
       parallel: kind === 'agent' && step.parallel === true ? true : undefined,
       tools: normalizeStepTools(step.tools),
       // Only a Run tests step has a timeout; the spread above would otherwise

@@ -38,3 +38,5 @@
 
 /* Chips: quick-add prompt chips. */
 @import './workflows/chips.css';
+
+@import './workflows/split.css';

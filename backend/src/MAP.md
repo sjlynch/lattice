@@ -149,3 +149,5 @@ beside its `x/` folder ("`x.ts` / `x/`" below); "See its doc" = that folder's
 - `__tests__/` — node:test suite (named after the module it covers; cross-cutting guards listed in its doc).
 - `PROJECT_IDENTITY.md` — why project paths resolve to one identity/store.
 - `AGENTS.md` — pointer to `CLAUDE.md` for non-Claude harnesses.
+
+- `sourceAreasCollect.ts` - shared node collector for area previews and run expansion (gitignore, generated filtering, LOC weights, package roots).

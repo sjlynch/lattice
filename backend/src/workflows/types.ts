@@ -64,6 +64,16 @@ export type WorkflowStep = {
   frozen?: boolean;
   // Adjacent opted-in planning steps run together; every other kind is serial.
   parallel?: boolean;
+  split?: {
+    mode: 'auto' | 'custom';
+    count?: number;
+    areas?: { label: string; paths: string[] }[];
+    includeRest?: boolean;
+  };
+  // Run-only provenance and an isolated group for an originally serial parent.
+  splitOf?: string;
+  splitArea?: { label: string; paths: string[]; files: number };
+  splitGroup?: string;
   // Pre-run tools for an agent step. Each runs BEFORE the harness spawns and
   // drops its report beside WORKFLOW_STEP.md, surfaced through the brief's
   // `{{tool_reports}}` token. v1: `opengrep` (a SAST scan → OPENGREP_FINDINGS.md).

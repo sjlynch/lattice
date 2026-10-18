@@ -22,6 +22,7 @@ test('source-areas validates project/count and partitions the same scanner file 
       ...Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`${i < 6 ? 'backend' : 'frontend'}/src/file${i}.ts`, ''])),
     });
     const app = express();
+    app.use(express.json());
     app.use(buildScanRouter(project));
     const server = http.createServer(app);
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -45,6 +46,24 @@ test('source-areas validates project/count and partitions the same scanner file 
         assert.equal(response.status, 200);
         assert.deepEqual(await response.json(), { areas: partitionSourceAreas(scanned, count), totalFiles: 12 });
       }
+      const treeResponse = await fetch(`${base.replace('/source-areas', '/source-tree')}?project=${encodeURIComponent(project)}`);
+      const tree = await treeResponse.json();
+      assert.equal(treeResponse.status, 200); assert.equal(tree.path, '.'); assert.equal(tree.files, 0);
+      assert.equal(tree.children.length, 2); assert.equal(tree.children[0].children[0].files, 6);
+      const resolve = (body: unknown) => fetch(`${base}/resolve`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      for (const body of [{}, { project: 'relative', areas: [] }, { project, areas: 'bad' }, { project, areas: [{ label: 'a', paths: ['../outside'] }] },
+        { project, areas: [{ label: 'a', paths: ['/abs'] }] }, { project, areas: [{ label: 'a', paths: ['C:/abs'] }] },
+        { project, areas: [{ label: '', paths: ['backend'] }] }, { project, areas: [], includeRest: 'true' },
+        { project, areas: Array.from({ length: 17 }, () => ({ label: 'a', paths: ['backend'] })) }]) {
+        assert.equal((await resolve(body)).status, 400, JSON.stringify(body));
+      }
+      const resolved = await resolve({ project, areas: [{ label: 'Backend', paths: ['backend', 'absent'] }, { label: 'Duplicate', paths: ['backend'] }], includeRest: true });
+      assert.equal(resolved.status, 200);
+      const result = await resolved.json();
+      assert.equal(result.totalFiles, 12); assert.equal(result.rest, 6);
+      assert.deepEqual(result.missing, ['absent']); assert.equal(result.overlaps.length, 6);
+      assert.deepEqual(result.areas.map((a: { label: string }) => a.label), ['Backend', 'Everything else']);
+      assert.equal((await fetch(`${base.replace('/source-areas', '/source-tree')}?project=relative`)).status, 400);
     } finally {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }

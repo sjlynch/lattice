@@ -1,3 +1,4 @@
+import type { CustomAreasResult, SourceTree } from '../../../backend/src/shared/sourceAreas';
 // Workflow CRUD, run start, and live subscriptions for both definitions
 // and runs.
 
@@ -14,10 +15,17 @@ import type {
   WorkflowVariable,
 } from './types';
 
-export async function fetchSourceAreas(projectPath: string, count: number): Promise<SourceAreasResult> {
+export async function fetchSourceAreas(projectPath: string, count: number, signal?: AbortSignal): Promise<SourceAreasResult> {
   return asJson<SourceAreasResult>(
-    await fetch(`/api/source-areas?project=${encodeURIComponent(projectPath)}&count=${count}`),
+    await fetch(`/api/source-areas?project=${encodeURIComponent(projectPath)}&count=${count}`, { signal }),
   );
+}
+
+export async function resolveSourceAreas(project: string, areas: { label: string; paths: string[] }[], includeRest: boolean, signal?: AbortSignal): Promise<CustomAreasResult & { totalFiles: number }> {
+  return asJson(await fetch('/api/source-areas/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ project, areas, includeRest }), signal }));
+}
+export async function fetchSourceTree(project: string, signal?: AbortSignal): Promise<SourceTree> {
+  return asJson(await fetch(`/api/source-tree?project=${encodeURIComponent(project)}`, { signal }));
 }
 
 export async function fetchWorkflows(projectPath: string): Promise<Workflow[]> {

@@ -12,7 +12,7 @@ export function nextStepGroup(steps: WorkflowStep[], from: number): { indices: n
   while (start < steps.length) {
     let end = start + 1;
     if (isParallelStep(steps[start])) {
-      while (end < steps.length && isParallelStep(steps[end])) end++;
+      while (end < steps.length && isParallelStep(steps[end]) && steps[end].splitGroup === steps[start].splitGroup) end++;
     }
     const indices = Array.from({ length: end - start }, (_, i) => start + i)
       .filter((i) => steps[i].frozen !== true);

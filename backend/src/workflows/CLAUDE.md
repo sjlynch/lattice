@@ -35,6 +35,9 @@ imports from `'../workflows.js'`; this directory holds the implementation.
   it. `parallel: true` is a separate opt-in for planning `agent` steps only;
   Start/Merge/Run tests/Push strip it. Adjacent marked agents run together and
   the runner waits for the group before continuing (`workflowRuns/execution.ts`).
+  `split` is an agent-only auto/custom configuration, normalized through
+  `shared/workflowSplit.ts`; `splitOf` / `splitArea` retain run member provenance
+  and `splitGroup` isolates an originally serial split on recovery.
   `frozen`
   (the editor's snowflake toggle) is kind-agnostic: the step stays in the
   definition but the run engine skips it — see `nextStepGroup` in

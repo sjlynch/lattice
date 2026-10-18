@@ -20,6 +20,7 @@ comments, and several had drifted.
 
 ## Modules
 
+- `workflowSplit.ts` - safe split configuration / POSIX-path normalization.
 - `sourceAreas.ts` — production-source filtering, deterministic directory-area
   partitioning, `SourceArea` / `SourceAreasResult` and the planner scope preface.
 - `harnesses.ts` — `AgentHarness` vocabulary + `PI_MODEL_PATTERN_RE` /

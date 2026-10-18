@@ -50,6 +50,8 @@ export type WorkflowRun = {
   roundTaskIds?: string[];
   definition?: Workflow;
   definitionError?: string;
+  // Non-fatal start notes, included in run events and persisted for recovery.
+  notes?: string[];
   stepPhase?: 'pending' | 'spawning' | 'running' | 'completing';
   stepSessionId?: string;
   // Per-step result text, keyed by step index. Today only Run tests ('test')

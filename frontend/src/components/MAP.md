@@ -66,3 +66,7 @@ in `CLAUDE.md` beside this file → "Styles".
 | `timeline.css` | Timeline scrubber: `.timeline-bar`, `.has-timeline` overrides, `.timeline-scrubber*`, `.ts-*` (+ `--timeline-h` token) |
 | `health-overlay.css` | `.health-legend*` (incl. info popover), `.health-tooltip*` (+ health `@keyframes`) |
 | `error-boundary.css` | `.error-boundary*` (ErrorBoundary fallback card) |
+
+- `workflows/SplitPanel.tsx`, `workflows/splitAreas.ts` - single-step runtime split editor and custom-area helpers.
+- `workflows/WorkflowRunSteps.tsx`, `workflows/splitRunGroups.ts` - grouped run member rows.
+- `styles/workflows/split.css` - `.workflows-split-*`, `.workflows-run-steps`.

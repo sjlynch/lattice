@@ -166,79 +166,19 @@ afterEach(() => {
   for (const restore of restores.reverse()) restore();
 });
 
-// Source scans can finish after edits, reorders, deletion, navigation or a
-// project round trip. They must touch only the initiating editor and step.
-const splitAreas = [
-  { paths: ['backend'], files: 20, label: 'backend' },
-  { paths: ['frontend'], files: 30, label: 'frontend' },
-];
-test('split fetches the active project and replaces only its target after a reorder', async () => {
+test('split toggles one authored step without changing the prompt, and marks edits dirty', async () => {
   await mount();
   await act(async () => { await latest.actions.selectWorkflow(workflows[0]); });
-  act(() => { latest.actions.addStep(); latest.actions.addStep(); });
-  const [original, before, after] = latest.editor.steps;
-  let pending!: Promise<void>;
-  act(() => { pending = latest.actions.splitAcrossRepo(original.id, 8); });
-  assert.equal(new URL(areaRequests[0].url, 'http://localhost').searchParams.get('project'), A);
-  assert.equal(new URL(areaRequests[0].url, 'http://localhost').searchParams.get('count'), '8');
-  act(() => {
-    latest.actions.patchStep(0, { prompt: 'edited during scan', frozen: true, model: 'custom', effort: 'high' });
-    latest.actions.reorderSteps(0, 2);
-  });
-  await act(async () => { areaRequests[0].resolve({ areas: splitAreas, totalFiles: 50 }); await pending; });
-  assert.equal(latest.editor.steps.length, 4);
-  assert.equal(latest.editor.steps[0], before);
-  assert.equal(latest.editor.steps[3], after);
+  const original = latest.editor.steps[0];
+  act(() => latest.actions.toggleSplit(original.id));
+  assert.equal(latest.editor.steps.length, 1);
+  assert.deepEqual(latest.editor.steps[0].split, { mode: 'auto', count: 10 });
+  assert.equal(latest.editor.steps[0].prompt, original.prompt);
   assert.equal(latest.editor.dirty, true);
-  for (const copy of latest.editor.steps.slice(1, 3)) {
-    assert.equal(copy.parallel, true);
-    assert.equal(copy.frozen, true);
-    assert.equal(copy.model, 'custom');
-    assert.equal(copy.effort, 'high');
-    assert.ok(copy.prompt.endsWith('\n\n---\n\nedited during scan'));
-    assert.equal(latest.collapsedSteps.isCollapsed(copy.id), true);
-  }
-});
-
-test('small-project and failed splits leave the editor untouched and show the requested notice', async () => {
-  await mount();
-  await act(async () => { await latest.actions.selectWorkflow(workflows[0]); });
-  const original = latest.editor;
-  for (const fail of [false, true]) {
-    let pending!: Promise<void>;
-    act(() => { pending = latest.actions.splitAcrossRepo(original.steps[0].id, 4); });
-    const request = areaRequests.at(-1)!;
-    await act(async () => {
-      if (fail) request.reject(new Error('unreadable'));
-      else request.resolve({ areas: [{ paths: ['.'], files: 2, label: 'whole repository' }], totalFiles: 2 });
-      await pending;
-    });
-    assert.equal(latest.editor, original);
-    assert.equal(latest.error, fail ? "Couldn't read the project's files to split this step." : 'This project is too small to split.');
-  }
-});
-
-test('split results and errors cannot reach another editor or a project round trip', async () => {
-  await mount();
-  for (const change of ['editor', 'project'] as const) {
-    await act(async () => { await latest.actions.selectWorkflow(workflows[0]); });
-    let pending!: Promise<void>;
-    act(() => { pending = latest.actions.splitAcrossRepo(latest.editor.steps[0].id, 8); });
-    if (change === 'editor') {
-      await act(async () => { await latest.actions.selectWorkflow(workflows[1]); });
-    } else {
-      await switchProject(B);
-      await switchProject(A);
-    }
-    const current = latest.editor;
-    await act(async () => {
-      if (change === 'editor') areaRequests.at(-1)!.resolve({ areas: splitAreas, totalFiles: 50 });
-      else areaRequests.at(-1)!.reject(new Error('old project failed'));
-      await pending;
-    });
-    assert.equal(latest.editor, current);
-    assert.equal(latest.error, null);
-  }
+  act(() => latest.actions.toggleSplit(original.id));
+  assert.equal(latest.editor.steps[0].split, undefined);
+  assert.equal(latest.editor.steps[0].prompt, original.prompt);
+  assert.equal(areaRequests.length, 0, 'toggle does not depend on a repository scan');
 });
 
 test('selected saved-row clicks and manager reselect preserve every unsaved field', async () => {

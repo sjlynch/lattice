@@ -9,6 +9,7 @@ export function snapshot(run: WorkflowRun): WorkflowRun {
   return {
     ...run,
     ...(run.activeStepIndices ? { activeStepIndices: [...run.activeStepIndices] } : {}),
+    ...(run.notes ? { notes: [...run.notes] } : {}),
     ...(run.roundTaskIds ? { roundTaskIds: [...run.roundTaskIds] } : {}),
     ...(run.stepStates ? { stepStates: Object.fromEntries(Object.entries(run.stepStates).map(([index, step]) =>
       [index, { ...step, ...(step.stopReceived ? { stopReceived: { ...step.stopReceived } } : {}) }])) } : {}),

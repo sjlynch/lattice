@@ -19,6 +19,8 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | GET | `/api/default-root` | Default project for the UI |
 | GET | `/api/scan?path=` | Recursive source-file scan, gitignore-aware |
 | GET | `/api/source-areas?project=&count=` | Split the scanner's production-source files into repository areas → `{areas, totalFiles}`; count integer 2–16 |
+| POST | `/api/source-areas/resolve` | Resolve custom editor areas from `{project, areas, includeRest}` ? `{areas, missing, overlaps, rest, totalFiles}` |
+| GET | `/api/source-tree?project=` | Production source folder picker ? nested `{path, name, files, weight, children}`; counts and weights are direct files |
 | GET | `/api/search?project=&q=&regex=` | File-contents search → `{matches, scanned, truncated}` (abs paths == graph node ids); `*`/`?` wildcards unless `regex=1` |
 | GET | `/api/health/dead-code?project=` | Files confidently flagged unreachable (60s-memoized) |
 | GET | `/api/git-history?path=&limit=` | Timeline history (`git log --name-status -M`) + `deletedPaths` for ghost nodes |

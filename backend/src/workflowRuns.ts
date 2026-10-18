@@ -41,7 +41,7 @@ import {
 } from './workflowRuns/state.js';
 import { nextStepGroup, openStepGroup } from './workflowRuns/execution.js';
 import { teardownWorkflowRun } from './workflowRuns/teardown.js';
-import { cloneWorkflowDefinition } from './workflowRuns/definition.js';
+import { expandWorkflowSplits } from './workflowRuns/split.js';
 import { beginRestartTransition } from './restartDrain/gate.js';
 import { dispatchGroup, dispatchStep } from './workflowRuns/dispatch.js';
 import { completeWorkflowStep } from './workflowRuns/advance.js';
@@ -103,8 +103,9 @@ export async function startWorkflowRun(
   backendOrigin: string,
   options: StartWorkflowRunOptions = {},
 ): Promise<WorkflowRun> {
-  const wf = await getWorkflow(workflowId);
-  if (!wf) throw new Error('workflow not found');
+  const stored = await getWorkflow(workflowId);
+  if (!stored) throw new Error('workflow not found');
+  const { definition: wf, notes } = await expandWorkflowSplits(stored);
   if (wf.steps.length === 0) throw new Error('workflow has no steps');
 
   // Frozen steps are skipped, so a run starts at the first thawed step rather
@@ -146,7 +147,8 @@ export async function startWorkflowRun(
     totalSteps: wf.steps.length,
     currentStepIndex: firstIndex,
     roundTaskIds,
-    definition: cloneWorkflowDefinition(wf),
+    definition: wf,
+    ...(notes.length ? { notes } : {}),
     stepPhase: 'pending',
     ...(harnessOverride ? { harnessOverride } : {}),
     ...(piModelOverride ? { piModelOverride } : {}),

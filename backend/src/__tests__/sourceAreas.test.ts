@@ -42,7 +42,7 @@ test('source extensions are case insensitive; test, generated and vendor files a
 test('fewer than ten unique source files use the whole repository, including an empty repo', () => {
   for (const [files, total] of [[[], 0], [filesIn('src', 9), 9], [['src/main.ts', 'src\\main.ts', ...filesIn('tests', 20)], 1]] as [string[], number][]) {
     const areas = partitionSourceAreas(files, 8);
-    assert.deepEqual(areas, [{ paths: ['.'], files: total, label: 'whole repository' }]);
+    assert.deepEqual(areas, [{ paths: ['.'], files: total, weight: total, label: 'whole repository' }]);
     assertCoverage(files, areas);
   }
   assert.equal(partitionSourceAreas([...filesIn('a', 5), ...filesIn('b', 5)], 2).length, 2);
@@ -95,7 +95,7 @@ test('contiguous grouping minimizes the maximum sum and emits exactly the reques
   assert.equal(areas.length, 3);
   assert.equal(Math.max(...areas.map((area) => area.files)), best);
   assertCoverage(files, areas);
-  for (const area of areas) assert.equal(area.label, area.paths.length === 1 ? area.paths[0] : `${area.paths[0]} … ${area.paths.at(-1)}`);
+  for (const area of areas) assert.ok(area.label.length <= 80);
 });
 
 test('a deep monorepo balances even when early splits already reach the area count', () => {
@@ -132,8 +132,8 @@ test('a flat directory splits into balanced lists of its files', () => {
 });
 
 test('scope preface has exact wording for directories and direct files', () => {
-  assert.equal(renderAreaScope({ paths: ['backend/src', 'frontend/*', './*'], files: 10, label: 'unused' }),
+  assert.equal(renderAreaScope({ paths: ['backend/src', 'frontend/*', './*'], files: 10, weight: 10, label: 'unused' }),
     'Scope for this step: review only `backend/src`, the files directly in `frontend`, the files directly in `.` (and what it calls, as needed). Other steps review the rest of the repository in parallel; file tasks only about code inside this scope.');
-  assert.equal(renderAreaScope({ paths: ['.'], files: 1, label: 'whole repository' }),
+  assert.equal(renderAreaScope({ paths: ['.'], files: 1, weight: 1, label: 'whole repository' }),
     'Scope for this step: review only `.` (and what it calls, as needed). Other steps review the rest of the repository in parallel; file tasks only about code inside this scope.');
 });

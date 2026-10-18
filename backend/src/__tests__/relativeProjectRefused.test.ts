@@ -108,6 +108,8 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
       // root, still; present-but-relative → 400).
       [`/api/search?${q}&q=x`],
       [`/api/source-areas?${q}&count=8`],
+      [`/api/source-tree?${q}`],
+      ['/api/source-areas/resolve', { method: 'POST', headers: json, body: JSON.stringify({ project: rel, areas: [] }) }],
       [`/api/search?path=${encodeURIComponent(rel)}&q=x`],
       [`/api/scan?path=${encodeURIComponent(rel)}`],
       [`/api/health/dead-code?${q}`],
