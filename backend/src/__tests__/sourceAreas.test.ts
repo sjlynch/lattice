@@ -6,7 +6,7 @@ import { isAreaSourceFile, partitionSourceAreas, renderAreaScope, type SourceAre
 
 const filesIn = (dir: string, count: number) => Array.from({ length: count }, (_, i) => `${dir}/file${i}.ts`);
 function covers(scope: string, file: string): boolean {
-  if (scope === '.') return true;
+  if (scope === '.' || scope === file) return true;
   if (scope.endsWith('/*')) {
     const dir = scope.slice(0, -2);
     return (file.includes('/') ? file.slice(0, file.lastIndexOf('/')) : '') === (dir === '.' ? '' : dir);
@@ -29,7 +29,7 @@ test('source extensions are case insensitive; test, generated and vendor files a
     assert.ok(isAreaSourceFile(`src/main.${ext}`), ext);
     assert.ok(isAreaSourceFile(`src\\MAIN.${ext.toUpperCase()}`), ext);
   }
-  for (const segment of 'node_modules dist build out coverage vendor .git __snapshots__ __tests__ tests test spec e2e fixtures'.split(' ')) {
+  for (const segment of 'node_modules dist build out coverage vendor .git __snapshots__ __tests__ tests test spec e2e fixtures examples example benchmarks benchmark bench docs runtime-tests integration_tests unit-test'.split(' ')) {
     assert.equal(isAreaSourceFile(`src/${segment}/nested/main.ts`), false, segment);
     assert.equal(isAreaSourceFile(`src\\${segment}\\main.ts`), false, segment);
   }
@@ -48,21 +48,21 @@ test('fewer than ten unique source files use the whole repository, including an 
   assert.equal(partitionSourceAreas([...filesIn('a', 5), ...filesIn('b', 5)], 2).length, 2);
 });
 
-test('count clamps to 2..16 and indivisible directories can yield fewer areas', () => {
+test('count clamps to 2..16 and a few files can yield fewer areas', () => {
   const files = Array.from({ length: 20 }, (_, i) => filesIn(`dir${i}`, 10)).flat();
   assert.deepEqual(partitionSourceAreas(files, -10), partitionSourceAreas(files, 2));
   assert.deepEqual(partitionSourceAreas(files, 100), partitionSourceAreas(files, 16));
   assert.equal(partitionSourceAreas(files, 100).length, 16);
-  assert.equal(partitionSourceAreas(filesIn('one', 20), 16).length, 1);
+  assert.equal(partitionSourceAreas(filesIn('one', 12), 16).length, 12);
   assertCoverage(files, partitionSourceAreas(files, 8));
 });
 
 test('direct-file scopes sort before their child directories, including at the root', () => {
   const files = ['root.ts', ...filesIn('!top', 3), ...filesIn('a', 2), ...filesIn('a/!b', 4), ...filesIn('a/c', 4)];
-  const areas = partitionSourceAreas(files, 8);
-  assert.deepEqual(areas.map((area) => area.paths), [['./*'], ['!top'], ['a/*'], ['a/!b'], ['a/c']]);
+  const areas = partitionSourceAreas(files, 2);
+  assert.deepEqual(areas.flatMap((area) => area.paths), ['./*', '!top', 'a/*', 'a/!b', 'a/c']);
   assertCoverage(files, areas);
-  assert.deepEqual(partitionSourceAreas([...files, ...files.map((file) => file.replace(/\//g, '\\'))].reverse(), 8), areas);
+  assert.deepEqual(partitionSourceAreas([...files, ...files.map((file) => file.replace(/\//g, '\\'))].reverse(), 2), areas);
 });
 
 test('uneven real-world tree balances eight scopes, splitting forceGraph when needed', () => {
@@ -115,6 +115,20 @@ test('a deep monorepo balances even when early splits already reach the area cou
     const avg = areas.reduce((a, x) => a + x.files, 0) / areas.length;
     assert.ok(Math.max(...areas.map((a) => a.files)) <= 2 * avg, `count ${count}: ${areas.map((a) => a.files).join(' ')}`);
   }
+});
+
+test('a flat directory splits into balanced lists of its files', () => {
+  // rich keeps ~100 modules directly in rich/, Go packages are often flat: a
+  // folder that could not split stayed one area whatever count was asked for.
+  const files = [...filesIn('pkg', 100), 'pkg/tests/test_a.py', 'setup.py'];
+  for (const count of [4, 10]) {
+    const areas = partitionSourceAreas(files, count);
+    assert.equal(areas.length, count);
+    assertCoverage(files, areas);
+    assert.ok(Math.max(...areas.map((area) => area.files)) <= Math.ceil(101 / count) + 1, areas.map((a) => a.files).join(' '));
+    assert.ok(areas.every((area) => area.paths.every((p) => p === './*' || /^pkg\/file\d+\.ts$/.test(p))));
+  }
+  assert.deepEqual(partitionSourceAreas(filesIn('pkg', 100), 10), partitionSourceAreas(filesIn('pkg', 100).reverse(), 10));
 });
 
 test('scope preface has exact wording for directories and direct files', () => {
