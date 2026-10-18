@@ -64,6 +64,8 @@ execution view):
   strip, chips and saved list.
 
 Editor model and helpers:
+- `splitStep.ts` — copies one planning step into scoped parallel steps, preserving
+  authored fields and using the backend-shared scope preface.
 - `editorState.ts` — `EditorState`, `emptyEditor` / `fromTemplate` /
   `fromWorkflow`, step factories, `collapsibleStepIds` (agent ids only),
   `nextEditorAfterSave`; editor carries `dirty` and an in-memory `identity`
@@ -155,6 +157,11 @@ project-tailored prompt and calls the **same add action as a click**, with an
 optional insertion index.
 
 ## Parallel reviews
+
+"Split across the repo" beside the parallel toggle requests 4/6/8/10/12 source
+areas (10 suggested: the benchmarked count), replaces the step with scoped
+copies, and marks the draft dirty. It uses the existing error toast for unreadable/small projects. Async
+results are fenced by editor/project lifetime and resolve the target by step id.
 
 Agent rows only (not Start / Merge / Run tests / Push) have a branching toggle
 (`parallel: true`, `aria-pressed`). Adjacent marked rows share a connector and

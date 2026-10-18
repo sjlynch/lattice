@@ -14,6 +14,7 @@ export type StepRowCallbacks = {
   onRemove: (index: number) => void;
   onReorder: (fromIdx: number, toIdx: number) => void;
   onToggleCollapse: (stepId: string) => void;
+  onSplit?: (stepId: string, count: number) => Promise<void>;
 };
 
 const STEP_RUN_STATUS_TITLE: Record<StepRunStatus, string> = {

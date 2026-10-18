@@ -41,6 +41,7 @@ export const StepRow = memo(function StepRow({
   onRemove,
   onReorder,
   onToggleCollapse,
+  onSplit,
 }: {
   step: WorkflowStep;
   index: number;
@@ -99,6 +100,7 @@ export const StepRow = memo(function StepRow({
       onRemove={onRemove}
       onReorder={onReorder}
       onToggleCollapse={onToggleCollapse}
+      onSplit={onSplit}
     />
   );
 });

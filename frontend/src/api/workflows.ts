@@ -4,6 +4,7 @@
 import { asJson, deleteJson, patchJson, postJson } from './http';
 import { subscribeWs } from './ws';
 import type {
+  SourceAreasResult,
   Workflow,
   WorkflowRun,
   WorkflowRunEvent,
@@ -12,6 +13,12 @@ import type {
   WorkflowStep,
   WorkflowVariable,
 } from './types';
+
+export async function fetchSourceAreas(projectPath: string, count: number): Promise<SourceAreasResult> {
+  return asJson<SourceAreasResult>(
+    await fetch(`/api/source-areas?project=${encodeURIComponent(projectPath)}&count=${count}`),
+  );
+}
 
 export async function fetchWorkflows(projectPath: string): Promise<Workflow[]> {
   return asJson<Workflow[]>(

@@ -89,6 +89,7 @@ function buildActions(parts: {
     discardEdits: editorState.discardEdits,
     deleteCurrent: editorState.deleteCurrent,
     patchStep: editorState.patchStep,
+    splitAcrossRepo: editorState.splitAcrossRepo,
     removeStep: editorState.removeStep,
     addStep: editorState.addStep,
     addControlStep: editorState.addControlStep,

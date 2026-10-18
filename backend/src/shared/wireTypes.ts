@@ -107,3 +107,4 @@ export type {
 } from '../workflowRuns/types.js';
 export type { StartupTerminal, TerminalDefaultHarness, UserSettings } from '../userSettings/types.js';
 export type { RecentSpecGap } from '../specGapsTypes.js';
+export type { SourceArea, SourceAreasResult } from './sourceAreas.js';

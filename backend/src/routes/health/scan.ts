@@ -3,16 +3,36 @@
 // burn CPU on a response no one will read.
 
 import { Router } from 'express';
+import path from 'node:path';
+import { canonicalProjectPath } from '../../projectPath.js';
+import { collectSourceFiles } from '../../scanner/collectSourceTree.js';
+import { loadGitignore } from '../../scanner/ignore.js';
+import { partitionSourceAreas, type SourceAreasResult } from '../../shared/sourceAreas.js';
 import { scanCoordinator } from '../../scanner/coordinator.js';
 import { ScanCancelledError } from '../../scanner/fileMetrics.js';
 import { getDeadCodeSummary } from '../../deadCode.js';
-import { readPathParam } from '../projectParam.js';
+import { readPathParam, readProjectParam } from '../projectParam.js';
 
 export function buildScanRouter(
   defaultRoot: string,
   requestScan = scanCoordinator.request.bind(scanCoordinator),
 ): Router {
   const r = Router();
+
+  r.get('/api/source-areas', async (req, res) => {
+    const project = readProjectParam(req, res, { source: 'query' });
+    if (project === null) return;
+    const count = typeof req.query.count === 'string' ? Number(req.query.count) : NaN;
+    if (!Number.isInteger(count) || count < 2 || count > 16) {
+      res.status(400).json({ error: 'count must be an integer from 2 to 16' });
+      return;
+    }
+    const root = canonicalProjectPath(project);
+    const files = await collectSourceFiles(root, await loadGitignore(root));
+    const areas = partitionSourceAreas(files.map((file) => path.relative(root, file)), count);
+    const result: SourceAreasResult = { areas, totalFiles: areas.reduce((sum, area) => sum + area.files, 0) };
+    res.json(result);
+  });
 
   r.get('/api/scan', async (req, res) => {
     const target = readPathParam(req, res, defaultRoot);

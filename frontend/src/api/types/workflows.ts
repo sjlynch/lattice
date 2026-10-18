@@ -9,6 +9,8 @@ import type {
 } from '../../../../backend/src/shared/wireTypes';
 
 export type {
+  SourceArea,
+  SourceAreasResult,
   Workflow,
   WorkflowRun,
   WorkflowRunHarnessOverride,

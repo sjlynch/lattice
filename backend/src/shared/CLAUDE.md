@@ -20,6 +20,8 @@ comments, and several had drifted.
 
 ## Modules
 
+- `sourceAreas.ts` — production-source filtering, deterministic directory-area
+  partitioning, `SourceArea` / `SourceAreasResult` and the planner scope preface.
 - `harnesses.ts` — `AgentHarness` vocabulary + `PI_MODEL_PATTERN_RE` /
   `isPiModelPattern` (the `pi --model` shell-injection guard).
 - `searchPattern.ts` — `wildcardRegexSource`: search query → regex source

@@ -2,6 +2,7 @@ import { useCallback, useLayoutEffect, useRef, useState, type Dispatch, type Set
 import {
   createWorkflow as apiCreateWorkflow,
   deleteWorkflow as apiDeleteWorkflow,
+  fetchSourceAreas,
   updateWorkflow as apiUpdateWorkflow,
   type Workflow,
 } from '../../../api';
@@ -11,6 +12,7 @@ import {
   emptyEditor,
   fromTemplate,
   fromWorkflow,
+  localStepId,
   makeAgentStep,
   nextEditorAfterSave,
   type EditorState,
@@ -18,6 +20,7 @@ import {
 import { clearWorkflowDraft } from '../workflowDraftStorage';
 import { useEditorDraftLifecycle } from './useEditorDraftLifecycle';
 import { useEditorMutationActions } from './useEditorMutationActions';
+import { splitStep } from '../splitStep';
 
 type Args = {
   workflows: Workflow[];
@@ -159,6 +162,31 @@ export function useWorkflowEditor({ workflows, activeFolder, onError, onStepsAdd
   }, [activeFolder, editor.identity, isCurrentEditor, onError, setEditor]);
 
   const mutations = useEditorMutationActions(setEditor, onStepsAdded);
+  const splitAcrossRepo = useCallback(async (stepId: string, count: number) => {
+    const identity = editorRef.current.identity;
+    if (!activeFolder || !isCurrentEditor(identity)) return;
+    const original = editorRef.current.steps.find((step) => step.id === stepId);
+    if (!original || (original.kind ?? 'agent') !== 'agent') return;
+    try {
+      const { areas } = await fetchSourceAreas(activeFolder, count);
+      if (!isCurrentEditor(identity)) return;
+      // Resolve by stable id after the await: a reorder must not split a sibling.
+      const current = editorRef.current;
+      const index = current.steps.findIndex((step) => step.id === stepId);
+      if (index < 0 || (current.steps[index].kind ?? 'agent') !== 'agent') return;
+      if (areas.length < 2) {
+        onError('This project is too small to split.');
+        return;
+      }
+      const copies = splitStep(current.steps[index], areas, localStepId());
+      const steps = [...current.steps];
+      steps.splice(index, 1, ...copies);
+      setEditor({ ...current, steps, dirty: true });
+      onStepsAdded(copies.map((step) => step.id));
+    } catch {
+      if (isCurrentEditor(identity)) onError("Couldn't read the project's files to split this step.");
+    }
+  }, [activeFolder, isCurrentEditor, onError, onStepsAdded, setEditor]);
   return {
     editor,
     setEditor,
@@ -172,6 +200,7 @@ export function useWorkflowEditor({ workflows, activeFolder, onError, onStepsAdd
     saving: savingIdentity === editor.identity && isCurrentEditor(editor.identity),
     discardEdits,
     deleteCurrent,
+    splitAcrossRepo,
     ...mutations,
   };
 }

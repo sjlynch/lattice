@@ -41,6 +41,18 @@
   gap: 6px;
   align-items: center;
 }
+.workflows-split-menu {
+  position: fixed;
+  width: 300px;
+  max-width: calc(100vw - 16px);
+}
+.workflows-split-menu .popover-item { width: 100%; }
+.workflows-split-menu p {
+  margin: 6px 10px;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+}
 .workflows-step-index {
   display: inline-flex;
   align-items: center;

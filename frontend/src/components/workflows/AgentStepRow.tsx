@@ -28,6 +28,7 @@ export const AgentStepRow = memo(function AgentStepRow({
   onRemove,
   onReorder,
   onToggleCollapse,
+  onSplit,
 }: {
   step: WorkflowStep;
   index: number;
@@ -76,6 +77,7 @@ export const AgentStepRow = memo(function AgentStepRow({
           onChange={onChange}
           onRemove={onRemove}
           onToggleCollapse={onToggleCollapse}
+          onSplit={onSplit}
         />
         <PromptHighlightTextarea
           index={index}

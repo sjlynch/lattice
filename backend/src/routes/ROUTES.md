@@ -18,6 +18,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | GET | `/api/harnesses?refresh=1` | Detected agent CLIs (`claude` / `pi` / `codex`) |
 | GET | `/api/default-root` | Default project for the UI |
 | GET | `/api/scan?path=` | Recursive source-file scan, gitignore-aware |
+| GET | `/api/source-areas?project=&count=` | Split the scanner's production-source files into repository areas → `{areas, totalFiles}`; count integer 2–16 |
 | GET | `/api/search?project=&q=&regex=` | File-contents search → `{matches, scanned, truncated}` (abs paths == graph node ids); `*`/`?` wildcards unless `regex=1` |
 | GET | `/api/health/dead-code?project=` | Files confidently flagged unreachable (60s-memoized) |
 | GET | `/api/git-history?path=&limit=` | Timeline history (`git log --name-status -M`) + `deletedPaths` for ghost nodes |

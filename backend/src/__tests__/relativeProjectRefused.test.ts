@@ -107,6 +107,7 @@ test('project-scoped routes refuse a relative project with 400 and create nothin
       // The `?path=` / `?project=` read-only graph routes (absent → default
       // root, still; present-but-relative → 400).
       [`/api/search?${q}&q=x`],
+      [`/api/source-areas?${q}&count=8`],
       [`/api/search?path=${encodeURIComponent(rel)}&q=x`],
       [`/api/scan?path=${encodeURIComponent(rel)}`],
       [`/api/health/dead-code?${q}`],

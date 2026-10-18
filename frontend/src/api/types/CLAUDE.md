@@ -14,7 +14,7 @@ an audit found ten that had). Rules for what may go there:
   (`TerminalRecord` family), `git.ts`, `gitHistory.ts`, `health.ts` (incl.
   `HealthUpdate`), `harnessSystemPrompts.ts`, `instructionTemplates.ts`,
   `postMergeHooks.ts`, `projectEnv.ts`, `runs.ts`, `workflows.ts` (definitions,
-  `WorkflowRun`), `opengrep.ts` (status, rule packs,
+  `WorkflowRun`, `SourceArea` / `SourceAreasResult`), `opengrep.ts` (status, rule packs,
   scan records / envelope, graph result, findings, triage, `SecurityReview` —
   all from `backend/src/opengrep/types.ts`), `scan.ts`'s `DirListing` family,
   and `settings.ts`'s `RecentSpecGap`, Pi model and `OpengrepSeverity` /

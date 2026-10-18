@@ -151,6 +151,7 @@ export function WorkflowEditorPanel({ manager }: Props) {
                       autoScroll={!statusRun?.activeStepIndices || statusRun.stepStates?.[statusRun.activeStepIndices[0]]?.stepId === step.id}
                       postMergeHookConfigured={postMergeHookConfigured}
                       onChange={actions.patchStep}
+                      onSplit={actions.splitAcrossRepo}
                       onRemove={handleRemoveStep}
                       onReorder={actions.reorderSteps}
                       onToggleCollapse={collapsedSteps.toggleCollapsed}

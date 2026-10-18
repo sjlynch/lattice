@@ -119,6 +119,7 @@ beside its `x/` folder ("`x.ts` / `x/`" below); "See its doc" = that folder's
 - `watchTree.ts` / `watchTree/` — win32 recursive `fs.watch` (one handle) replacing chokidar's per-dir handles, which locked directories; `LATTICE_WATCH_MODE` overrides; symlinks not followed. See its doc.
 - `search.ts` / `search/` — file-contents search for `/api/search` (absolute paths = graph node ids; wildcard grammar in `shared/searchPattern.ts`). The JS fallback (`search/jsGrepWorker.ts`) greps in a worker with a wall-clock budget, so a ReDoS user regex can't freeze the event loop. See its doc.
 - `ripgrep.ts` — optional memoized `rg` fast path for `search.ts` (`LATTICE_DISABLE_RG`, `LATTICE_RG_PATH`).
+- `shared/sourceAreas.ts` — node-free production-source filter, repository areas and planner scope text; shared with the workflow editor.
 - `scanner/` — project → `{nodes, links}` graph pipeline (no facade: import the phase module, e.g. `scanner/scan.ts`). See its doc.
 - `health.ts` / `health/` — tree-sitter per-file metrics, health score, cross-file dead code, file watcher. See its doc.
 - `fsbrowse.ts` / `fsbrowse/` — folder-picker backend (roots, validation, listing, create-dir). See its doc.
