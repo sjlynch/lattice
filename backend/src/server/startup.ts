@@ -8,6 +8,8 @@ import {
   resumeInterruptedMergeRuns,
   resumeInterruptedWorkflowRuns,
   resumeQueuedTaskRuns,
+  resumeInterruptedTaskReviews,
+  sweepTaskReviewScratch,
   startBootWorktreeSweep,
   startInProgressSweepLoop,
   startWorktreeResidueSweepLoop,
@@ -187,6 +189,8 @@ export function runBootRecoveryChain(
 }
 
 export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecovery = () => {}): void {
+  void resumeInterruptedTaskReviews(backendOrigin).catch((err) => console.error('[startup] task reviews:', err));
+  void sweepTaskReviewScratch().catch((err) => console.error('[startup] task review scratch:', err));
   void sweepSecurityReviews().catch(console.error);
   void runBootRecoveryChain(backendOrigin, finishWorkflowRecovery);
   // Re-enqueue task runs that were waiting in the spawn queue when the

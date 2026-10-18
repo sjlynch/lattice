@@ -43,6 +43,10 @@ the tab: Pi → [piEndpoints/CLAUDE.md](piEndpoints/CLAUDE.md), MCP →
 - `useTaskWritingDraft.ts` + `TaskWritingSection.tsx` — Agent prompts' project
   task-writing rules and default-on recent-gap toggle, patched only when edited;
   a collapsed-by-default preview fetches recent reports only on expansion.
+- `useTaskReviewDraft.ts` + `TaskReviewSection.tsx` — Agent prompts' Second
+  opinion mode, reviewer and fresh-rerun policy. Only per-field edits patch;
+  late GETs preserve edits; Save/dirty read `getTaskReviewPatch`. Reruns reuse
+  workflow harness/Pi-model and model/effort selects. Off is the default.
 - `HarnessSystemPromptsTab.tsx` + `HarnessSystemPromptCard.tsx` — per-harness
   `{append, replace}` over `GET /api/harness-system-prompts`; bespoke draft hook
   (nested shape), same clobber-guard; `getHarnessSystemPromptsPatch()` returns

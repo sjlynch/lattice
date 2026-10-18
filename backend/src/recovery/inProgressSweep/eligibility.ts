@@ -26,6 +26,7 @@ import { MIN_AGE_MS } from './config.js';
 // are genuine "couldn't / shouldn't act" outcomes the caller surfaces.
 export type SkipReason =
   | { code: 'no-worktree-or-branch' }
+  | { code: 'review-active' }
   | { code: 'too-young' }
   | { code: 'session-live' }
   | { code: 'commit-count-failed'; error: unknown }
@@ -43,6 +44,10 @@ export async function decideAutoComplete(args: {
   now: number;
 }): Promise<EligibilityVerdict> {
   const { task, liveCwds, now } = args;
+
+  if (task.review?.status === 'reviewing' || task.review?.status === 'rerun') {
+    return { decision: 'skip', reason: { code: 'review-active' } };
+  }
 
   if (!task.worktreePath || !task.branch) {
     return { decision: 'skip', reason: { code: 'no-worktree-or-branch' } };

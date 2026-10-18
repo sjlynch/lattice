@@ -59,6 +59,8 @@ tasks.
 - `taskUpdate.ts` — `stampTimestamps` (status-transition timestamps) and
   `applyTaskUpdate` (immutable one-item replace).
 - `types.ts` — `Task`, `TaskStatus`, `TaskUpdates`, `TaskSubscriber`.
+  `Task.review` holds per-head second-opinion state/attempt and durable kept
+  branch identity. User lane changes withdraw active review identity.
 
 ## Ordering invariant
 
@@ -75,6 +77,10 @@ Boot restore (`restoreAllProjectsFromBackup`) must run before any other task
 read so the cache sees restored disk state.
 
 ## Crash-safety contract
+
+- `updateTaskWith` accepts an async decision (e.g. rechecking the git head
+  under the lock) and `{crashSafe:true}` for disk-first CAS transitions.
+  `updateTaskCrashSafe` accepts a guard evaluated under that same lock.
 
 - `updateTaskCrashSafe` writes disk **before** mutating cache — for one-way
   transitions (`ready_to_merge → qa`) where losing the update leaves the

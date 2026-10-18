@@ -123,12 +123,14 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
   public async updateTaskCrashSafe(
     id: string,
     updates: TaskUpdates,
+    guard?: (task: Task) => boolean | Promise<boolean>,
   ): Promise<Task | null> {
     return this.withLockedItemAcrossProjects<Task, Task | null>(
       id,
       (t) => t.id,
       () => this.loadAllKnown(),
       async ({ project, list, idx }) => {
+        if (guard && !await guard(list[idx])) return null;
         const updated = await applyCrashSafeTaskUpdate(
           {
             writeStateNow: (p, l) => this.writeStateNow(p, l),
@@ -211,15 +213,27 @@ export class TaskCacheManager extends ProjectStateManager<Task[], TaskSubscriber
   // no longer exists.
   public async updateTaskWith<R>(
     id: string,
-    decide: (task: Task, tasks: readonly Task[]) => { updates?: TaskUpdates; result: R },
+    decide: (task: Task, tasks: readonly Task[]) => { updates?: TaskUpdates; result: R } | Promise<{ updates?: TaskUpdates; result: R }>,
+    options: { crashSafe?: boolean } = {},
   ): Promise<{ task: Task; result: R } | null> {
     return this.withLockedItemAcrossProjects<Task, { task: Task; result: R }>(
       id,
       (t) => t.id,
       () => this.loadAllKnown(),
-      ({ project, list, idx }) => {
-        const { updates, result } = decide(list[idx], list);
+      async ({ project, list, idx }) => {
+        const { updates, result } = await decide(list[idx], list);
         if (!updates) return { task: list[idx], result };
+        if (options.crashSafe) {
+          const task = await applyCrashSafeTaskUpdate({
+            writeStateNow: (p, l) => this.writeStateNow(p, l),
+            cancelPendingPersist: (p) => this.cancelPendingPersist(p),
+            getCached: (p) => this.getCached(p),
+            setCached: (p, l) => this.setCached(p, l),
+          }, project, list, idx, id, updates);
+          if (!task) throw new Error(`task ${id}: crash-safe update failed`);
+          this.notifyProject(project);
+          return { task, result };
+        }
         const { updated, updatedList } = applyTaskUpdate(list, idx, updates);
         this.setCached(project, updatedList);
         this.schedulePersist(project);

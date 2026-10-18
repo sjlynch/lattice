@@ -16,6 +16,7 @@ const SRC = fileURLToPath(new URL('..', import.meta.url));
 const ALLOWED: Record<string, string> = {
   'worktree/projectGit.ts': 'the wrapper itself',
   'worktree/state.ts': 'worktree subsystem: .git integrity / HEAD probes behind projectGit',
+  'taskReview/git.ts': 'read-only patch and pre-patch source in the task worktree',
   'worktree/conflictResolve.ts': 'runs in a disposable task worktree',
   'worktree/discardArchive.ts': 'runs in a disposable task worktree',
   'worktree/diskSpace.ts': 'read-only size probe',

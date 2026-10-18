@@ -249,3 +249,5 @@
 .task-writing-gap-list > li + li {
   margin-top: 8px;
 }
+.settings-review-field { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 10px; color: var(--text-secondary); }
+.settings-review-field .text-input { width: auto; flex: 1; min-width: 150px; }

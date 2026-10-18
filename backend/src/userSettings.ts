@@ -21,6 +21,8 @@ export {
   userSettingsShapeError,
 } from './userSettings/storage.js';
 export {
+  taskReviewIn,
+  taskReviewerIn,
   isClaudeMemoryDisabled,
   isQaTerminalAutoCloseEnabled,
   isKeepWorkflowStepTerminalsEnabled,

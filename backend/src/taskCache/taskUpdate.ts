@@ -31,6 +31,14 @@ export function stampTimestamps(prev: Task, updates: TaskUpdates): TaskUpdates {
   };
   const newStatus = updates.status ?? prev.status;
   if (newStatus !== prev.status) {
+    // A user lane move withdraws an outstanding review, even if they move
+    // back before the CLI returns. Explicit review transitions supply review.
+    if (!('review' in updates) &&
+        (prev.review?.status === 'reviewing' || prev.review?.status === 'rerun') &&
+        !(prev.status === 'open' && newStatus === 'in_progress' && prev.review.status === 'rerun')) {
+      out.review = { ...prev.review, status: 'error', finishedAt: now,
+        reason: 'Review withdrawn after task moved lanes', rerunPending: false };
+    }
     if (newStatus === 'in_progress' && updates.startedAt === undefined && !prev.startedAt) {
       out.startedAt = now;
     }

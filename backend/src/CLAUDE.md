@@ -47,7 +47,7 @@ Pinned by `__tests__/moduleLayout.test.ts`: a domain's public surface is a root
 - **No `fs.rm({recursive})` on anything inside a project** — worktrees live
   outside the tree and teardown delegates to `git worktree remove`. One-off
   scratch cleanup is an intentional recursive delete, bounded to
-  `per-project/<hash>/{push,qa,post-merge-hooks}/<id>/` with path +
+  `per-project/<hash>/{push,qa,post-merge-hooks,reviews}/<id>/` with path +
   reparse-point guards (`homeScratch/CLAUDE.md`).
 - **Executor imports** — every file `terminal-server.ts` reaches is in
   `terminalFingerprint.ts`'s `FINGERPRINT_FILES`; never import

@@ -42,6 +42,13 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
 
 ## Invariants
 
+- `taskReview` defaults off (`taskReviewIn`); flag/re-run are opt-ins in Agent
+  prompts. Reviewer harness defaults Codex, model gpt-6.1-sol (Claude:
+  claude-sonnet-5-5), effort low. Rerun requires `taskReviewRerunHarness`;
+  model/Pi-model/effort follow task launch policy. Storage validates enums
+  (null clears optional fields), drops malformed stored values, and guards
+  model strings like sibling fields. Completion gating is `../taskReview.ts`.
+
 - `taskWritingRules` (absent = none) is trimmed, de-duplicated and cleared when
   empty in storage; PATCH validates at most 12 strings, 300 characters each.
   `plannerSpecGaps` defaults ON (`plannerSpecGapsIn` in `features.ts`); only

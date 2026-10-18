@@ -1,5 +1,20 @@
 import { getUserSettings } from './storage.js';
 import type { UserSettings } from './types.js';
+import { normalizeAgentEffort, normalizeAgentModel } from '../shared/harnesses.js';
+
+// Default OFF. Unknown hand-written values never enable the reviewer.
+export function taskReviewIn(settings: UserSettings): 'off' | 'flag' | 'rerun' {
+  return settings.taskReview === 'flag' || settings.taskReview === 'rerun' ? settings.taskReview : 'off';
+}
+
+export function taskReviewerIn(settings: UserSettings) {
+  const harness = settings.taskReviewHarness === 'claude' ? 'claude' : 'codex';
+  return {
+    harness,
+    model: normalizeAgentModel(settings.taskReviewModel) ?? (harness === 'codex' ? 'gpt-6.1-sol' : 'claude-sonnet-5-5'),
+    effort: normalizeAgentEffort(settings.taskReviewEffort) ?? 'low',
+  };
+}
 
 // Default ON: only an explicit false hides recent implementer reports.
 export function plannerSpecGapsIn(settings: UserSettings): boolean {

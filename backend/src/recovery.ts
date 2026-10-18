@@ -28,6 +28,7 @@ export { resumeInterruptedOneOffRuns } from './recovery/oneOffRunResume.js';
 export { resumeInterruptedMergeRuns } from './recovery/mergeRunResume.js';
 export { resumeInterruptedWorkflowRuns } from './recovery/workflowRunResume.js';
 export { resumeQueuedTaskRuns } from './recovery/queuedRunResume.js';
+export { resumeInterruptedTaskReviews, sweepTaskReviewScratch } from './recovery/taskReviewResume.js';
 export { sweepOrphanedWorktrees } from './recovery/worktreeSweep.js';
 export { sweepOrphanedPushSessions } from './recovery/pushSessionSweep.js';
 export { sweepOrphanedQaSessions } from './recovery/qaSessionSweep.js';

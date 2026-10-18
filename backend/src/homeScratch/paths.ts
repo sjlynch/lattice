@@ -62,6 +62,8 @@ export type HomeScratchConfig = {
   // Human noun for this scratch in safety errors (e.g. 'push session',
   // 'qa session', 'hook') — phrases the id/path/root descriptions.
   noun: string;
+  // Fixed feature-owned identity grammar (task reviews use the task id).
+  idPattern?: RegExp;
 };
 
 export type HomeScratchPaths = {
@@ -82,7 +84,7 @@ export function createHomeScratchPaths(
   const { dirName, idPrefix, logLabel, noun } = config;
   // idPrefix is always a fixed code literal ('push'/'qa'/'pmh'), so it carries
   // no regex-special characters.
-  const idRe = new RegExp(`^${idPrefix}_\\d+_[0-9a-f]+$`);
+  const idRe = config.idPattern ?? new RegExp(`^${idPrefix}_\\d+_[0-9a-f]+$`);
 
   function sessionsRoot(projectPath: string): string {
     return homeProjectScratchDir(projectPath, dirName);

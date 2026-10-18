@@ -42,6 +42,9 @@ export function spawnWithTimeout(
     // Optional cancellation: aborting kills the child and resolves with
     // `aborted: true` (an already-aborted signal resolves without spawning).
     signal?: AbortSignal;
+    input?: string;
+    // Bound captured CLI output without blocking pipe drainage.
+    maxOutputChars?: number;
   },
 ): Promise<SpawnWithTimeoutResult> {
   return new Promise((resolve) => {
@@ -95,14 +98,18 @@ export function spawnWithTimeout(
     child.stderr?.setEncoding('utf8');
     child.stdout?.on('data', (d) => {
       const s = String(d);
-      stdout += s;
-      combined += s;
+      stdout = (stdout + s).slice(0, opts.maxOutputChars);
+      combined = (combined + s).slice(0, opts.maxOutputChars);
     });
     child.stderr?.on('data', (d) => {
       const s = String(d);
-      stderr += s;
-      combined += s;
+      stderr = (stderr + s).slice(0, opts.maxOutputChars);
+      combined = (combined + s).slice(0, opts.maxOutputChars);
     });
+    // A child that exits before reading stdin may emit EPIPE; its exit/error
+    // result is authoritative, and must never crash the backend.
+    child.stdin?.on('error', () => {});
+    if (opts.input !== undefined) child.stdin?.end(opts.input);
 
     // Kill the child — and, for a `shell: true` spawn, everything under it
     // (the real work, `pi` / `npm install`, is the shell's grandchild). See

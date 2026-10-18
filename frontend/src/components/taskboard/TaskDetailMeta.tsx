@@ -16,6 +16,12 @@ export function TaskDetailMeta({ task, lane }: TaskDetailMetaProps) {
         <span style={{ color: lane.color, fontWeight: 600 }}>{lane.label}</span>
       </span>
       <span>Created: {new Date(task.createdAt).toLocaleString()}</span>
+      {task.review && <span>
+        Second opinion: {task.review.status}
+        {task.review.p !== undefined ? ` · ${task.review.p}%` : ''}
+        {task.review.reviewer ? ` · ${task.review.reviewer}` : ''}
+        {task.review.reason ? ` · ${task.review.reason}` : ''}
+      </span>}
       {task.startedAt && (
         <span>Started: {new Date(task.startedAt).toLocaleString()}</span>
       )}

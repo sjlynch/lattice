@@ -31,6 +31,7 @@ See the [parent recovery guide](../CLAUDE.md) for the boot pipeline.
   concurrently through `../concurrency.ts`. Catch errors per task; a failed
   project's task listing is logged and skipped without blocking other projects.
 - Keep `eligibility.ts` read-only and mutation ownership in `complete.ts`.
+  Skip `reviewing` / `rerun` tasks: their review owns completion after PTY exit.
   Missing `worktreePath` or `branch`, age below `MIN_AGE_MS`, a live PTY at the
   exact normalized worktree cwd, a failed `branchCommitCount` probe, or zero
   commits ahead of the project's HEAD must each prevent auto-completion.

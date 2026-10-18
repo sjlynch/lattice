@@ -145,6 +145,8 @@
   border-color: rgba(106, 169, 255, 0.50);
 }
 .task-card.conflict { border-left-color: #f5a36a !important; }
+.task-card-queued-pill.task-card-review-pill { color: var(--accent); background: var(--accent-bg); }
+.task-card-review-pill.rejected { color: var(--danger); background: var(--bg-active); }
 .task-card-conflict-pill {
   display: inline-flex;
   align-items: center;
@@ -193,4 +195,3 @@
   vertical-align: middle;
   letter-spacing: 0.04em;
 }
-

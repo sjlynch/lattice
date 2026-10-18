@@ -120,6 +120,22 @@ test('targeted task tests are saved only when their checkbox was flipped', async
   }
 });
 
+test('second opinion fields ride Save only when edited, including optional-field clearing', async () => {
+  for (const reviewPatch of [undefined, { taskReview: 'off' as const },
+    { taskReview: 'rerun' as const, taskReviewRerunHarness: 'codex' as const, taskReviewRerunModel: 'strong-model' }]) {
+    requests = [];
+    await saveSettings(params({ handles: { ...NULL_HANDLES, instructionTemplates: {
+      getInstructionTemplateOverridesPatch: () => undefined,
+      getTaskAgentTypecheckPatch: () => undefined,
+      getTaskAgentTestsPatch: () => undefined,
+      getTaskWritingPatch: () => undefined,
+      getTaskReviewPatch: () => reviewPatch,
+    } } }));
+    const body = settingsPatch();
+    assert.deepEqual(body, reviewPatch ?? {});
+  }
+});
+
 test('before load, only the edited launch field and a touched startup list are written', async () => {
   const edited: StartupTerminal[] = [
     { id: 'st_1', label: 'dev', command: 'npm run dev' },

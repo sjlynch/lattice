@@ -76,6 +76,7 @@ export const TaskCardBody = memo(function TaskCardBody({
             <Hourglass size={9} /> {task.runWaitingForDisk ? 'waiting for disk' : 'queued'}
           </span>
         )}
+        <TaskReviewBadge task={task} />
         {task.title}
       </div>
       {task.description && (
@@ -92,6 +93,16 @@ export const TaskCardBody = memo(function TaskCardBody({
     </div>
   );
 });
+
+export function TaskReviewBadge({ task }: { task: Task }) {
+  const review = task.review;
+  const label = review?.status === 'reviewing' ? 'Reviewing…'
+    : review?.status === 'rejected' ? 'Doubtful'
+    : review?.status === 'rerun' ? 'Re-running' : null;
+  if (!label) return null;
+  return <span className={`task-card-queued-pill task-card-review-pill ${review!.status}`}
+    title={review?.reason}>{label}</span>;
+}
 
 // Conflict pill + (once it's been stuck a while) the "stuck Nm" pill. Renders
 // nothing unless the task is mid-conflict.

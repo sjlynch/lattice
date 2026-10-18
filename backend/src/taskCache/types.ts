@@ -9,6 +9,23 @@ export type TaskStatus =
 
 import type { AgentEffort, AgentHarness } from '../harnesses.js';
 
+export type TaskReview = {
+  status: 'reviewing' | 'accepted' | 'rejected' | 'error' | 'rerun';
+  head: string;
+  startedAt: number;
+  attempt: 1 | 2;
+  p?: number;
+  reason?: string;
+  reviewer?: string;
+  finishedAt?: number;
+  // Durable rerun intent, retained across teardown/restart. The second
+  // attempt's reviewing record replaces this when its completion arrives.
+  keptBranch?: string;
+  // True only between durable rerun intent and the Open/runQueued flip.
+  // A running second attempt keeps its badge but must never be torn down.
+  rerunPending?: boolean;
+};
+
 export type Task = {
   id: string;
   projectPath: string;
@@ -21,6 +38,7 @@ export type Task = {
   // ask) must never be overwritten by an agent's summary — the board shows
   // both. Multiple appends are joined with a `---` divider.
   summary?: string;
+  review?: TaskReview;
   status: TaskStatus;
   createdAt: number;
   // Timestamp of the most recent mutation (any field). Set by updateTask /

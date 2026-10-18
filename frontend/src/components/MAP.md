@@ -23,6 +23,7 @@ add, move or delete a component or stylesheet.
 ## Big launchers (split into subdirs)
 
 - `TaskBoard.tsx` → `taskboard/`. Kanban + drag-drop + per-card actions + merge-run strip.
+- `settings/TaskReviewSection.tsx` / `useTaskReviewDraft.ts` — per-project Second opinion controls; `taskboard/TaskCardSubcomponents.tsx` / `TaskDetailMeta.tsx` show review state.
 - `Workflows.tsx` → `workflows/`. Workflow editor + saved-list sidebar + run strip.
 - `ForceGraphView.tsx` → `forceGraph/`. 3D graph + LOC overlay + box-select + settings panel.
 

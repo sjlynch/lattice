@@ -19,15 +19,17 @@ export function StartTasksHarnessSelect({
   harness,
   piModel,
   onChange,
+  defaultLabel = 'Tasks: project default',
 }: {
   harnessAvail: HarnessAvailability;
   piMenu: PiMenuEntry[];
   harness?: AgentHarness;
   piModel?: string;
   onChange: (harness: AgentHarness | undefined, piModel: string | undefined) => void;
+  defaultLabel?: string;
 }) {
   const options = [
-    { value: PROJECT_DEFAULT, label: 'Tasks: project default' },
+    { value: PROJECT_DEFAULT, label: defaultLabel },
     ...buildHarnessOptions({
       harnessAvail,
       piMenu,

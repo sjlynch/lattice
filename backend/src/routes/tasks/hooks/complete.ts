@@ -8,6 +8,7 @@
 import type { Request, Response } from 'express';
 import { getTask, updateTaskCrashSafe, type Task } from '../../../tasks.js';
 import { branchCommitCount } from '../../../worktree.js';
+import { beginTaskReview, isReviewedTaskHead } from '../../../taskReview.js';
 import { proxyKillSessionsByCwd } from '../../../terminalProxy.js';
 import { notifySessionsFreed } from '../../../spawnQueue.js';
 import { finalizeResolvedTask, type FinalizeResolvedResult } from '../finalizeResolved.js';
@@ -132,7 +133,7 @@ const AWAITING_COMMIT_MESSAGE =
   'Commit your changes (git add -A && git commit -m "<summary>") and call this URL again. ' +
   'If the task truly needs no change, explain why with the append-summary route, then commit nothing.';
 
-export function handleTaskComplete(backendOrigin: string) {
+export function handleTaskComplete(backendOrigin: string, review = beginTaskReview, reviewedHead = isReviewedTaskHead) {
   return async (req: Request<{ id: string }>, res: Response): Promise<Response | void> => {
     const source = typeof req.query.source === 'string' ? req.query.source : 'unknown';
     const task = await getTask(req.params.id);
@@ -168,6 +169,11 @@ export function handleTaskComplete(backendOrigin: string) {
     if (task.status !== 'in_progress') {
       return res.json({ ok: true });
     }
+    if (task.review && await reviewedHead(task)) {
+      res.json({ ok: true });
+      if (task.worktreePath) scheduleWorktreePtyKill(task.worktreePath);
+      return;
+    }
     // Only flip when there are real commits — Claude finishing without
     // committing must NOT be reported as ready to merge. A *git error* while
     // counting is not the same as a real zero, though (see
@@ -187,6 +193,12 @@ export function handleTaskComplete(backendOrigin: string) {
         // The agent that curled /complete reads this body: say what to do next.
         return res.json({ ok: true, awaitingCommit: true, message: AWAITING_COMMIT_MESSAGE });
       }
+    }
+    const reviewOutcome = await review(task, backendOrigin);
+    if (reviewOutcome !== 'off') {
+      res.json(reviewOutcome === 'reviewing' ? { ok: true, reviewing: true } : { ok: true });
+      if (task.worktreePath) scheduleWorktreePtyKill(task.worktreePath);
+      return;
     }
     // Crash-safe (disk-before-cache), NOT the debounced updateTask. The Stop
     // hook fires exactly once, so if the backend hot-restarts inside the 100 ms

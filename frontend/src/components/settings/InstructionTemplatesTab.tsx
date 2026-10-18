@@ -11,6 +11,8 @@ import { TemplateCard } from './TemplateCard';
 import { useTaskWritingDraft } from './useTaskWritingDraft';
 import { TaskWritingSection } from './TaskWritingSection';
 import { SettingsInfo } from './SettingsInfo';
+import { useTaskReviewDraft } from './useTaskReviewDraft';
+import { TaskReviewSection } from './TaskReviewSection';
 
 type Props = {
   active: boolean;
@@ -28,6 +30,7 @@ export type InstructionTemplatesTabHandle = {
   // `taskAgentTests`, or undefined unless the user flipped the checkbox.
   getTaskAgentTestsPatch: () => boolean | undefined;
   getTaskWritingPatch: () => Pick<UserSettings, 'taskWritingRules' | 'plannerSpecGaps'> | undefined;
+  getTaskReviewPatch?: () => Partial<UserSettings> | undefined;
 };
 
 // Stable (module-level) config for the shared override-draft engine. A draft
@@ -124,6 +127,7 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
     const verification = useTaskAgentVerificationDraft(open, activeFolder);
     const { typecheckPatch, testsPatch } = verification;
     const taskWriting = useTaskWritingDraft(open, activeFolder);
+    const taskReview = useTaskReviewDraft(open, activeFolder);
 
     useImperativeHandle(
       ref,
@@ -132,8 +136,9 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
         getTaskAgentTypecheckPatch: () => typecheckPatch,
         getTaskAgentTestsPatch: () => testsPatch,
         getTaskWritingPatch: taskWriting.getPatch,
+        getTaskReviewPatch: taskReview.getPatch,
       }),
-      [getInstructionTemplateOverridesPatch, typecheckPatch, testsPatch, taskWriting.getPatch],
+      [getInstructionTemplateOverridesPatch, typecheckPatch, testsPatch, taskWriting.getPatch, taskReview.getPatch],
     );
 
     if (!active) return null;
@@ -201,6 +206,7 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
             custom brief drops it) and the agent's system prompt, so it applies
             to resumed tasks and custom briefs too.
           </div>
+          <TaskReviewSection draft={taskReview} />
           {loading ? (
             <div className="settings-empty">Loading…</div>
           ) : error ? (

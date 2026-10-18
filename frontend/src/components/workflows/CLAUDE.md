@@ -51,6 +51,8 @@ execution view):
   a Start step's `StartTasksHarnessSelect` (`tasksHarness` / `tasksPiModel`; empty =
   the project's task harness) and `StepLaunchSelects` set the harness, model and
   effort of the tasks it starts.
+  `StartTasksHarnessSelect` also serves Second opinion reruns with an explicit
+  unconfigured label; `StepLaunchSelects` supplies the same model/effort menu.
 - `StepLaunchSelects.tsx` — model (Claude presets / Codex's own model list via
   `useCodexModels`; none under Pi) + effort selects; empty = the harness
   default. An effort with benchmark evidence is labelled "suggested"

@@ -45,7 +45,8 @@ shim. This file covers the files DIRECTLY here; the taskboard's hooks live in
   (`ACCENT_STATUSES`). Composes body + action row from `TaskCardSubcomponents.tsx`
   and re-exports the `TaskCardSelection` helpers so existing importers stay stable.
 - `TaskCardSubcomponents.tsx` — the memoized presentational pieces: `TaskCardBody`
-  (title/desc/summary + queued/conflict pills), `TaskCardConflictBadges`, and
+  (title/desc/summary + queued/conflict pills), `TaskReviewBadge` (Reviewing,
+  Doubtful/reason, Re-running; accepted/error hidden), `TaskCardConflictBadges`, and
   `TaskCardActions` (renders the icon-button row).
 - `TaskCardActions.ts` — declarative action specs + `buildTaskCardActions`: the
   ordered icon-button set (terminal, run, cancel-queued, resume, merge, qa,
@@ -61,7 +62,7 @@ shim. This file covers the files DIRECTLY here; the taskboard's hooks live in
   plus lane-appropriate Move/Run buttons. Stays open (edits intact) if a save
   fails. Editing state lives in `hooks/useTaskDetailEdit`.
 - `TaskDetailMeta.tsx` — read-only status/timestamps/branch/worktree block shown
-  inside the detail overlay.
+  inside the detail overlay, plus latest review verdict/probability/reviewer/reason.
 - `moveTargets.ts` — pure `getApplicableMoveTargets(status)` → the "Move to …"
   buttons for the detail overlay.
 

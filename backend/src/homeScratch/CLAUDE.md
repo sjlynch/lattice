@@ -117,6 +117,11 @@ its methods under the legacy names, so all existing import paths keep working:
 | qaRuns         | `qa`                | `qa`     | `[qaRuns]`           | `qa session`   |
 | postMergeHooks | `post-merge-hooks`  | `pmh`    | `[post-merge-hook]`  | `hook`         |
 | opengrep review | `security-reviews` | `sreview` | `[security-review]` | `security review` |
+| task second opinion | `reviews` | `t` (task-id grammar) | `[task-review]` | `task review` |
+
+Task reviews are bounded headless CLIs (`../taskReview/runner.ts`), not PTYs.
+They reuse task ids via the fixed `idPattern` config and the same path/reparse
+guards and cleanup. Other features retain the default minted-id grammar.
 
 Security review uses `startHomeScratchAgentSession` directly with the `user`
 terminal owner: it is an interactive conversation with ordinary harness resume,

@@ -21,6 +21,8 @@ Agent prompts' `taskWritingRules` and `plannerSpecGaps` follow this pattern in `
 
 Agent prompts' default-off `taskAgentTypecheck` / `taskAgentTests` use `InstructionTemplatesTab.tsx`'s `useTaskAgentVerificationDraft`: only flips produce patches. BE `taskVerification.ts` renders `{ typecheck, tests }` in task and merge briefs plus spawn system prompts; keep both channels covered in `taskVerification.test.ts`.
 
+Agent prompts' `taskReview` defaults off. `useTaskReviewDraft.ts` / `TaskReviewSection.tsx` own per-field reviewer/rerun edits; Save and dirty use `getTaskReviewPatch`. BE `taskReview/` owns completion admission, bounded headless review and a single fresh rerun through the persisted run queue; boot resumes reviewing/rerun intents in `recovery/taskReviewResume.ts`. Card/detail presentation reads `Task.review`. See `taskReview/CLAUDE.md`.
+
 ## 2. Machine-global setting
 
 When: a fact about the machine (`~/.lattice/globalSettings.json`, `PATCH /api/global-settings`). Owner: BE `globalSettings/CLAUDE.md`.

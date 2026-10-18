@@ -193,6 +193,8 @@ export async function saveSettings({
   if (typecheckPatch !== undefined) patch.taskAgentTypecheck = typecheckPatch;
   const testsPatch = handles.instructionTemplates?.getTaskAgentTestsPatch();
   if (testsPatch !== undefined) patch.taskAgentTests = testsPatch;
+  const reviewPatch = handles.instructionTemplates?.getTaskReviewPatch?.();
+  if (reviewPatch !== undefined) Object.assign(patch, reviewPatch);
   const taskWritingPatch = handles.instructionTemplates?.getTaskWritingPatch();
   if (taskWritingPatch !== undefined) Object.assign(patch, taskWritingPatch);
   // Per-harness system-prompt overrides (same clobber-guard: the patch is the

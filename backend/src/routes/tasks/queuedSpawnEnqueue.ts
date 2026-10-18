@@ -32,8 +32,12 @@ export async function enqueueTaskRun(
   requestedHarness: unknown,
   requestedPiModel?: unknown,
   requestedLaunch: RequestedLaunch = {},
+  options: { requireQueued?: boolean } = {},
 ): Promise<EnqueueTaskResult> {
   const task = await getTask(taskId);
+  // An internal durable rerun already persisted its queue state. A cancel,
+  // delete or lane move in the hand-off gap must win over this late enqueue.
+  if (options.requireQueued && (!task?.runQueued || task.status !== 'open')) return { queued: false };
   if (task && !task.runQueued) {
     // Persist the execution policy only when explicitly requested: an absent
     // harness means "resolve the project/global default at spawn", which must

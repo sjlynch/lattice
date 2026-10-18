@@ -13,6 +13,10 @@ merge-run half of the resolver handshake: `../../../mergeRuns/CLAUDE.md`.
   → `finalizeResolvedTask`, rendered by `respondToResolverFinalize`) → the
   in_progress → ready_to_merge flip (`decideInProgressComplete`) → deferred
   pty kill. Any other lane is an `{ok:true}` no-op.
+  Opt-in second opinion (`../../../taskReview.ts`) replaces the task flip with
+  a crash-safe `reviewing` record and `{ok:true,reviewing:true}`; same-head
+  repeats are no-ops. Resolvers bypass it. The review owns the eventual flip
+  or persisted fresh rerun; see `../../../taskReview/CLAUDE.md`.
 - `merged.ts` — `/merged`: resolver success → `finalizeResolvedTask`.
 - `mergeAborted.ts` — `/merge-aborted`: resolver give-up or the Resolving
   strip's Cancel. Delegates abort-mid-merge + clear-conflict-flags +

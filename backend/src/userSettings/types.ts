@@ -1,4 +1,4 @@
-import type { AgentHarness } from '../shared/harnesses.js';
+import type { AgentEffort, AgentHarness } from '../shared/harnesses.js';
 import type { OpengrepProjectSettings } from '../opengrep/types.js';
 
 export type StartupTerminal = {
@@ -159,6 +159,19 @@ export type UserSettings = {
   // if needed. Never the whole suite or e2e tests. Absent/false = off.
   // Delivered through the same two channels. Settings → Agent prompts.
   taskAgentTests?: boolean;
+  // Second opinion before Ready to Merge. Absent = off; errors fail open.
+  taskReview?: 'off' | 'flag' | 'rerun';
+  // Reviewer defaults: codex / gpt-6.1-sol / low (effort is Codex-only).
+  // Claude's default model is claude-sonnet-5-5.
+  taskReviewHarness?: 'codex' | 'claude';
+  taskReviewModel?: string;
+  taskReviewEffort?: AgentEffort;
+  // A rejected first attempt is started fresh only with an explicit harness.
+  // Other absent fields mean the task harness's normal model/effort default.
+  taskReviewRerunHarness?: AgentHarness;
+  taskReviewRerunModel?: string;
+  taskReviewRerunPiModel?: string;
+  taskReviewRerunEffort?: AgentEffort;
   // Project task-description rules shown in every planning brief. Absent = none.
   taskWritingRules?: string[];
   // Show recent implementer Spec gaps to planners. Absent = on; only false is stored.

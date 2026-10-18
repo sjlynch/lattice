@@ -66,6 +66,8 @@ Named backend bootstrap helpers used by `index.ts` after process guards are inst
   here; `ensureCallbackScript()` runs immediately, independently of replay.
   The security review orphan sweep runs here too, preserving running reports
   for the review watchdog before reclaiming their guarded scratch directories.
+  Task second opinions also resume after listen (`resumeInterruptedTaskReviews`),
+  without blocking workflow adoption or the queued-run recovery chain.
   Recovery policy belongs to [recovery/CLAUDE.md](../recovery/CLAUDE.md),
   workflow lifecycle policy to [workflowRuns/CLAUDE.md](../workflowRuns/CLAUDE.md),
   and callback delivery to [callbackOutbox/CLAUDE.md](../callbackOutbox/CLAUDE.md).

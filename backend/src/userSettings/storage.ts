@@ -12,6 +12,7 @@ import { runExclusive } from '../serializeWrites.js';
 // Leaf module (no imports) — keeps the catalog out of userSettings' chain.
 import { RETIRED_BUILTIN_MCP_IDS } from '../mcp/retiredServers.js';
 import type { StartupTerminal, UserSettings } from './types.js';
+import { ALL_AGENT_EFFORTS, ALL_AGENT_HARNESSES } from '../shared/harnesses.js';
 
 function settingsFile(projectPath: string): string {
   return path.join(projectPath, PROJECT_DIR_NAME, 'userSettings.json');
@@ -80,8 +81,16 @@ function normalizeStartupTerminals(raw: unknown): StartupTerminal[] {
 const STRING_ARRAY_FIELDS = ['deadCodeEntryGlobs', 'metricsIgnoredExts'] as const;
 // Plain-string fields consumers `.trim()` / regex-match without checking
 // (`postMergeHookPrompt` in the post-merge trigger, the Pi model ids).
-const STRING_FIELDS = ['postMergeHookPrompt', 'piModel', 'postMergeHookPiModel'] as const;
+const STRING_FIELDS = ['postMergeHookPrompt', 'piModel', 'postMergeHookPiModel',
+  'taskReviewModel', 'taskReviewRerunModel', 'taskReviewRerunPiModel'] as const;
 const VERIFICATION_FIELDS = ['taskAgentTypecheck', 'taskAgentTests'] as const;
+const REVIEW_ENUM_FIELDS = {
+  taskReview: ['off', 'flag', 'rerun'],
+  taskReviewHarness: ['codex', 'claude'],
+  taskReviewEffort: ALL_AGENT_EFFORTS,
+  taskReviewRerunHarness: ALL_AGENT_HARNESSES,
+  taskReviewRerunEffort: ALL_AGENT_EFFORTS,
+} as const;
 
 // Why a PATCH body's value for one of the fields above is refused, or `null`
 // when every such field is well-shaped. `null` clears string/array fields;
@@ -89,6 +98,11 @@ const VERIFICATION_FIELDS = ['taskAgentTypecheck', 'taskAgentTests'] as const;
 // The route 400s on this so an API caller learns about the mistake instead of
 // having it silently healed (normalizeUserSettings still heals it on read).
 export function userSettingsShapeError(partial: Record<string, unknown>): string | null {
+  for (const [field, values] of Object.entries(REVIEW_ENUM_FIELDS)) {
+    if (field in partial && partial[field] !== null && !(values as readonly unknown[]).includes(partial[field])) {
+      return `${field} must be one of ${values.join(', ')}`;
+    }
+  }
   for (const field of VERIFICATION_FIELDS) {
     if (field in partial && typeof partial[field] !== 'boolean') {
       return `${field} must be a boolean`;
@@ -131,6 +145,10 @@ function cleanTaskWritingRules(rules: unknown[]): string[] {
 // bad write never lands. Only fields that can brick a consumer belong here —
 // this is a boundary guard, not a schema validator.
 function normalizeUserSettings<T extends Partial<UserSettings>>(settings: T): T {
+  for (const [field, values] of Object.entries(REVIEW_ENUM_FIELDS)) {
+    const record = settings as Record<string, unknown>;
+    if (field in record && !(values as readonly unknown[]).includes(record[field])) record[field] = undefined;
+  }
   for (const field of VERIFICATION_FIELDS) {
     if (field in settings && typeof settings[field] !== 'boolean') settings[field] = undefined;
   }

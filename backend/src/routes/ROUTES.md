@@ -72,7 +72,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | POST | `/api/tasks/:id/cancel-queued-run` | Drop a queued run back to plain Open |
 | POST | `/api/tasks/:id/run` | Enqueue a run → `{accepted, queued}` (pty via `task-spawned` WS) |
 | POST | `/api/tasks/:id/resume` | Enqueue a re-spawn in the existing worktree → `{accepted, queued}` |
-| POST | `/api/tasks/:id/complete` | Stop-hook callback (in_progress → ready_to_merge) |
+| POST | `/api/tasks/:id/complete` | Stop-hook callback (optional second opinion before in_progress → ready_to_merge; resolvers finalize directly) |
 | POST | `/api/tasks/:id/activity` | Worktree agent tool-use / subagent hook → `task-activity` WS (graph beams) |
 | POST | `/api/agent-activity/:token` | Same, for a non-worktree session (push / workflow step / post-merge hook) |
 | POST | `/api/project-instrumentation` | `{project}` install/remove activity hooks in the project's `.claude/settings.local.json` |

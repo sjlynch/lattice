@@ -25,6 +25,12 @@ Other docs cite these step numbers — keep them stable.
 5. `resumeInterruptedMergeRuns` (`mergeRunResume.ts`) — after listen (resolvers call the API). Skipped for a project with an active merge run or **active workflow run** (its Merge step owns the pipeline; a second run would double-process tasks). Resumes on a stale (dead-PID) run lock — or the interrupted-run marker step 2 leaves when it retires one (`projectRunLock/interruptedRun.ts`) — labelled `merge-run` or `workflow-merge:*` / `workflow-push:*` (`isResumableInterruptedRunLock`; fallback when a workflow's mirror is gone; a paused retry budget blocks it), only while `ready_to_merge` tasks remain (else the stale lock is retired; `clearStaleLockOrThrow` re-checks liveness). `manual-merge` and workflow `Start` locks are deliberately not resumed. `startMergeRun` is awaited up to run registration so 5a sees the run (else an owed hook raced it and fired twice).
 5a. `fireOwedPostMergeHooks` (`owedPostMergeHooks.ts`) — after 4a + 5: fire a hook a pre-restart merge still owes (`postMergeHooks/owed.ts`) unless an active merge or workflow run, a held or stale-resumable run.lock, or an uncleared interrupted-run marker owns the project (that merge fires it; a hook now would edit main under its snapshot).
 6. `resumeQueuedTaskRuns` (`queuedRunResume.ts`) — after step 3: re-enqueues spawn-queued runs (`Task.runQueued`), so a half-created worktree is reconciled by the re-run, not reclaimed.
+6a. `resumeInterruptedTaskReviews` (`taskReviewResume.ts`) — after listen,
+   requeues in-progress `reviewing` records and finishes interrupted `rerun`
+   teardown intents. Per-task single flight dedupes completion replays; the
+   four-wide review queue bounds CLI work. Open reruns use step 6 normally.
+   `sweepTaskReviewScratch` reclaims guarded orphan scratch while preserving
+   active reviews; its per-task scratch lock also serializes against CLI setup.
 
 ## Worktree residue sweep
 

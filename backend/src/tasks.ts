@@ -23,6 +23,7 @@ export {
   PROJECT_TASKS_FILENAME,
 } from './taskCache/paths.js';
 export type { Task, TaskStatus, TaskSubscriber, TaskUpdates } from './taskCache/types.js';
+export { appendSummaryText } from './taskCache/taskUpdate.js';
 
 const projectsIndex = new ProjectsIndex();
 const migrations = new TaskMigrations(projectsIndex);
@@ -45,8 +46,9 @@ export function subscribe(fn: TaskSubscriber): () => void {
 export async function updateTaskCrashSafe(
   id: string,
   updates: TaskUpdates,
+  guard?: (task: Task) => boolean | Promise<boolean>,
 ): Promise<Task | null> {
-  return taskCache.updateTaskCrashSafe(id, updates);
+  return taskCache.updateTaskCrashSafe(id, updates, guard);
 }
 
 // Bypass the debounce and write the task cache to disk right now.
@@ -106,9 +108,10 @@ export async function updateTask(
 // TaskCacheManager.updateTaskWith). Null when the task no longer exists.
 export async function updateTaskWith<R>(
   id: string,
-  decide: (task: Task, tasks: readonly Task[]) => { updates?: TaskUpdates; result: R },
+  decide: (task: Task, tasks: readonly Task[]) => { updates?: TaskUpdates; result: R } | Promise<{ updates?: TaskUpdates; result: R }>,
+  options?: { crashSafe?: boolean },
 ): Promise<{ task: Task; result: R } | null> {
-  return taskCache.updateTaskWith(id, decide);
+  return taskCache.updateTaskWith(id, decide, options);
 }
 
 // Append to a task's `summary` with the read-modify-write under the project
