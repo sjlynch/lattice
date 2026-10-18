@@ -25,7 +25,7 @@ function assertCoverage(files: string[], areas: SourceArea[]) {
 }
 
 test('source extensions are case insensitive; test, generated and vendor files are excluded', () => {
-  for (const ext of 'ts tsx js jsx mjs cjs py go rs java kt swift rb php cs c cc cpp h hpp scala vue svelte'.split(' ')) {
+  for (const ext of 'ts tsx js jsx mjs cjs py go rs java kt swift rb php cs c cc cpp h hpp scala vue svelte dart ex exs erl lua hs zig ml m mm jl r pl sh'.split(' ')) {
     assert.ok(isAreaSourceFile(`src/main.${ext}`), ext);
     assert.ok(isAreaSourceFile(`src\\MAIN.${ext.toUpperCase()}`), ext);
   }

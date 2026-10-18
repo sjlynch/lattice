@@ -1,7 +1,7 @@
 export type SourceArea = { paths: string[]; files: number; label: string };
 export type SourceAreasResult = { areas: SourceArea[]; totalFiles: number };
 
-const SOURCE_EXTENSION = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|swift|rb|php|cs|c|cc|cpp|h|hpp|scala|vue|svelte)$/i;
+const SOURCE_EXTENSION = /\.(ts|tsx|js|jsx|mjs|cjs|py|go|rs|java|kt|swift|rb|php|cs|c|cc|cpp|h|hpp|scala|vue|svelte|dart|ex|exs|erl|lua|hs|zig|ml|m|mm|jl|r|pl|sh)$/i;
 const EXCLUDED_SEGMENTS = new Set([
   'node_modules', 'dist', 'build', 'out', 'coverage', 'vendor', '.git',
   '__snapshots__', '__tests__', 'tests', 'test', 'spec', 'e2e', 'fixtures',
