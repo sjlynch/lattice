@@ -10,6 +10,7 @@ import { useOverrideDraft } from './useOverrideDraft';
 import { TemplateCard } from './TemplateCard';
 import { useTaskWritingDraft } from './useTaskWritingDraft';
 import { TaskWritingSection } from './TaskWritingSection';
+import { SettingsInfo } from './SettingsInfo';
 
 type Props = {
   active: boolean;
@@ -24,6 +25,8 @@ export type InstructionTemplatesTabHandle = {
   getInstructionTemplateOverridesPatch: () => Record<string, string> | undefined;
   // `taskAgentTypecheck`, or undefined unless the user flipped the checkbox.
   getTaskAgentTypecheckPatch: () => boolean | undefined;
+  // `taskAgentTests`, or undefined unless the user flipped the checkbox.
+  getTaskAgentTestsPatch: () => boolean | undefined;
   getTaskWritingPatch: () => Pick<UserSettings, 'taskWritingRules' | 'plannerSpecGaps'> | undefined;
 };
 
@@ -37,31 +40,38 @@ const readOverrides = (s: UserSettings) => s.instructionTemplateOverrides ?? {};
 const matchesDefault = (draft: string, t: InstructionTemplate) =>
   draft.trim().length === 0 || draft === t.defaultTemplate;
 
-// The "task agents may type-check" checkbox (`taskAgentTypecheck`, default
-// OFF). Seeded from the project settings on each open; only a user flip
-// produces a patch, so a slow or failed GET can never write the default over
-// a saved value.
-function useTaskAgentTypecheckDraft(open: boolean, activeFolder: string) {
-  const [typecheck, setTypecheck] = useState(false);
-  const [touched, setTouched] = useState(false);
+// Both verification opt-ins default OFF. Only a user flip produces a patch;
+// a late GET must preserve edited values and unrelated saves write neither.
+export function useTaskAgentVerificationDraft(open: boolean, activeFolder: string) {
+  const [draft, setDraft] = useState({
+    project: '', typecheck: false, tests: false, typecheckTouched: false, testsTouched: false,
+  });
   useEffect(() => {
+    setDraft({ project: open ? activeFolder : '', typecheck: false, tests: false, typecheckTouched: false, testsTouched: false });
     if (!open || !activeFolder) return;
     let cancelled = false;
-    setTouched(false);
     fetchUserSettingsStrict(activeFolder)
       .then((s) => {
-        if (!cancelled) setTypecheck(s.taskAgentTypecheck === true);
+        if (!cancelled) setDraft((current) => ({
+          ...current,
+          typecheck: current.typecheckTouched ? current.typecheck : s.taskAgentTypecheck === true,
+          tests: current.testsTouched ? current.tests : s.taskAgentTests === true,
+        }));
       })
       .catch(() => { /* untouched → no patch */ });
     return () => {
       cancelled = true;
     };
   }, [open, activeFolder]);
-  const set = (value: boolean) => {
-    setTouched(true);
-    setTypecheck(value);
+  const currentProject = open && !!activeFolder && draft.project === activeFolder;
+  return {
+    typecheck: draft.typecheck,
+    tests: draft.tests,
+    setTypecheck: (value: boolean) => setDraft((current) => ({ ...current, typecheck: value, typecheckTouched: true })),
+    setTests: (value: boolean) => setDraft((current) => ({ ...current, tests: value, testsTouched: true })),
+    typecheckPatch: currentProject && draft.typecheckTouched ? draft.typecheck : undefined,
+    testsPatch: currentProject && draft.testsTouched ? draft.tests : undefined,
   };
-  return { typecheck, setTypecheck: set, patch: touched ? typecheck : undefined };
 }
 
 function useInstructionTemplatesDraft(open: boolean, active: boolean, activeFolder: string) {
@@ -111,8 +121,8 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
       getInstructionTemplateOverridesPatch,
     } = useInstructionTemplatesDraft(open, active, activeFolder);
     const [expanded, setExpanded] = useState<string | null>(null);
-    const verification = useTaskAgentTypecheckDraft(open, activeFolder);
-    const typecheckPatch = verification.patch;
+    const verification = useTaskAgentVerificationDraft(open, activeFolder);
+    const { typecheckPatch, testsPatch } = verification;
     const taskWriting = useTaskWritingDraft(open, activeFolder);
 
     useImperativeHandle(
@@ -120,9 +130,10 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
       () => ({
         getInstructionTemplateOverridesPatch,
         getTaskAgentTypecheckPatch: () => typecheckPatch,
+        getTaskAgentTestsPatch: () => testsPatch,
         getTaskWritingPatch: taskWriting.getPatch,
       }),
-      [getInstructionTemplateOverridesPatch, typecheckPatch, taskWriting.getPatch],
+      [getInstructionTemplateOverridesPatch, typecheckPatch, testsPatch, taskWriting.getPatch],
     );
 
     if (!active) return null;
@@ -167,10 +178,23 @@ export const InstructionTemplatesTab = forwardRef<InstructionTemplatesTabHandle,
             />
             <span>Task agents may type-check what they edited</span>
           </label>
+          <div className="settings-section-title-row">
+            <label className="settings-checkbox-row">
+              <input
+                type="checkbox"
+                checked={verification.tests}
+                onChange={(e) => verification.setTests(e.target.checked)}
+              />
+              <span>Task agents may run the tests for their change</span>
+            </label>
+            <SettingsInfo label="About targeted task-agent tests">
+              Task agents may run the specific test files covering their change, never the whole suite. On 166 replayed fixes this raised pass rates (most in library code) at about 35% more time per task.
+            </SettingsInfo>
+          </div>
           <div className="settings-section-sub">
             By default task agents (and their merge-conflict resolvers) run no
             tests, builds or type-checks — a workflow's Run tests step verifies
-            the merged work once instead of every agent at once. On, an agent may
+            the merged work once instead of every agent at once. With type-checking enabled, an agent may
             type-check the package(s) it edited; in a fresh worktree that costs a
             dependency install plus a cold build per task. The rule rides the
             Task brief's <code>{'{{verification}}'}</code> token (appended if a

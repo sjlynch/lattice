@@ -34,7 +34,7 @@ beside its `x/` folder ("`x.ts` / `x/`" below); "See its doc" = that folder's
 
 - `tasks.ts` / `taskCache/` — `tasks.ts` is the facade (the name predates the folder): the in-memory task cache + debounced `per-project/<hash>/tasks.json` persistence. See `taskCache/CLAUDE.md`.
 - `taskSpawnEvents.ts` — `task-spawned` / `task-spawn-failed` pub/sub: a queued run's pty (or its non-CAP failure) reaches the UI over `/ws/tasks`.
-- `taskVerification.ts` — renders `taskAgentTypecheck`: task agents run no tests/builds/type-checks, stated in the brief AND the system prompt.
+- `taskVerification.ts` — renders `taskAgentTypecheck` / `taskAgentTests`: no verification by default, optional scoped type-checks / targeted test files, in the brief AND system prompt.
 - `specGaps.ts` — parse final implementer Spec gaps, select recent project reports and render task-writing guidance; `specGapsTypes.ts` owns the node-free wire shape.
 - `worktree.ts` / `worktree/` — git-worktree subsystem: setup, merge, `projectGit`, `gitBackup`, disk guard, snapshots. See its doc.
 - `mergeRuns.ts` / `mergeRuns/` — "merge all" engine: public singleton + worker loop in the facade, state/preflight/per-target helpers in the folder. See its doc.

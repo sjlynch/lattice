@@ -119,6 +119,32 @@ test('userSettingsShapeError: flags bad shapes, allows well-formed values and nu
   assert.match(String(userSettingsShapeError({ postMergeHookPrompt: 3 })), /postMergeHookPrompt must be a string/);
 });
 
+// Verification permissions must never be enabled by a truthy hand-written value.
+for (const field of ['taskAgentTypecheck', 'taskAgentTests'] as const) {
+  test(`${field} accepts only booleans and heals malformed reads and writes`, async () => {
+    for (const value of [true, false]) {
+      assert.equal(userSettingsShapeError({ [field]: value }), null);
+    }
+    for (const value of ['true', 1, null, [], {}]) {
+      assert.equal(userSettingsShapeError({ [field]: value }), `${field} must be a boolean`);
+    }
+    const dir = await mkProject({ [field]: 'true' });
+    try {
+      assert.equal((await getUserSettings(dir))[field], undefined);
+      for (const value of [true, false]) {
+        await patchUserSettings(dir, { [field]: value });
+        assert.equal((await getUserSettings(dir))[field], value);
+      }
+      await patchUserSettings(dir, { [field]: 'true' as unknown as boolean });
+      assert.equal((await getUserSettings(dir))[field], undefined);
+      const stored = JSON.parse(await fs.readFile(path.join(dir, '.lattice', 'userSettings.json'), 'utf8'));
+      assert.equal(field in stored, false);
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+}
+
 test('PATCH /api/settings 400s a non-array deadCodeEntryGlobs and writes nothing', async () => {
   const dir = await mkProject();
   let server: http.Server | null = null;
@@ -128,6 +154,18 @@ test('PATCH /api/settings 400s a non-array deadCodeEntryGlobs and writes nothing
     server = http.createServer(app);
     await new Promise<void>((resolve) => server!.listen(0, '127.0.0.1', resolve));
     const port = (server.address() as AddressInfo).port;
+    for (const field of ['taskAgentTests', 'taskAgentTypecheck']) {
+      for (const value of ['true', 1, null, [], {}]) {
+        const rejected = await fetch(`http://127.0.0.1:${port}/api/settings?project=${encodeURIComponent(dir)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ [field]: value }),
+        });
+        assert.equal(rejected.status, 400);
+        assert.deepEqual(await rejected.json(), { error: `${field} must be a boolean` });
+        await assert.rejects(fs.access(path.join(dir, '.lattice', 'userSettings.json')));
+      }
+    }
     const res = await fetch(`http://127.0.0.1:${port}/api/settings?project=${encodeURIComponent(dir)}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },

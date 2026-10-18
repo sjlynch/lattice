@@ -30,6 +30,8 @@ export {
   taskAgentsLatticeMcpOnlyIn,
   isTaskAgentTypecheckEnabled,
   taskAgentTypecheckIn,
+  isTaskAgentTestsEnabled,
+  taskAgentTestsIn,
   plannerSpecGapsIn,
   getTaskWorktreeLfsContent,
   taskWorktreeLfsContentIn,

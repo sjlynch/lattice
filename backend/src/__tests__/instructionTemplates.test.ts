@@ -146,5 +146,5 @@ test('safer default reporting does not rewrite a custom task instruction templat
   // Only the verification rule is appended (a custom brief may predate its
   // token — see taskVerification.test.ts); the custom text itself is untouched.
   assert.equal(renderTaskMarkdown(task, 'http://127.0.0.1:5199', 'claude', [], null, custom),
-    `# Custom\nMy reporting command for t_custom\n\n${renderVerificationBlock(false)}`);
+    `# Custom\nMy reporting command for t_custom\n\n${renderVerificationBlock({ typecheck: false, tests: false })}`);
 });

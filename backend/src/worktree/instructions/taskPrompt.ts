@@ -5,7 +5,7 @@ import { canonicalProjectPath } from '../../projectPath.js';
 import { renderEnvNotesBlock } from '../envDetect.js';
 import { applyTemplate } from '../../instructionTemplates/apply.js';
 import { DEFAULT_TASK_TEMPLATE } from '../../instructionTemplates/defs.js';
-import { renderVerificationBlock, templateWithVerification } from '../../taskVerification.js';
+import { renderVerificationBlock, templateWithVerification, type VerificationOptions } from '../../taskVerification.js';
 
 // Reference-only nudge: surfaced only when the analyzer confidently flags at
 // least one unreachable file (`deadCode.total > 0`). Deliberately framed as
@@ -58,8 +58,7 @@ export function renderTaskMarkdown(
   envNotes: string[] = [],
   deadCode: DeadCodeSummary | null = null,
   template: string = DEFAULT_TASK_TEMPLATE,
-  // `taskAgentTypecheck`: may the agent type-check what it edited?
-  typecheck = false,
+  verification: VerificationOptions = { typecheck: false, tests: false },
 ): string {
   const created = new Date(task.createdAt).toISOString();
   const desc = task.description?.trim() || '_(no description provided)_';
@@ -115,6 +114,6 @@ export function renderTaskMarkdown(
     env_notes_block: envBlock,
     dead_code_block: deadCodeBlock,
     final_step: finalStep,
-    verification: renderVerificationBlock(typecheck),
+    verification: renderVerificationBlock(verification),
   });
 }

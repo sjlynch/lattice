@@ -10,14 +10,16 @@ When: a preference stored in `<project>/.lattice/userSettings.json` (`PATCH /api
 
 1. BE `userSettings/types.ts` — field on `UserSettings`, commented with what *absent* means. Node-free (type-only imports from node-free modules); the FE uses this very type.
 2. BE `userSettings/features.ts` — accessor encoding the default (`isXEnabled`, plus pure `xIn(settings)` when callers hold settings); re-export from the `userSettings.ts` facade. Consumers call it, never re-derive the default.
-3. BE `userSettings/storage.ts` — only if a malformed value breaks a consumer: add it to `STRING_FIELDS` / `STRING_ARRAY_FIELDS` (or a branch in `normalizeUserSettings`) and `userSettingsShapeError` (PATCH → 400). Pin in `__tests__/userSettingsFieldShapes.test.ts`.
+3. BE `userSettings/storage.ts` — shape-sensitive fields: add to `STRING_FIELDS` / `STRING_ARRAY_FIELDS` (or a branch in `normalizeUserSettings`) and `userSettingsShapeError` (PATCH → 400). Verification opt-ins `taskAgentTypecheck` / `taskAgentTests` use `VERIFICATION_FIELDS`: boolean-only PATCH, malformed stored values become absent. Pin in `__tests__/userSettingsFieldShapes.test.ts`.
 4. Route and FE type: nothing — `routes/settings/userSettings.ts` merges the whole body; `api/types/settings.ts` re-exports `UserSettings` via `shared/wireTypes.ts`.
-5. FE UI. Terminals-tab checkbox = a fetched toggle: key + default + read in `components/settings/fetchedToggles.ts`; value/setter on `SettingsDrafts` (`useSettingsDrafts.ts`); the `SaveDrafts` field + `fetchedToggles` map in `saveSettings.ts`; a row in `terminalToggleSections.tsx`. Other tabs: the tab's `get<Thing>Patch()` + one line in `saveSettings.ts`.
+5. FE UI. Terminals-tab checkbox = a fetched toggle: key + default + read in `components/settings/fetchedToggles.ts`; value/setter on `SettingsDrafts` (`useSettingsDrafts.ts`); the `SaveDrafts` field + `fetchedToggles` map in `saveSettings.ts`; a row in `terminalToggleSections.tsx`. Other tabs: the tab's `get<Thing>Patch()` + one line in `saveSettings.ts`, and include the getter in `useSettingsDirty.ts`.
 6. FE readers outside the dialog take their slice from App's `hooks/useUserSettings.ts`, not a second fetch.
 
 Gotchas: a patch stays `undefined` until loaded or touched — an unloaded default written by an unrelated Save resets the saved value (`saveSettingsUnloaded`, `settingsDraftLateFetch` tests). An editor saving a whole sub-object loads with `fetchUserSettingsStrict`. An accessor nobody reads fails `deadExports`.
 
 Agent prompts' `taskWritingRules` and `plannerSpecGaps` follow this pattern in `useTaskWritingDraft.ts`: per-field touched patches, consumed by `workflowRuns/stepSpawner.ts` for the workflow-step template's `{{task_writing_guidance}}` token. The recent-gap preview reads `/api/spec-gaps` only when expanded.
+
+Agent prompts' default-off `taskAgentTypecheck` / `taskAgentTests` use `InstructionTemplatesTab.tsx`'s `useTaskAgentVerificationDraft`: only flips produce patches. BE `taskVerification.ts` renders `{ typecheck, tests }` in task and merge briefs plus spawn system prompts; keep both channels covered in `taskVerification.test.ts`.
 
 ## 2. Machine-global setting
 

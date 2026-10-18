@@ -154,6 +154,11 @@ export type UserSettings = {
   // `{{verification}}` block AND the spawn's system-prompt append — see
   // `taskVerification.ts`. Settings → Agent prompts.
   taskAgentTypecheck?: boolean;
+  // `true` lets task agents and worktree merge resolvers run the specific test
+  // files covering their change, one file at a time, installing dependencies
+  // if needed. Never the whole suite or e2e tests. Absent/false = off.
+  // Delivered through the same two channels. Settings → Agent prompts.
+  taskAgentTests?: boolean;
   // Project task-description rules shown in every planning brief. Absent = none.
   taskWritingRules?: string[];
   // Show recent implementer Spec gaps to planners. Absent = on; only false is stored.

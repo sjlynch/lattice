@@ -31,7 +31,10 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   (default OFF — only explicit `true` keeps a finished workflow agent step's
   pty alive; read by the workflow advance to pick `releaseWorkflowStepSession`
   over the kill, see `../workflowRuns/CLAUDE.md`), `isTaskAgentTypecheckEnabled`
-  / `taskAgentTypecheckIn` (default OFF — see `../taskVerification.ts`),
+  / `taskAgentTypecheckIn` and `isTaskAgentTestsEnabled` / `taskAgentTestsIn`
+  (both default OFF — scoped type-checks / targeted test files respectively;
+  boolean-only PATCH validation and malformed-value normalization in storage;
+  see `../taskVerification.ts`),
   `getTaskWorktreeLfsContent` / `taskWorktreeLfsContentIn` (default
   `'pointers'` — anything but an explicit `'full'`, junk included, is pointer
   mode; see `../worktree/lfsMode.ts`). New "what does setting X mean

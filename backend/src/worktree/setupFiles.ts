@@ -8,7 +8,7 @@ import { renderTaskMarkdown } from './instructions.js';
 import { resolveInstructionTemplate } from '../instructionTemplates.js';
 import { LATTICE_EXCLUDE_PATTERNS } from './managedFiles.js';
 import { installPiSubagentsShim } from '../piSubagents.js';
-import { isTaskAgentTypecheckEnabled } from '../userSettings.js';
+import { isTaskAgentTypecheckEnabled, isTaskAgentTestsEnabled } from '../userSettings.js';
 import {
   installCodexCompletionHook,
   installPiCompletionExtension,
@@ -33,9 +33,10 @@ export async function writePostAddWorktreeFiles(
   const taskFile = path.join(worktreePath, 'LATTICE_TASK.md');
   const taskTemplate = await resolveInstructionTemplate(task.projectPath, 'task');
   const typecheck = await isTaskAgentTypecheckEnabled(task.projectPath).catch(() => false);
+  const tests = await isTaskAgentTestsEnabled(task.projectPath).catch(() => false);
   await fs.writeFile(
     taskFile,
-    renderTaskMarkdown(task, backendOrigin, harness, envNotes, deadCode, taskTemplate, typecheck),
+    renderTaskMarkdown(task, backendOrigin, harness, envNotes, deadCode, taskTemplate, { typecheck, tests }),
     'utf8',
   );
   // The Claude Stop hook is installed for every worktree regardless of run

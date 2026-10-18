@@ -109,9 +109,10 @@ Invariants:
   Lattice's default") or writes the text. `matchesDefault` is the one
   divergence (templates: blank-or-exact-default; env notes: trimmed equality).
   Keep both tabs on the hook — don't re-copy the clobber-guard.
-- `InstructionTemplatesTab` also owns `taskAgentTypecheck` (default OFF; backend
-  `taskVerification.ts`) and `EnvNotesTab` owns `taskWorktreeLfsContent`
-  (`'pointers'` default / `'full'`; backend `worktree/lfsMode.ts`): both seeded
+- `InstructionTemplatesTab` also owns `taskAgentTypecheck` and `taskAgentTests`
+  (default OFF; backend `taskVerification.ts`), via `useTaskAgentVerificationDraft`,
+  and `EnvNotesTab` owns `taskWorktreeLfsContent`
+  (`'pointers'` default / `'full'`; backend `worktree/lfsMode.ts`): all seeded
   per open from the strict GET, patched only after a user flip, counted in the
   Agent-prompts dirty flag.
 - `SettingsInfo`'s Escape handler is **capture-phase + `stopPropagation`**, so it

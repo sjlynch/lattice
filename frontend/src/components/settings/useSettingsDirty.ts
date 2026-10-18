@@ -76,6 +76,7 @@ export function useSettingsDirty({
         refs.instructionTemplates.current?.getInstructionTemplateOverridesPatch() !==
           undefined ||
         refs.instructionTemplates.current?.getTaskAgentTypecheckPatch() !== undefined ||
+        refs.instructionTemplates.current?.getTaskAgentTestsPatch() !== undefined ||
         refs.instructionTemplates.current?.getTaskWritingPatch() !== undefined ||
         refs.harnessSystemPrompts.current?.getHarnessSystemPromptsPatch() !==
           undefined ||

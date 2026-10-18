@@ -5,8 +5,8 @@ import { applyTemplate } from '../../instructionTemplates/apply.js';
 import { resolveInstructionTemplate } from '../../instructionTemplates/resolve.js';
 import { DEFAULT_MERGE_TEMPLATE } from '../../instructionTemplates/defs.js';
 import { ensureValidStopHook } from './stopHookRepair.js';
-import { isTaskAgentTypecheckEnabled } from '../../userSettings.js';
-import { renderVerificationBlock, templateWithVerification } from '../../taskVerification.js';
+import { isTaskAgentTypecheckEnabled, isTaskAgentTestsEnabled } from '../../userSettings.js';
+import { renderVerificationBlock, templateWithVerification, type VerificationOptions } from '../../taskVerification.js';
 import {
   MERGE_FILES_LIST_HINT,
   renderConflictedFilesList,
@@ -24,7 +24,7 @@ export function renderMergeInstructions(
   backendOrigin: string,
   envBlock: string,
   template: string = DEFAULT_MERGE_TEMPLATE,
-  typecheck = false,
+  verification: VerificationOptions = { typecheck: false, tests: false },
 ): string {
   const desc = task.description?.trim() || '_(no description provided)_';
   const filesList = renderConflictedFilesList(
@@ -39,7 +39,7 @@ export function renderMergeInstructions(
     env_notes_block: envBlock,
     conflicted_files: filesList,
     backend_origin: backendOrigin,
-    verification: renderVerificationBlock(typecheck),
+    verification: renderVerificationBlock(verification),
   });
 }
 
@@ -61,6 +61,7 @@ export async function writeMergeInstructions(
   const envBlock = await renderEnvBlockFor(task.projectPath);
   const template = await resolveInstructionTemplate(task.projectPath, 'merge');
   const typecheck = await isTaskAgentTypecheckEnabled(task.projectPath).catch(() => false);
+  const tests = await isTaskAgentTestsEnabled(task.projectPath).catch(() => false);
   const md = renderMergeInstructions(
     task,
     branch,
@@ -68,7 +69,7 @@ export async function writeMergeInstructions(
     backendOrigin,
     envBlock,
     template,
-    typecheck,
+    { typecheck, tests },
   );
   await fs.writeFile(file, md, 'utf8');
   return {

@@ -58,13 +58,22 @@ export async function isTaskAgentsLatticeMcpOnly(
 }
 
 // Whether task agents may type-check the package(s) they edited. Default OFF:
-// they run no tests, builds or type-checks at all (see taskVerification.ts).
+// verification otherwise depends on taskAgentTests (see taskVerification.ts).
 export function taskAgentTypecheckIn(settings: UserSettings): boolean {
   return settings.taskAgentTypecheck === true;
 }
 
 export async function isTaskAgentTypecheckEnabled(projectPath: string): Promise<boolean> {
   return taskAgentTypecheckIn(await getUserSettings(projectPath));
+}
+
+// Default OFF: only explicit true allows test files covering the change.
+export function taskAgentTestsIn(settings: UserSettings): boolean {
+  return settings.taskAgentTests === true;
+}
+
+export async function isTaskAgentTestsEnabled(projectPath: string): Promise<boolean> {
+  return taskAgentTestsIn(await getUserSettings(projectPath));
 }
 
 // How task worktrees check out Git LFS files. Default 'pointers' — anything but

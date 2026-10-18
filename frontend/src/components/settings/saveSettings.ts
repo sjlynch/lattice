@@ -191,6 +191,8 @@ export async function saveSettings({
   // user flipped it (an unrelated save never writes it).
   const typecheckPatch = handles.instructionTemplates?.getTaskAgentTypecheckPatch();
   if (typecheckPatch !== undefined) patch.taskAgentTypecheck = typecheckPatch;
+  const testsPatch = handles.instructionTemplates?.getTaskAgentTestsPatch();
+  if (testsPatch !== undefined) patch.taskAgentTests = testsPatch;
   const taskWritingPatch = handles.instructionTemplates?.getTaskWritingPatch();
   if (taskWritingPatch !== undefined) Object.assign(patch, taskWritingPatch);
   // Per-harness system-prompt overrides (same clobber-guard: the patch is the

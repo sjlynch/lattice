@@ -81,12 +81,19 @@ const STRING_ARRAY_FIELDS = ['deadCodeEntryGlobs', 'metricsIgnoredExts'] as cons
 // Plain-string fields consumers `.trim()` / regex-match without checking
 // (`postMergeHookPrompt` in the post-merge trigger, the Pi model ids).
 const STRING_FIELDS = ['postMergeHookPrompt', 'piModel', 'postMergeHookPiModel'] as const;
+const VERIFICATION_FIELDS = ['taskAgentTypecheck', 'taskAgentTests'] as const;
 
 // Why a PATCH body's value for one of the fields above is refused, or `null`
-// when every such field is well-shaped. `null` clears a field and is allowed.
+// when every such field is well-shaped. `null` clears string/array fields;
+// verification permissions require an explicit boolean.
 // The route 400s on this so an API caller learns about the mistake instead of
 // having it silently healed (normalizeUserSettings still heals it on read).
 export function userSettingsShapeError(partial: Record<string, unknown>): string | null {
+  for (const field of VERIFICATION_FIELDS) {
+    if (field in partial && typeof partial[field] !== 'boolean') {
+      return `${field} must be a boolean`;
+    }
+  }
   if ('taskWritingRules' in partial) {
     const rules = partial.taskWritingRules;
     if (!Array.isArray(rules) || rules.some((rule) => typeof rule !== 'string')) {
@@ -124,6 +131,9 @@ function cleanTaskWritingRules(rules: unknown[]): string[] {
 // bad write never lands. Only fields that can brick a consumer belong here —
 // this is a boundary guard, not a schema validator.
 function normalizeUserSettings<T extends Partial<UserSettings>>(settings: T): T {
+  for (const field of VERIFICATION_FIELDS) {
+    if (field in settings && typeof settings[field] !== 'boolean') settings[field] = undefined;
+  }
   if ('taskWritingRules' in settings) {
     const rules = Array.isArray(settings.taskWritingRules) ? cleanTaskWritingRules(settings.taskWritingRules) : [];
     settings.taskWritingRules = rules.length ? rules : undefined;

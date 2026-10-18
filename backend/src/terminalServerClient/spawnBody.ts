@@ -1,6 +1,7 @@
 import {
   getUserSettings,
   taskAgentTypecheckIn,
+  taskAgentTestsIn,
   taskWorktreeLfsContentIn,
   type UserSettings,
 } from '../userSettings.js';
@@ -98,10 +99,10 @@ async function resolveHarnessConfig(
     ...(latticeOnly ? { latticeOnly: true } : {}),
     ...(isUserLaunchedSpawn(opts) ? { userLaunched: true } : {}),
   };
-  // A task-worktree agent's "don't run tests" rule rides its system prompt as
+  // A task-worktree agent's verification rule rides its system prompt as
   // well as its brief — see taskVerification.ts.
   const promptExtra = isTaskWorktreeSpawn(opts)
-    ? renderVerificationSystemPrompt(taskAgentTypecheckIn(settings))
+    ? renderVerificationSystemPrompt({ typecheck: taskAgentTypecheckIn(settings), tests: taskAgentTestsIn(settings) })
     : undefined;
   const ctx: SpawnContext = { latticeOnly, mcpCtx, promptExtra };
   const cwdOpts = { ...opts, cwd: opts.cwd };

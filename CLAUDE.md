@@ -116,7 +116,8 @@ One line each; the named doc owns the detail.
   only through the system prompt — never reintroduce `LATTICE_*` pty env vars
   or rely on the terminal banner; neither reaches the agent.
 - **Task agents don't run tests, builds or type-checks**
-  (`backend/src/taskVerification.ts`; per-project opt-in `taskAgentTypecheck`);
+  (`backend/src/taskVerification.ts`; per-project opt-ins `taskAgentTypecheck`
+  for scoped type-checks and `taskAgentTests` for targeted test files);
   a workflow's Run tests step verifies merged work once, commits fixes by
   explicit path only and never stops the workflow
   (`backend/src/workflowRuns/testStep/CLAUDE.md`); a confident QA-run PASS

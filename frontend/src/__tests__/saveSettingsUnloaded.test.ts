@@ -99,6 +99,27 @@ test('an unloaded, untouched save writes neither startupTerminals nor the launch
   assert.deepEqual(launchChanges, [], 'parent launch settings left alone');
 });
 
+test('targeted task tests are saved only when their checkbox was flipped', async () => {
+  for (const testsPatch of [undefined, true, false]) {
+    requests = [];
+    await saveSettings(params({
+      handles: {
+        ...NULL_HANDLES,
+        instructionTemplates: {
+          getInstructionTemplateOverridesPatch: () => undefined,
+          getTaskAgentTypecheckPatch: () => undefined,
+          getTaskAgentTestsPatch: () => testsPatch,
+          getTaskWritingPatch: () => undefined,
+        },
+      },
+    }));
+    const body = settingsPatch();
+    assert.equal('taskAgentTests' in body, testsPatch !== undefined);
+    assert.equal(body.taskAgentTests, testsPatch);
+    assert.equal('taskAgentTypecheck' in body, false);
+  }
+});
+
 test('before load, only the edited launch field and a touched startup list are written', async () => {
   const edited: StartupTerminal[] = [
     { id: 'st_1', label: 'dev', command: 'npm run dev' },
