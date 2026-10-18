@@ -42,6 +42,22 @@ const SUGGESTIONS: ReadonlyArray<{
   },
   {
     harness: 'codex',
+    role: 'tasks',
+    model: /^gpt-6-astra$/,
+    effort: 'low',
+    why:
+      '149 real fixes: low passed 126 vs 129 at medium (not significant) in 89% of the time; ' +
+      'high passed no more and xhigh took 5×. A precise task spec lifted it 79 → 97 of 98.',
+  },
+  {
+    harness: 'claude',
+    role: 'tasks',
+    model: /opus/,
+    effort: 'low',
+    why: '31 real fixes: low passed as many as medium (22) in 60% of the time; high 25 (not significant).',
+  },
+  {
+    harness: 'codex',
     role: 'step',
     effort: 'high',
     why: 'Planning steps: high filed the most valid tasks per minute; xhigh/max ran far longer for no more.',

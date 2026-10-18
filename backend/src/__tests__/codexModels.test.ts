@@ -37,6 +37,9 @@ test('an unrecognized or absent cache is an empty list, never a throw', async ()
 test('effort suggestions are per harness, model and role', () => {
   assert.equal(effortSuggestion('codex', 'gpt-6-luna', 'tasks')?.effort, 'medium');
   assert.equal(effortSuggestion('codex', 'gpt-6.1-sol', 'tasks')?.effort, 'low');
+  assert.equal(effortSuggestion('codex', 'gpt-6-astra', 'tasks')?.effort, 'low');
+  assert.equal(effortSuggestion('claude', 'claude-opus-5-5', 'tasks')?.effort, 'low');
+  assert.equal(effortSuggestion('claude', 'sonnet', 'tasks'), undefined);
   assert.equal(effortSuggestion('codex', undefined, 'tasks'), undefined);
   assert.equal(effortSuggestion('codex', 'gpt-6-luna', 'step')?.effort, 'high');
   assert.equal(effortSuggestion('claude', 'opus', 'step')?.effort, 'high');
