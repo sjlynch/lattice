@@ -33,3 +33,13 @@ export async function fetchTerminalScreen(id: string, lines = 400, machine?: str
 export function sendTerminalText(id: string, text: string, submit: boolean, machine?: string): Promise<{ ok: true }> {
   return postJson<{ ok: true }>(onMachine(machine, `/api/terminals/${encodeURIComponent(id)}/input`), { text, submit });
 }
+
+// One task's full record, for the Fleet review queue (pinned to its project).
+export async function fetchFleetTask(id: string, project: string, machine?: string): Promise<{ id: string; title: string; summary?: string; description?: string; status: string }> {
+  return asJson(await fetch(onMachine(machine, `/api/tasks/${encodeURIComponent(id)}?project=${encodeURIComponent(project)}`)));
+}
+
+// Merge every Ready-to-Merge task of a project (a merge run).
+export function startFleetMergeRun(project: string, machine?: string): Promise<{ id: string }> {
+  return postJson<{ id: string }>(onMachine(machine, '/api/merge-runs'), { project });
+}

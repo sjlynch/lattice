@@ -15,6 +15,7 @@ const LANES = ['backlog', 'open', 'in_progress', 'ready_to_merge', 'qa', 'done']
 
 type TaskLike = {
   id: string; title: string; status: string; harness?: AgentHarness; model?: string; piModel?: string;
+  review?: { status: string; p?: number; reason?: string };
   createdAt?: number; updatedAt?: number; startedAt?: number; completedAt?: number; mergedAt?: number; doneAt?: number;
 };
 type PtyLike = {
@@ -38,6 +39,12 @@ export type FleetSnapshotDeps = {
 
 const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : undefined);
 const str = (v: unknown) => (typeof v === 'string' ? v : undefined);
+const fleetTask = (t: TaskLike) => ({
+  id: t.id, title: t.title, status: t.status,
+  ...(t.harness ? { harness: t.harness } : {}),
+  ...(t.model || t.piModel ? { model: t.model ?? t.piModel } : {}),
+  ...(t.review ? { review: { status: t.review.status, ...(t.review.p !== undefined ? { p: t.review.p } : {}), ...(t.review.reason ? { reason: t.review.reason } : {}) } } : {}),
+});
 const taskActivity = (t: TaskLike) => Math.max(t.createdAt ?? 0, t.updatedAt ?? 0, t.startedAt ?? 0, t.completedAt ?? 0, t.mergedAt ?? 0, t.doneAt ?? 0);
 
 export async function buildFleetProjects(deps: FleetSnapshotDeps): Promise<FleetProject[]> {
@@ -109,7 +116,12 @@ export async function buildFleetProjects(deps: FleetSnapshotDeps): Promise<Fleet
         .filter((t) => t.status === 'in_progress')
         .sort((a, b) => taskActivity(b) - taskActivity(a))
         .slice(0, 12)
-        .map((t) => ({ id: t.id, title: t.title, status: t.status, ...(t.harness ? { harness: t.harness } : {}), ...(t.model || t.piModel ? { model: t.model ?? t.piModel } : {}) })),
+        .map(fleetTask),
+      toReview: tasks
+        .filter((t) => t.status === 'ready_to_merge' || t.status === 'qa')
+        .sort((a, b) => (a.status === b.status ? taskActivity(b) - taskActivity(a) : a.status === 'ready_to_merge' ? -1 : 1))
+        .slice(0, 8)
+        .map(fleetTask),
       runs,
       agents,
       terminals,

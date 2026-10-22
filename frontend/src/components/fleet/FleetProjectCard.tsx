@@ -1,5 +1,7 @@
-import { FolderOpen, MessageSquarePlus } from 'lucide-react';
-import type { FleetLaunchResult, FleetProject, FleetTerminal } from '../../api';
+import { useState } from 'react';
+import { FolderOpen, GitMerge, MessageSquarePlus } from 'lucide-react';
+import { startFleetMergeRun, type FleetLaunchResult, type FleetProject, type FleetTerminal } from '../../api';
+import { FleetReviewList } from './FleetReviewList';
 import { harnessLabel } from '../../harnesses';
 import { ago, busyCount, laneSummary } from './fleetDerive';
 import { FleetPromptForm } from './FleetPromptForm';
@@ -19,6 +21,14 @@ type Props = {
 };
 
 export function FleetProjectCard({ project: p, machine, isActive, now, prompting, selectedTerminal, onPrompt, onLaunched, onOpenTerminal, onSwitch }: Props) {
+  const [mergeMsg, setMergeMsg] = useState<string | null>(null);
+  const merging = p.runs.some((r) => r.kind === 'merge');
+  const merge = () => {
+    setMergeMsg('Starting merge…');
+    startFleetMergeRun(p.path, machine)
+      .then(() => setMergeMsg(null))
+      .catch((e) => setMergeMsg(e instanceof Error ? e.message : String(e)));
+  };
   return (
     <section className={`fleet-card${isActive ? ' is-active' : ''}`}>
       <div className="fleet-card-head">
@@ -29,6 +39,11 @@ export function FleetProjectCard({ project: p, machine, isActive, now, prompting
           <span className="fleet-muted"> · {p.lastActivityAt ? ago(p.lastActivityAt, now) : '—'}</span>
         </div>
         <div className="fleet-card-actions">
+          {p.lanes.ready_to_merge > 0 && !merging && (
+            <button className="icon-btn sm" onClick={merge} title={`Merge the ${p.lanes.ready_to_merge} ready task(s)`} aria-label={`Merge ready tasks in ${p.name}`}>
+              <GitMerge size={13} />
+            </button>
+          )}
           <button className="icon-btn sm" onClick={() => onPrompt(!prompting)} title="Prompt an agent in this project" aria-label={`Prompt an agent in ${p.name}`}>
             <MessageSquarePlus size={13} />
           </button>
@@ -60,6 +75,8 @@ export function FleetProjectCard({ project: p, machine, isActive, now, prompting
           {a.harness && <span className="fleet-muted"> · {harnessLabel(a.harness)}</span>}
         </div>
       ))}
+      <FleetReviewList tasks={p.toReview} project={p.path} machine={machine} />
+      {mergeMsg && <div className="fleet-muted">{mergeMsg}</div>}
       {p.terminals.length > 0 && (
         <div className="fleet-terms">
           {p.terminals.map((t) => (

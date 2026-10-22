@@ -35,7 +35,8 @@
   panel's terminal view, and pairing the instance with itself through Fleet →
   PCs (gateway on a random port, bound to loopback via
   `LATTICE_PEER_GATEWAY_HOST`), then typing into its shell through the peer
-  route. Cleanup kills its pty, deletes its task, unpairs, revokes, switches
+  route; and the review queue (a QA task's line expands to its summary).
+  Cleanup kills its pty, deletes its task, unpairs, revokes, switches
   the gateway off and removes only that direct child of `os.tmpdir()`.
 - [graph-stability.spec.ts](./graph-stability.spec.ts) intercepts all API and
   WebSocket traffic before navigation; its fixture graph never reaches a real

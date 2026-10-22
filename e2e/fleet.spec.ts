@@ -124,3 +124,21 @@ test('PCs: gateway on, invite, pair with itself, drive a terminal through the pe
     await request.post('/api/peers/gateway', { headers: BROWSER, data: { enabled: false } }).catch(() => {});
   }
 });
+
+test('fleet panel: finished work waiting for review, with its summary', async ({ page, request }) => {
+  const id = (await json<{ id: string }>(await request.post('/api/tasks', { data: { project: projectDir, title: 'Fleet review fixture' } }))).id;
+  try {
+    await json(await request.post(`/api/tasks/${id}/append-summary?project=${encodeURIComponent(projectDir)}`, { data: { summary: 'Did the thing.\n\nSpec gaps: none' } }));
+    await json(await request.patch(`/api/tasks/${id}?project=${encodeURIComponent(projectDir)}`, { data: { status: 'qa' } }));
+    await page.addInitScript(([key, dir]) => sessionStorage.setItem(key, dir), [ACTIVE_FOLDER_KEY, projectDir] as const);
+    await page.goto('/');
+    await page.getByRole('button', { name: 'Open Fleet' }).click();
+    const card = page.locator('.fleet-card', { hasText: path.basename(projectDir) });
+    const line = card.locator('.fleet-review-line', { hasText: 'Fleet review fixture' });
+    await expect(line).toBeVisible({ timeout: 15000 });
+    await line.click();
+    await expect(card.locator('.fleet-review-summary')).toContainText('Did the thing.', { timeout: 15000 });
+  } finally {
+    await request.delete(`/api/tasks/${id}?project=${encodeURIComponent(projectDir)}`).catch(() => {});
+  }
+});

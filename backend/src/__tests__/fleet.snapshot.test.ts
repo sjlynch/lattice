@@ -3,7 +3,8 @@
 // a stale idle one is left out; terminals take their tab label / owner /
 // harness from the registry record matching their pty and are marked busy
 // from the activity set; live projects sort first. Log: bounded, `since`
-// cursor, newest-limited.
+// cursor, newest-limited. Finished work waiting on review lists Ready to merge
+// before QA, with the second opinion's verdict.
 
 import assert from 'node:assert/strict';
 import test from 'node:test';
@@ -21,7 +22,9 @@ function deps(over: Partial<FleetSnapshotDeps> = {}): FleetSnapshotDeps {
   return {
     knownProjects: async () => [A, B, C],
     tasksOf: async (p) => (p === A
-      ? [{ id: 't1', title: 'Fix it', status: 'in_progress', harness: 'codex', model: 'gpt-6-luna', startedAt: NOW - 60_000 }, { id: 't2', title: 'Old', status: 'done', doneAt: NOW - 2 * DAY }]
+      ? [{ id: 't1', title: 'Fix it', status: 'in_progress', harness: 'codex', model: 'gpt-6-luna', startedAt: NOW - 60_000 }, { id: 't2', title: 'Old', status: 'done', doneAt: NOW - 2 * DAY },
+        { id: 't8', title: 'In QA', status: 'qa', mergedAt: NOW - 500 },
+        { id: 't7', title: 'Ready one', status: 'ready_to_merge', completedAt: NOW - 1000, review: { status: 'accepted', p: 92, reason: 'covers it' } }]
       : p === B
         ? [{ id: 't3', title: 'Recent', status: 'open', createdAt: NOW - DAY }]
         : [{ id: 't4', title: 'Ancient', status: 'open', createdAt: NOW - 30 * DAY }]),
@@ -48,6 +51,10 @@ test('buildFleetProjects: live and recent projects only, live first, with lanes,
   assert.equal(a.lanes.in_progress, 1);
   assert.equal(a.lanes.done, 1);
   assert.deepEqual(a.inProgress, [{ id: 't1', title: 'Fix it', status: 'in_progress', harness: 'codex', model: 'gpt-6-luna' }]);
+  assert.deepEqual(a.toReview, [
+    { id: 't7', title: 'Ready one', status: 'ready_to_merge', review: { status: 'accepted', p: 92, reason: 'covers it' } },
+    { id: 't8', title: 'In QA', status: 'qa' },
+  ]);
   assert.deepEqual(a.runs, [{ id: 'w1', kind: 'workflow', label: 'Bug hunt · step 2/4', status: 'running', startedAt: NOW - 1000 }]);
   assert.equal(a.agents[0].agentId, 'claude:s1');
   assert.deepEqual(a.terminals, [{ id: 'pty1', tabId: 'tab1', label: 'Claude 2', owner: 'user', harness: 'claude', busy: true, createdAt: NOW - 9000, lastOutputAt: NOW - 100 }]);

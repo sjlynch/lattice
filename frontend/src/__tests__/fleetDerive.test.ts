@@ -7,13 +7,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { FleetEvent, FleetProject } from '../api';
-import { ago, busyCount, feedNewestFirst, laneSummary, mergeFeed, projectMatches, projectName } from '../components/fleet/fleetDerive';
+import { ago, busyCount, feedNewestFirst, laneSummary, mergeFeed, projectMatches, projectName, reviewBadge } from '../components/fleet/fleetDerive';
 
 const ev = (seq: number): FleetEvent => ({ seq, at: seq, projectPath: 'C:\\p\\a', kind: 'task', text: `e${seq}` });
 const project: FleetProject = {
   path: 'C:\\proj\\alpha', name: 'alpha', lastActivityAt: 0,
   lanes: { backlog: 0, open: 5, in_progress: 2, ready_to_merge: 1, qa: 0, done: 9 },
   inProgress: [{ id: 't1', title: 'Fix the parser', status: 'in_progress' }],
+  toReview: [],
   runs: [{ id: 'w1', kind: 'workflow', label: 'Bug hunt · step 2/4', status: 'running' }],
   agents: [],
   terminals: [{ id: 'p1', label: 'Claude 2', busy: true, createdAt: 0 }, { id: 'p2', label: 'cmd', busy: false, createdAt: 0 }],
@@ -49,4 +50,12 @@ test('projectMatches, projectName, busyCount', () => {
   assert.equal(projectName('C:\\proj\\alpha\\'), 'alpha');
   assert.equal(projectName('/home/u/beta'), 'beta');
   assert.equal(busyCount(project), 1);
+});
+
+test('reviewBadge reads the second opinion', () => {
+  const t = { id: 'x', title: 'x', status: 'ready_to_merge' };
+  assert.equal(reviewBadge(t), null);
+  assert.deepEqual(reviewBadge({ ...t, review: { status: 'accepted', p: 91.6 } }), { text: 'accepted 92', tone: 'ok' });
+  assert.deepEqual(reviewBadge({ ...t, review: { status: 'rejected', p: 12 } }), { text: 'doubtful 12', tone: 'warn' });
+  assert.deepEqual(reviewBadge({ ...t, review: { status: 'reviewing' } }), { text: 'reviewing…', tone: 'muted' });
 });

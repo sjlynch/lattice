@@ -1,7 +1,7 @@
 // Pure copy and derivation for the Fleet panel: lane summaries, relative
 // times, the merged activity feed and which projects match a filter.
 
-import type { FleetEvent, FleetProject } from '../../api';
+import type { FleetEvent, FleetProject, FleetTask } from '../../api';
 
 // "2 running · 1 to merge · 1 QA · 5 open" — only non-zero lanes, in flow order.
 export function laneSummary(lanes: Record<string, number>): string {
@@ -58,4 +58,16 @@ export function projectName(path: string): string {
 
 export function busyCount(p: FleetProject): number {
   return p.terminals.filter((t) => t.busy).length;
+}
+
+// The second opinion on a task waiting for review, as a short badge.
+export function reviewBadge(t: FleetTask): { text: string; tone: 'ok' | 'warn' | 'muted' } | null {
+  const r = t.review;
+  if (!r) return null;
+  const p = r.p !== undefined ? ` ${Math.round(r.p)}` : '';
+  if (r.status === 'accepted') return { text: `accepted${p}`, tone: 'ok' };
+  if (r.status === 'rejected') return { text: `doubtful${p}`, tone: 'warn' };
+  if (r.status === 'reviewing') return { text: 'reviewing…', tone: 'muted' };
+  if (r.status === 'rerun') return { text: 're-running', tone: 'muted' };
+  return { text: 'review failed', tone: 'muted' };
 }

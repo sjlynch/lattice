@@ -39,6 +39,8 @@ export type FleetTask = {
   status: string;
   harness?: AgentHarness;
   model?: string;
+  // The second opinion's state for a task waiting on review (Task.review).
+  review?: { status: string; p?: number; reason?: string };
 };
 
 export type FleetProject = {
@@ -48,6 +50,8 @@ export type FleetProject = {
   lanes: Record<string, number>;
   // In-progress tasks (the agents working right now), newest first, ≤ 12.
   inProgress: FleetTask[];
+  // Finished work waiting on a human: Ready to merge, then QA, newest first, ≤ 8.
+  toReview: FleetTask[];
   runs: FleetRun[];
   agents: FleetAgent[];
   terminals: FleetTerminal[];

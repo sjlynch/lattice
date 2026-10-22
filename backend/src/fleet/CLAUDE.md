@@ -15,7 +15,8 @@ machine. Facade: `../fleet.ts`. Routes: `../routes/fleet.ts`. UI:
   seeds. Emits nothing itself.
 - `snapshot.ts` — `buildFleetProjects` over injected readers: projects with
   live terminals, agents, runs or in-flight tasks, plus any touched in the
-  last 7 days (≤ 40, live ones first).
+  last 7 days (≤ 40, live ones first); each with its in-progress tasks and
+  `toReview` (Ready to merge, then QA, ≤ 8, with the second opinion).
 - `terminal.ts` — screen / input / wait for any pty, each call one
   short-lived client of the executor's `/ws/terminal?id=` attach socket.
 - `launch.ts` — "prompt a project": the prompt goes to
