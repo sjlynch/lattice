@@ -21,5 +21,7 @@ is not significant within this folder.
   `/models` probe for Settings → Pi, answering `{models: [{id, contextWindow?}]}`.
 - `codexModels.ts` — `GET /api/codex-models`; the Codex CLI's own model
   catalog cache (`../../codexModels.ts`), read-only.
+- `planUsage.ts` — `GET /api/plan-usage[?refresh=1]`; Claude and Codex
+  subscription usage per rate-limit window (`../../planUsage.ts`), read-only.
 - Keep per-project settings separate from machine-global settings; the latter
   live in `routes/globalSettings.ts`.

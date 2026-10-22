@@ -30,14 +30,15 @@ see "Controller mode" below; the pinned server is unchanged by it.
 | [tools/opengrepTools.ts](tools/opengrepTools.ts) | Scan/findings; separately registered ignore. |
 | [tools/workflowTools.ts](tools/workflowTools.ts) | Controller: workflow definitions and runs, incl. `wait_workflow_run`. |
 | [tools/controllerTools.ts](tools/controllerTools.ts) | Controller: `instances`, merge runs, `export_board`, `api_request`. |
+| [tools/usageTools.ts](tools/usageTools.ts) | `plan_usage` (machine-wide Claude/Codex plan usage): pinned non-task sessions + controller (`instance`). |
 
 ## Registration and session scope
 
 Model-visible order: read tools → write tools → Opengrep read tools →
-Opengrep ignore → board management. `createServer.ts` returns before the last
-two groups when `taskId` is set. Normal sessions have 14 tools; task-worktree
+Opengrep ignore → board management → `plan_usage`. `createServer.ts` returns
+before the last three groups when `taskId` is set. Normal sessions have 15 tools; task-worktree
 sessions have 10: add `my_task`, allow `append_summary.id` to default to the
-session task, and omit board management plus `opengrep_ignore`. Otherwise
+session task, and omit board management, `opengrep_ignore` and `plan_usage`. Otherwise
 `append_summary.id` is required.
 
 ## Shared contracts
@@ -101,7 +102,8 @@ user-launched sessions (`../mcp/userLaunchedScope.ts`); never weaken that gate.
   `my_task`, Opengrep), `run_task` + pass-through `model`/`effort`; workflow
   tools; `start_merge_run` / `get_merge_run`; `export_board` (`status=all`,
   `fields=full`, `clip=0`, `limit=0`; `outFile` → atomic write + counts);
-  `api_request` (resolved path must stay under `/api/`, body cut at 64 KB).
+  `plan_usage` (`instance` only); `api_request` (resolved path must stay
+  under `/api/`, body cut at 64 KB).
 - **Passthrough:** step lists, run `overrides` and `model`/`effort` reach the
   API verbatim — the API validates, the MCP never filters new fields.
 - **Waiting:** `wait_workflow_run` polls every 10 s via the injectable sleep

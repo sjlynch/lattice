@@ -96,3 +96,28 @@ test('get_task GETs /api/tasks/:id and url-encodes the id', async () => {
     await close();
   }
 });
+
+// plan_usage is machine-wide: it reads GET /api/plan-usage (the pinned project
+// rides along and is ignored), forwards refresh only when asked, and is not
+// offered to a task-worktree session.
+test('plan_usage GETs /api/plan-usage, refresh only on request; absent in task worktrees', async () => {
+  const calls: Recorded[] = [];
+  const { client, close } = await connect(calls);
+  try {
+    await client.callTool({ name: 'plan_usage', arguments: {} });
+    const bare = new URL(calls[0].url);
+    assert.equal(bare.origin + bare.pathname, `${API}/api/plan-usage`);
+    assert.equal(bare.searchParams.get('refresh'), null);
+    await client.callTool({ name: 'plan_usage', arguments: { refresh: true } });
+    assert.equal(new URL(calls[1].url).searchParams.get('refresh'), '1');
+  } finally {
+    await close();
+  }
+  const worktree = await connect([], undefined, { taskId: 't_mine' });
+  try {
+    const { tools } = await worktree.client.listTools();
+    assert.ok(!tools.some((t) => t.name === 'plan_usage'));
+  } finally {
+    await worktree.close();
+  }
+});

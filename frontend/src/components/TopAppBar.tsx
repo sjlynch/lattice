@@ -6,6 +6,7 @@ import { WorkflowsLauncher } from './Workflows';
 import { SettingsDialog } from './SettingsDialog';
 import { BackendConnectionIndicator } from './BackendConnectionIndicator';
 import { TerminalServerChip } from './TerminalServerChip';
+import { PlanUsageChip } from './PlanUsageChip';
 import { checkGit, subscribeGitBranch } from '../api';
 import type {
   ProjectGitProbe,
@@ -146,6 +147,7 @@ export const TopAppBar = memo(function TopAppBar({
         </div>
         <BackendConnectionIndicator />
         <TerminalServerChip />
+        <PlanUsageChip />
         <WorkflowsLauncher activeFolder={activeFolder} scanResult={scanResult} />
         <TaskBoardLauncher activeFolder={activeFolder} />
         <button

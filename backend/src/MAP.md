@@ -129,6 +129,7 @@ beside its `x/` folder ("`x.ts` / `x/`" below); "See its doc" = that folder's
 
 - `piModels.ts` / `piModels/` — Pi model discovery/menu, models.json reconcile, endpoint probes. See its doc.
 - `codexModels.ts` / `codexModels/types.ts` — the models Codex lists in its own picker, read (never written) from the Codex CLI's `models_cache.json`; `GET /api/codex-models`.
+- `planUsage.ts` / `planUsage/` — Claude + Codex subscription usage (% per rate-limit window, resets): `claude.ts` reads Anthropic's OAuth usage API with Claude Code's stored token (never refreshed), `codex.ts` asks `codex app-server` (fallback: newest rollout snapshot); cached per provider; `GET /api/plan-usage`, the top-bar chip, MCP `plan_usage`.
 - `piProviderValidation.ts` — `PiProvider` types + validation of `globalSettings.piProviders` (re-exported from `globalSettings.ts`).
 - `spawnWithTimeout.ts` — spawn + capture + kill-the-whole-tree-on-timeout for bounded external CLI calls (Pi, Opengrep).
 - `piSubagents.ts` / `piSubagents/` — auto-installs `@tintinweb/pi-subagents` + cwd-exact shims (incl. the project root). See its doc.

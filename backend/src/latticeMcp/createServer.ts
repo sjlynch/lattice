@@ -28,6 +28,7 @@ import {
   type LatticeClientOptions,
 } from './client.js';
 import { registerBoardManagementTools } from './tools/boardManagementTools.js';
+import { registerPlanUsageTool } from './tools/usageTools.js';
 import { registerOpengrepIgnoreTool, registerOpengrepTools } from './tools/opengrepTools.js';
 import { registerReadTools } from './tools/readTools.js';
 import { registerWriteTools } from './tools/writeTools.js';
@@ -105,6 +106,8 @@ export function createLatticeMcpServer(
   registerOpengrepIgnoreTool(server, client);
   // update_task, transition_tasks, delete_task, run_task.
   registerBoardManagementTools(host);
+  // plan_usage — machine-wide subscription usage, for sessions that launch runs.
+  registerPlanUsageTool(server, () => client);
 
   return server;
 }

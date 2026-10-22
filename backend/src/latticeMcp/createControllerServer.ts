@@ -26,6 +26,7 @@ import {
   registerMergeAndExportTools,
 } from './tools/controllerTools.js';
 import { registerReadTools } from './tools/readTools.js';
+import { registerPlanUsageTool } from './tools/usageTools.js';
 import { registerWorkflowTools } from './tools/workflowTools.js';
 import { registerWriteTools } from './tools/writeTools.js';
 
@@ -130,6 +131,7 @@ export function createLatticeControllerServer(opts: CreateControllerServerOption
   registerBoardManagementTools(host, { runModelFields: true });
   registerWorkflowTools(new ToolHost(server, scope), { pollIntervalMs: opts.pollIntervalMs });
   registerMergeAndExportTools(new ToolHost(server, scope));
+  registerPlanUsageTool(server, (instance) => instanceClient(instance), instanceShape);
   registerApiRequestTool(server, { config, instanceClient }, instanceShape);
   return server;
 }

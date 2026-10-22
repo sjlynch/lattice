@@ -50,7 +50,8 @@ export const BUILTIN_MCP_SERVERS: McpServerEntry[] = [
     description:
       "Typed tools for this project's Lattice task board: board_summary, " +
       'list_tasks, get_task, search_tasks, create/update/delete, transition ' +
-      'lanes, append a summary, and run a task in a worktree. First-party (it ' +
+      'lanes, append a summary, run a task in a worktree, and read your Claude / ' +
+      'Codex plan usage. First-party (it ' +
       "is Lattice's own code, needs no API key, and talks only to your local " +
       'backend), so unlike every other server here it is ON by default — turn ' +
       'it off per harness with the switches on this row if you would rather ' +

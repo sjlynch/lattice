@@ -29,7 +29,7 @@ const CONTROLLER_TOOLS = [
   'api_request', 'board_summary', 'cancel_workflow_run', 'create_tasks', 'delete_task',
   'delete_workflow', 'export_board', 'get_merge_run', 'get_task', 'get_workflow',
   'get_workflow_run', 'instances', 'list_tasks', 'list_workflow_runs', 'list_workflows',
-  'run_task', 'save_workflow', 'search_tasks', 'start_merge_run', 'start_workflow_run',
+  'plan_usage', 'run_task', 'save_workflow', 'search_tasks', 'start_merge_run', 'start_workflow_run',
   'transition_tasks', 'update_task', 'wait_workflow_run',
 ];
 
@@ -101,7 +101,7 @@ test('controller tools/list: the fixed set; every scoped tool takes instance + p
       assert.ok((tool.description ?? '').length > 40, `${tool.name} needs a real description`);
       const p = props(tool);
       if (tool.name === 'instances') assert.deepEqual(p, []);
-      else if (tool.name === 'api_request') assert.ok(p.includes('instance') && !p.includes('project'));
+      else if (tool.name === 'api_request' || tool.name === 'plan_usage') assert.ok(p.includes('instance') && !p.includes('project'), `${tool.name}: ${p}`);
       else assert.ok(p.includes('instance') && p.includes('project'), `${tool.name}: ${p}`);
     }
     const run = tools.find((t) => t.name === 'run_task')!;
@@ -115,7 +115,7 @@ test('the pinned server is unchanged: no instance/project anywhere, run_task wit
   const { client, close } = await connect([]);
   try {
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 14);
+    assert.equal(tools.length, 15);
     for (const tool of tools) {
       assert.ok(!props(tool).some((p) => p === 'instance' || p === 'project'), tool.name);
     }

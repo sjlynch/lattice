@@ -139,6 +139,64 @@
   white-space: nowrap;
 }
 
+/* Plan usage (PlanUsageChip): Claude / Codex subscription usage. The chip
+   shows each provider's most-used window; the popover lists every window
+   with a bar and its reset time. Tones: ok green, warn amber (≥ 70 %),
+   high red (≥ 90 %), muted when a provider couldn't be read. */
+.appbar-usage {
+  position: relative;
+  flex-shrink: 0;
+  margin-left: 8px;
+}
+.appbar-usage-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.appbar-usage-chip:hover { background: var(--bg-hover); }
+.appbar-usage-icon { flex: 0 0 auto; color: var(--text-tertiary); }
+.appbar-usage-part { display: inline-flex; gap: 4px; white-space: nowrap; }
+.appbar-usage-name { color: var(--text-tertiary); }
+.appbar-usage-pct { font-variant-numeric: tabular-nums; font-weight: 600; }
+.appbar-usage-pct.tone-ok { color: var(--tool-on); }
+.appbar-usage-pct.tone-warn { color: #e0af68; }
+.appbar-usage-pct.tone-high { color: var(--danger); }
+.appbar-usage-pct.tone-muted { color: var(--text-tertiary); font-weight: 400; }
+.appbar-usage-pop {
+  top: calc(100% + 6px);
+  right: 0;
+  width: 280px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.appbar-usage-pop-head { display: flex; align-items: center; justify-content: space-between; font-weight: 600; }
+.appbar-usage-spin { animation: spin 0.8s linear infinite; }
+.appbar-usage-provider { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.appbar-usage-provider-head { display: flex; align-items: baseline; gap: 8px; }
+.appbar-usage-plan { color: var(--text-tertiary); font-size: 11px; }
+.appbar-usage-msg { color: var(--text-secondary); line-height: 1.4; }
+.appbar-usage-window { display: flex; flex-direction: column; gap: 3px; }
+.appbar-usage-window-row { display: flex; justify-content: space-between; gap: 8px; color: var(--text-secondary); }
+.appbar-usage-bar { height: 4px; border-radius: var(--radius-pill); background: var(--bg-active); overflow: hidden; }
+.appbar-usage-bar span { display: block; height: 100%; border-radius: inherit; }
+.appbar-usage-bar .tone-ok { background: var(--tool-on); }
+.appbar-usage-bar .tone-warn { background: #e0af68; }
+.appbar-usage-bar .tone-high { background: var(--danger); }
+.appbar-usage-reset, .appbar-usage-source { color: var(--text-tertiary); font-size: 11px; }
+.appbar-usage-note { color: var(--text-secondary); font-size: 11px; line-height: 1.4; }
+
 /* Task board launcher (in the appbar) */
 .fab {
   display: inline-flex;

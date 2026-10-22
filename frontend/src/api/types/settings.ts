@@ -116,6 +116,13 @@ export type {
 // GET /api/codex-models: the models Codex lists in its own picker.
 export type { CodexModelInfo } from '../../../../backend/src/shared/wireTypes';
 
+// GET /api/plan-usage: Claude / Codex subscription usage per rate-limit window.
+export type {
+  PlanUsageProvider,
+  PlanUsageReport,
+  PlanUsageWindow,
+} from '../../../../backend/src/shared/wireTypes';
+
 // One model reported by an endpoint probe (POST /api/pi-endpoints/probe).
 // `contextWindow` is present only when the server advertised one (vLLM's
 // `max_model_len`, llama.cpp's `context_length`, …); it is carried onto the

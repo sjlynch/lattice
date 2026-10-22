@@ -21,7 +21,7 @@ effects (`../terminal/terminalApi.ts`) and React state (feature hooks).
 - `projectInit.ts` — Git Setup: `previewProjectInit` (re-POSTed debounced while the `.gitignore` is edited) and `initProjectGit`.
 - `scan.ts` — folder browsing, source scan, git history, `subscribeGitBranch` (`/ws/git-branch`), `subscribeGitStatus` (`/ws/git-status` signature; the timeline dedupes `fetchGitHistory` on `GitHistoryResult.signature`).
 - `health.ts` — `subscribeHealth` (`/ws/health`, one `HealthUpdate` per save / tree change).
-- `settings.ts` — per-project `UserSettings` (`fetchUserSettings`, `fetchUserSettingsStrict`, `patchUserSettings`), `subscribeHarnesses`, `getPiModels` / `probePiEndpoint`, `ensureProjectInstrumentation`, `fetchProjectEnv`, `fetchInstructionTemplates`, `fetchHarnessSystemPrompts`.
+- `settings.ts` — per-project `UserSettings` (`fetchUserSettings`, `fetchUserSettingsStrict`, `patchUserSettings`), `subscribeHarnesses`, `getPiModels` / `probePiEndpoint`, `getPlanUsage` (navbar usage chip), `ensureProjectInstrumentation`, `fetchProjectEnv`, `fetchInstructionTemplates`, `fetchHarnessSystemPrompts`.
 - `globalSettings.ts` — machine-global settings (`maxConcurrentAgents`, MCP defs, `piModelMenu`, `piProviders`, `opengrep.packs`).
 - `mcp.ts` — MCP catalog, redacted secrets, env presence, validation, other-tool import.
 - `opengrep.ts` — engine status / install / rule packs / scans (Settings → Tools) and the Security chip's graph scan (`runOpengrepGraphScan`, `waitForOpengrepGraphScan`, `fetchOpengrepGraphResult`, `cancelOpengrepGraphScan`, `subscribeOpengrepStatus`).

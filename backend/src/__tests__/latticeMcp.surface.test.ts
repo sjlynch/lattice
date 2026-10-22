@@ -27,6 +27,7 @@ const EXPECTED_TOOLS = [
   'opengrep_findings',
   'opengrep_ignore',
   'opengrep_scan',
+  'plan_usage',
   'run_task',
   'search_tasks',
   'transition_tasks',

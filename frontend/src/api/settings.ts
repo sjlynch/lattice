@@ -8,6 +8,7 @@ import type {
   InstructionTemplate,
   PiModelsResult,
   PiProbeModel,
+  PlanUsageReport,
   ProjectEnvResponse,
   RecentSpecGap,
   UserSettings,
@@ -37,6 +38,13 @@ export async function getPiModels(): Promise<PiModelsResult> {
 // cache; empty until Codex has cached it). Machine-global. Throws on failure.
 export async function getCodexModels(): Promise<CodexModelInfo[]> {
   return (await asJson<{ models: CodexModelInfo[] }>(await fetch('/api/codex-models'))).models;
+}
+
+// Claude / Codex subscription usage (% per rate-limit window, reset times).
+// Machine-global; the backend caches it, `refresh` asks for fresh numbers.
+// Throws on failure.
+export async function getPlanUsage(refresh = false): Promise<PlanUsageReport> {
+  return asJson<PlanUsageReport>(await fetch(`/api/plan-usage${refresh ? '?refresh=1' : ''}`));
 }
 
 // "Detect models" for the Settings → Pi endpoint form: ask the backend to GET

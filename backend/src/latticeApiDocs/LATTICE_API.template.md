@@ -73,7 +73,7 @@ irm -Method Post "{{API_URL}}/api/tasks?project={{PROJECT_FWD}}" -Body @{ title=
 
 If this session has the `lattice` MCP tools — `board_summary`, `list_tasks`,
 `search_tasks`, `get_task`, `create_task(s)`, `update_task`, `transition_tasks`,
-`append_summary`, `delete_task`, `run_task` — prefer them over curl: they pin
+`append_summary`, `delete_task`, `run_task`, `plan_usage` — prefer them over curl: they pin
 the project and price every result.
 
 Everything else — endpoint table, batch/markdown round-trip, bulk update,
