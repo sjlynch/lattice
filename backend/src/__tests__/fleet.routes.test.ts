@@ -29,7 +29,7 @@ const post = (url: string, body: unknown, headers: Record<string, string> = {}) 
 test('fleet: snapshot open to all; control gated for agents while fleetAgentControl is off', async () => {
   const { base, close } = await serve();
   try {
-    const snap = await fetch(`${base}/api/fleet`);
+    const snap = await fetch(`${base}/api/fleet?host=0`);
     assert.equal(snap.status, 200);
     const body = (await snap.json()) as { projects: unknown[]; agentControl: boolean; seq: number };
     assert.ok(Array.isArray(body.projects));

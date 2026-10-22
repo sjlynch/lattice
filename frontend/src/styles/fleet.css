@@ -143,3 +143,4 @@
 .fleet-review-badge.tone-warn { color: #e0af68; }
 .fleet-review-badge.tone-muted { color: var(--text-tertiary); }
 .fleet-review-summary { margin: 2px 0 4px; padding: 6px 8px; max-height: 180px; overflow: auto; white-space: pre-wrap; border-radius: var(--radius-sm); background: var(--bg-graph); font-family: var(--mono); font-size: 11px; color: var(--text-secondary); }
+.fleet-host { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

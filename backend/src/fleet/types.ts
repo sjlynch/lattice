@@ -77,8 +77,18 @@ export type FleetEvent = {
   ref?: string;
 };
 
+// What a PC can run: its name, installed harnesses, its curated Pi models
+// and how much of each subscription is used — so you can pick where work goes.
+export type FleetHost = {
+  name: string;
+  harnesses: Partial<Record<AgentHarness, boolean>>;
+  piModels: string[];
+  plans: Array<{ provider: string; plan?: string; usedPercent?: number; window?: string }>;
+};
+
 // Another PC paired through the peer gateway, with its own snapshot.
 export type FleetMachine = {
+  host?: FleetHost;
   name: string;
   ok: boolean;
   error?: string;
@@ -96,6 +106,8 @@ export type FleetSnapshot = {
   seq: number;
   // Whether agents may open / read / drive terminals (global setting).
   agentControl: boolean;
+  // This PC (cached ≤ 60 s).
+  host?: FleetHost;
   // Paired PCs (peers) and what is going on there; absent on a snapshot
   // served to another PC (no chains or loops between paired machines).
   machines?: FleetMachine[];

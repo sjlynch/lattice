@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { FleetEvent, FleetProject } from '../api';
-import { ago, busyCount, feedNewestFirst, laneSummary, mergeFeed, projectMatches, projectName, reviewBadge } from '../components/fleet/fleetDerive';
+import { ago, busyCount, feedNewestFirst, laneSummary, mergeFeed, projectMatches, projectName, reviewBadge, hostSummary } from '../components/fleet/fleetDerive';
 
 const ev = (seq: number): FleetEvent => ({ seq, at: seq, projectPath: 'C:\\p\\a', kind: 'task', text: `e${seq}` });
 const project: FleetProject = {
@@ -58,4 +58,12 @@ test('reviewBadge reads the second opinion', () => {
   assert.deepEqual(reviewBadge({ ...t, review: { status: 'accepted', p: 91.6 } }), { text: 'accepted 92', tone: 'ok' });
   assert.deepEqual(reviewBadge({ ...t, review: { status: 'rejected', p: 12 } }), { text: 'doubtful 12', tone: 'warn' });
   assert.deepEqual(reviewBadge({ ...t, review: { status: 'reviewing' } }), { text: 'reviewing…', tone: 'muted' });
+});
+
+test('hostSummary lists harnesses, Pi models and plan usage', () => {
+  assert.equal(hostSummary(undefined), '');
+  assert.equal(
+    hostSummary({ name: 'pc', harnesses: { claude: true, codex: false, pi: true }, piModels: ['ornith', 'qwen'], plans: [{ provider: 'claude', usedPercent: 13.4 }, { provider: 'codex' }] }),
+    'Claude · Pi (ornith, qwen) · Claude 13%',
+  );
 });

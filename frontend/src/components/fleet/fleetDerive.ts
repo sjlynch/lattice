@@ -1,7 +1,7 @@
 // Pure copy and derivation for the Fleet panel: lane summaries, relative
 // times, the merged activity feed and which projects match a filter.
 
-import type { FleetEvent, FleetProject, FleetTask } from '../../api';
+import type { FleetEvent, FleetHost, FleetProject, FleetTask } from '../../api';
 
 // "2 running · 1 to merge · 1 QA · 5 open" — only non-zero lanes, in flow order.
 export function laneSummary(lanes: Record<string, number>): string {
@@ -70,4 +70,15 @@ export function reviewBadge(t: FleetTask): { text: string; tone: 'ok' | 'warn' |
   if (r.status === 'reviewing') return { text: 'reviewing…', tone: 'muted' };
   if (r.status === 'rerun') return { text: 're-running', tone: 'muted' };
   return { text: 'review failed', tone: 'muted' };
+}
+
+// "Claude · Codex · Pi (ornith, qwen) · Claude 13% · Codex 0%" — what a PC can
+// run and how much of each plan it has used.
+export function hostSummary(h: FleetHost | undefined): string {
+  if (!h) return '';
+  const harnesses = (['claude', 'codex', 'pi'] as const).filter((x) => h.harnesses[x]);
+  const names: Record<string, string> = { claude: 'Claude', codex: 'Codex', pi: 'Pi' };
+  const parts = harnesses.map((x) => (x === 'pi' && h.piModels.length ? `Pi (${h.piModels.slice(0, 4).join(', ')}${h.piModels.length > 4 ? ', …' : ''})` : names[x]));
+  for (const p of h.plans) if (p.usedPercent !== undefined) parts.push(`${names[p.provider] ?? p.provider} ${Math.round(p.usedPercent)}%`);
+  return parts.join(' · ');
 }

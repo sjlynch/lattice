@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchFleet, patchGlobalSettings, type FleetEvent, type FleetMachine, type FleetProject } from '../../api';
+import { fetchFleet, patchGlobalSettings, type FleetEvent, type FleetHost, type FleetMachine, type FleetProject } from '../../api';
 import { sameProjectPath } from '../../terminal/terminalScope';
-import { ago, feedNewestFirst, mergeFeed, projectMatches, projectName } from './fleetDerive';
+import { ago, feedNewestFirst, hostSummary, mergeFeed, projectMatches, projectName } from './fleetDerive';
 import { FleetProjectCard } from './FleetProjectCard';
 import { FleetTerminalViewer } from './FleetTerminalViewer';
 import { FleetPeersPanel } from './FleetPeersPanel';
@@ -26,6 +26,7 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
   const [now, setNow] = useState(() => Date.now());
   const [prompting, setPrompting] = useState<string | null>(null);
   const [machines, setMachines] = useState<FleetMachine[]>([]);
+  const [host, setHost] = useState<FleetHost | undefined>(undefined);
   const [showPeers, setShowPeers] = useState(false);
   const [viewing, setViewing] = useState<{ id: string; label: string; project: string; machine?: string } | null>(null);
   const seqRef = useRef(0);
@@ -43,6 +44,7 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
         seqRef.current = snap.seq;
         setProjects(snap.projects);
         setMachines(snap.machines ?? []);
+        if (snap.host) setHost(snap.host);
         setFeed((f) => mergeFeed(f, snap.events));
         setAgentControl(snap.agentControl);
         setNow(snap.generatedAt);
@@ -85,6 +87,7 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
           PCs{machines.length ? ` (${machines.length})` : ''}
         </button>
       </div>
+      {host && <div className="fleet-host" title="This PC: installed harnesses, curated Pi models, plan usage"><strong>{host.name}</strong> <span className="fleet-muted">· {hostSummary(host)}</span></div>}
       {error && <div className="error-msg">Fleet unavailable: {error}</div>}
       <div className="fleet-body">
         <div className="fleet-projects">
@@ -112,7 +115,7 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
             <div key={m.name} className="fleet-machine">
               <div className="fleet-machine-head">
                 <strong>{m.name}</strong>
-                <span className="fleet-muted">{m.ok ? ` · ${(m.projects ?? []).length} active project(s)` : ` · unreachable${m.error ? `: ${m.error}` : ''}`}</span>
+                <span className="fleet-muted">{m.ok ? ` · ${(m.projects ?? []).length} active project(s)${m.host ? ` · ${hostSummary(m.host)}` : ''}` : ` · unreachable${m.error ? `: ${m.error}` : ''}`}</span>
               </div>
               {(m.projects ?? []).filter((p) => projectMatches(p, filter)).map((p) => (
                 <FleetProjectCard

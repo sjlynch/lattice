@@ -64,7 +64,7 @@ export function buildFleetRouter(): Router {
     // A snapshot served to another PC never includes ITS paired PCs (two PCs
     // paired both ways would otherwise ask each other forever).
     const machines = !forwardedScope(req) && req.query.machines !== '0';
-    res.json(await readFleetSnapshot(Number.isFinite(since) && since > 0 ? since : 0, { machines }));
+    res.json(await readFleetSnapshot(Number.isFinite(since) && since > 0 ? since : 0, { machines, host: req.query.host !== '0' }));
   });
 
   r.post('/api/fleet/agents', async (req, res) => {

@@ -71,6 +71,7 @@ export type {
   FleetAgent,
   FleetEvent,
   FleetEventKind,
+  FleetHost,
   FleetLaunchResult,
   FleetMachine,
   FleetProject,
