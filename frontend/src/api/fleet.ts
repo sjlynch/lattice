@@ -1,8 +1,11 @@
-// Fleet: every project on this machine at once — the cross-project snapshot +
-// activity feed, "prompt a project" agent launches, and the screen / input of
-// any project's terminal. Backend: backend/src/fleet.ts, routes/fleet.ts.
+// Fleet: every project on this machine — and on paired PCs — at once: the
+// cross-project snapshot + activity feed, "prompt a project" agent launches,
+// and the screen / input of any project's terminal. `machine` routes a call
+// to a paired PC through this backend's peer proxy. Backend:
+// backend/src/fleet.ts, routes/fleet.ts, peers.ts.
 
 import { asJson, postJson } from './http';
+import { onMachine } from './peers';
 import type { FleetLaunchResult, FleetSnapshot, TerminalScreen } from './types';
 
 export async function fetchFleet(since = 0): Promise<FleetSnapshot> {
@@ -19,14 +22,14 @@ export type FleetLaunchRequest = {
   label?: string;
 };
 
-export function launchFleetAgent(req: FleetLaunchRequest): Promise<FleetLaunchResult> {
-  return postJson<FleetLaunchResult>('/api/fleet/agents', req);
+export function launchFleetAgent(req: FleetLaunchRequest, machine?: string): Promise<FleetLaunchResult> {
+  return postJson<FleetLaunchResult>(onMachine(machine, '/api/fleet/agents'), req);
 }
 
-export async function fetchTerminalScreen(id: string, lines = 400): Promise<TerminalScreen> {
-  return asJson<TerminalScreen>(await fetch(`/api/terminals/${encodeURIComponent(id)}/screen?lines=${lines}`));
+export async function fetchTerminalScreen(id: string, lines = 400, machine?: string): Promise<TerminalScreen> {
+  return asJson<TerminalScreen>(await fetch(onMachine(machine, `/api/terminals/${encodeURIComponent(id)}/screen?lines=${lines}`)));
 }
 
-export function sendTerminalText(id: string, text: string, submit: boolean): Promise<{ ok: true }> {
-  return postJson<{ ok: true }>(`/api/terminals/${encodeURIComponent(id)}/input`, { text, submit });
+export function sendTerminalText(id: string, text: string, submit: boolean, machine?: string): Promise<{ ok: true }> {
+  return postJson<{ ok: true }>(onMachine(machine, `/api/terminals/${encodeURIComponent(id)}/input`), { text, submit });
 }

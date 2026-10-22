@@ -95,7 +95,9 @@ One line each; the named doc owns the detail.
   PowerShell 5.1: post with `cmd /c curl … -d@- <url>`, never `--data-binary @-`.
 - **Fleet** (`backend/src/fleet/CLAUDE.md`): one view/control of every
   project; agents need `fleetAgentControl`; an agent-launched terminal gets
-  `mcpScope: 'fleet-agent'` (no controller, no fleet tools).
+  `mcpScope: 'fleet-agent'` (no controller, no fleet tools). **Peers**
+  (`backend/src/peers/CLAUDE.md`): the only LAN listener, off by default,
+  TLS-PSK; pairing is browser-only.
 - **MCP** (`backend/src/mcp/CLAUDE.md`): resolved once at the spawn chokepoint
   (`resolveHarnessSpawnBody`); third-party servers off by default; secrets by
   env name only; **never set `defaultEnabled` on a third-party entry**.

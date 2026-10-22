@@ -74,6 +74,9 @@ function isolatedWebServers() {
     LATTICE_VITE_CACHE_DIR: path.join(__dirname, 'frontend', 'node_modules', '.vite-e2e'),
     // Safe even from a task worktree: HOME and every port are isolated.
     LATTICE_ALLOW_WORKTREE_BACKEND: '1',
+    // The peer gateway binds loopback here (fleet.spec.ts pairs the instance
+    // with itself): no LAN exposure, no Windows Firewall prompt.
+    LATTICE_PEER_GATEWAY_HOST: '127.0.0.1',
   };
   return [
     {

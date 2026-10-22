@@ -42,6 +42,10 @@ machine. Facade: `../fleet.ts`. Routes: `../routes/fleet.ts`. UI:
 - What an agent reads from another terminal is untrusted data; the MCP tool
   descriptions say so.
 - In-memory only (feed, busy set); a restart starts a fresh feed.
+- Paired PCs (`../peers/`): `/api/fleet` adds `machines` (each PC's own
+  snapshot through its gateway) unless the request itself came from a peer;
+  every fleet call takes a `machine` (FE `onMachine`, MCP `machine`) routed
+  through `/api/peer/:name/*`.
 
 ## Tests
 

@@ -42,8 +42,9 @@ sessions have 10: add `my_task`, allow `append_summary.id` to default to the
 session task, and omit board management, `opengrep_ignore` and `plan_usage`. Otherwise
 `append_summary.id` is required. A session the user started (`LATTICE_FLEET=1`,
 set by the resolver only for user-launched spawns) adds the five Fleet tools
-after `plan_usage` (20); they take `targetProject`, never `project`, and the
-backend refuses everything but `fleet` until `fleetAgentControl` is on.
+after `plan_usage` (20); they take `targetProject`, never `project`, an
+optional `machine` (a paired PC, via `/api/peer/<name>`), and the backend
+refuses everything but `fleet` until `fleetAgentControl` is on.
 
 ## Shared contracts
 

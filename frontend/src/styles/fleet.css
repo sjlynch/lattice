@@ -118,3 +118,16 @@
 }
 .fleet-term-input { display: flex; align-items: center; gap: 6px; }
 .fleet-term-input .text-input { flex: 1 1 auto; min-width: 0; }
+
+/* Paired PCs: their projects below this PC's, and the pairing panel. */
+.fleet-machine { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 8px; border-top: 1px dashed var(--border-strong); }
+.fleet-machine-head { color: var(--text-secondary); }
+.fleet-peers { display: flex; flex-direction: column; gap: 10px; }
+.fleet-peers-section { display: flex; flex-direction: column; gap: 6px; padding: 8px 0; border-top: 1px solid var(--border); }
+.fleet-peers-title { font-weight: 600; color: var(--text-secondary); }
+.fleet-peers-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.fleet-peers-list li { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fleet-invite { display: flex; flex-direction: column; gap: 6px; padding: 8px; border-radius: var(--radius-sm); background: var(--accent-bg); }
+.fleet-invite-row { display: flex; align-items: center; gap: 6px; }
+.fleet-invite-code { flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; font-family: var(--mono); font-size: 11px; }
+.fleet-prompt-row > .fleet-port { flex: 0 0 80px; }

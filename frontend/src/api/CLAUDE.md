@@ -28,6 +28,7 @@ effects (`../terminal/terminalApi.ts`) and React state (feature hooks).
 - `opengrepReview.ts` — security review sessions, local triage/history, shared suppression tasks; reads accept abort signals.
 - `terminals.ts` — `subscribeTerminalActivity` (`/ws/terminal-activity`, per-tab spinner) and `fetchTerminalServerStatus` (navbar `TerminalServerChip`).
 - `fleet.ts` — Fleet (every project at once): `fetchFleet` (snapshot + activity since a seq), `launchFleetAgent`, `fetchTerminalScreen` / `sendTerminalText` for any project's pty (navbar Fleet panel).
+- `peers.ts` — pairing other PCs (`fetchPeers`, gateway switch, invites, revoke, add/remove a paired PC) and `onMachine` (routes an `/api/...` path to a paired PC through the backend's proxy; the fleet calls take an optional `machine`).
 - `terminalTabs.ts` — the durable terminal-tab registry: `fetchTerminalTabs`, `restoreTerminalTabs` (`retry` also retries failed relaunches), label/order PATCHes, `closeTerminalTab`, `subscribeTerminalTabs`. Consumed by `../TerminalsContext.tsx` and `../terminal/terminalRegistrySync.ts`.
 
 ## Invariants

@@ -73,6 +73,16 @@ export type FleetEvent = {
   ref?: string;
 };
 
+// Another PC paired through the peer gateway, with its own snapshot.
+export type FleetMachine = {
+  name: string;
+  ok: boolean;
+  error?: string;
+  projects?: FleetProject[];
+  events?: FleetEvent[];
+  agentControl?: boolean;
+};
+
 export type FleetSnapshot = {
   generatedAt: number;
   projects: FleetProject[];
@@ -82,6 +92,9 @@ export type FleetSnapshot = {
   seq: number;
   // Whether agents may open / read / drive terminals (global setting).
   agentControl: boolean;
+  // Paired PCs (peers) and what is going on there; absent on a snapshot
+  // served to another PC (no chains or loops between paired machines).
+  machines?: FleetMachine[];
 };
 
 export type TerminalScreen = {

@@ -141,6 +141,7 @@ test('fleet tools: only with fleet on; each hits its route', async () => {
     await client.callTool({ name: 'read_terminal', arguments: { id: 'p 1', lines: 50 } });
     await client.callTool({ name: 'send_terminal', arguments: { id: 'p1', text: 'yes', submit: true } });
     await client.callTool({ name: 'wait_terminal', arguments: { id: 'p1' } });
+    await client.callTool({ name: 'read_terminal', arguments: { id: 'p2', machine: 'gpu pc' } });
     const urls = calls.map((c) => { const u = new URL(c.url); return `${c.method} ${u.pathname}`; });
     assert.deepEqual(urls, [
       'GET /api/fleet',
@@ -148,6 +149,7 @@ test('fleet tools: only with fleet on; each hits its route', async () => {
       'GET /api/terminals/p%201/screen',
       'POST /api/terminals/p1/input',
       'POST /api/terminals/p1/wait-idle',
+      'GET /api/peer/gpu%20pc/api/terminals/p2/screen',
     ]);
     assert.equal(new URL(calls[0].url).searchParams.get('since'), '7');
     assert.deepEqual(JSON.parse(String(calls[1].body)), { project: 'C:\other', harness: 'codex', prompt: 'do it' });

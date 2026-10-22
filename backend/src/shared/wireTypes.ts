@@ -72,6 +72,7 @@ export type {
   FleetEvent,
   FleetEventKind,
   FleetLaunchResult,
+  FleetMachine,
   FleetProject,
   FleetRun,
   FleetSnapshot,
@@ -79,6 +80,7 @@ export type {
   FleetTerminal,
   TerminalScreen,
 } from '../fleet/types.js';
+export type { PeerGrantView, PeerInvite, PeerRemoteView, PeerScope, PeersView } from '../peers/types.js';
 export type {
   PlanUsageProvider,
   PlanUsageProviderId,

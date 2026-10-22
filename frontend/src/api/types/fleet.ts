@@ -5,6 +5,7 @@ export type {
   FleetEvent,
   FleetEventKind,
   FleetLaunchResult,
+  FleetMachine,
   FleetProject,
   FleetRun,
   FleetSnapshot,

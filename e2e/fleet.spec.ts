@@ -3,6 +3,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync } from 'node:child_process';
+import net from 'node:net';
 
 // Fleet against the REAL isolated backend + executor, with a plain shell — no
 // coding harness, nothing billed. A disposable git project gets one task (so
@@ -85,4 +86,41 @@ test('fleet panel: project card, terminal screen, typing into it', async ({ page
   await expect(screen).toContainText('ui-typed-456', { timeout: 15000 });
   // What the panel typed really reached the pty.
   await expect.poll(() => screenText(request), { timeout: 15000 }).toContain('ui-typed-456');
+});
+
+test('PCs: gateway on, invite, pair with itself, drive a terminal through the peer route', async ({ page, request }) => {
+  // A free port from the OS (Windows reserves random blocks of high ports).
+  const port = await new Promise<number>((resolve) => {
+    const probe = net.createServer().listen(0, '127.0.0.1', () => {
+      const p = (probe.address() as net.AddressInfo).port;
+      probe.close(() => resolve(p));
+    });
+  });
+  await json(await request.post('/api/peers/gateway', { headers: BROWSER, data: { enabled: true, port } }));
+  try {
+    const invite = await json<{ identity: string; connection: string }>(await request.post('/api/peers/invites', { headers: BROWSER, data: { name: 'e2e-self', scope: 'terminals', host: '127.0.0.1' } }));
+    try {
+      await page.addInitScript(([key, dir]) => sessionStorage.setItem(key, dir), [ACTIVE_FOLDER_KEY, projectDir] as const);
+      await page.goto('/');
+      await page.getByRole('button', { name: 'Open Fleet' }).click();
+      await page.getByRole('button', { name: /^PCs/ }).click();
+      await page.getByLabel('Name for the other PC').fill('loop');
+      await page.getByLabel('Connection string').fill(invite.connection);
+      await page.getByRole('button', { name: 'Pair', exact: true }).click();
+      await expect(page.locator('.fleet-peers-list', { hasText: 'loop' })).toBeVisible({ timeout: 15000 });
+      // The paired PC (this same instance) shows up with this project and its shell.
+      const machine = page.locator('.fleet-machine', { hasText: 'loop' });
+      await expect(machine.locator('.fleet-card', { hasText: path.basename(projectDir) })).toBeVisible({ timeout: 15000 });
+      await machine.getByRole('button', { name: 'fleet-e2e shell' }).click();
+      await expect(page.locator('.fleet-term-title')).toContainText('on loop');
+      await page.getByLabel('Text to send').fill('echo via-peer-789');
+      await page.getByRole('button', { name: 'Send', exact: true }).click();
+      await expect(page.locator('.fleet-term-screen')).toContainText('via-peer-789', { timeout: 15000 });
+    } finally {
+      await request.delete('/api/peers/remotes/loop', { headers: BROWSER }).catch(() => {});
+      await request.delete(`/api/peers/grants/${invite.identity}`, { headers: BROWSER }).catch(() => {});
+    }
+  } finally {
+    await request.post('/api/peers/gateway', { headers: BROWSER, data: { enabled: false } }).catch(() => {});
+  }
 });

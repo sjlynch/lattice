@@ -118,6 +118,13 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | GET | `/api/terminals/:id/screen?lines=` | Fleet: a pty's rendered screen + last `lines` lines (agents need `fleetAgentControl`) |
 | POST | `/api/terminals/:id/input` | Fleet: `{text, submit?, paste?}` typed into a pty (agents need `fleetAgentControl`) |
 | POST | `/api/terminals/:id/wait-idle` | Fleet: `{quietMs?, timeoutMs?}` → `{idle, waitedMs}` once the pty prints nothing for `quietMs` (agents need `fleetAgentControl`) |
+| GET | `/api/peers` | Peers: the gateway switch + LAN addresses, PCs allowed in (grants) and PCs paired to (remotes); never keys |
+| POST | `/api/peers/gateway` | Peers (browser only): `{enabled, port?}` the LAN gateway listener |
+| POST | `/api/peers/invites` | Peers (browser only): `{name, scope, host?}` → a one-time connection string for another PC |
+| DELETE | `/api/peers/grants/:identity` | Peers (browser only): revoke a PC's access and close its connections |
+| POST | `/api/peers/remotes` | Peers (browser only): `{name, connection}` pair with another PC from its connection string |
+| DELETE | `/api/peers/remotes/:name` | Peers (browser only): forget a paired PC |
+| ALL | `/api/peer/:name/*` | Peers: forward an `/api/...` call to a paired PC's gateway (agents need `fleetAgentControl`; the PC's grant scope applies) |
 | GET | `/api/fleet?since=` | Fleet: every active project (lanes, in-progress tasks, runs, agents, terminals) + activity events after `since` |
 | POST | `/api/fleet/agents` | Fleet: `{project, harness, prompt, model?, effort?, piModel?, label?}` → an agent terminal in that project working on the prompt (agents need `fleetAgentControl`) |
 | GET | `/api/terminal-tabs?project=` | Durable terminal-tab records |

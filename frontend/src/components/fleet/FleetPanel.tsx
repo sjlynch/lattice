@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { fetchFleet, patchGlobalSettings, type FleetEvent, type FleetProject } from '../../api';
+import { fetchFleet, patchGlobalSettings, type FleetEvent, type FleetMachine, type FleetProject } from '../../api';
 import { sameProjectPath } from '../../terminal/terminalScope';
 import { ago, feedNewestFirst, mergeFeed, projectMatches, projectName } from './fleetDerive';
 import { FleetProjectCard } from './FleetProjectCard';
 import { FleetTerminalViewer } from './FleetTerminalViewer';
+import { FleetPeersPanel } from './FleetPeersPanel';
 
 type Props = {
   activeFolder: string;
@@ -24,7 +25,9 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
   const [filter, setFilter] = useState('');
   const [now, setNow] = useState(() => Date.now());
   const [prompting, setPrompting] = useState<string | null>(null);
-  const [viewing, setViewing] = useState<{ id: string; label: string; project: string } | null>(null);
+  const [machines, setMachines] = useState<FleetMachine[]>([]);
+  const [showPeers, setShowPeers] = useState(false);
+  const [viewing, setViewing] = useState<{ id: string; label: string; project: string; machine?: string } | null>(null);
   const seqRef = useRef(0);
 
   const poll = useCallback(() => {
@@ -39,6 +42,7 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
         }
         seqRef.current = snap.seq;
         setProjects(snap.projects);
+        setMachines(snap.machines ?? []);
         setFeed((f) => mergeFeed(f, snap.events));
         setAgentControl(snap.agentControl);
         setNow(snap.generatedAt);
@@ -77,6 +81,9 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
           <input type="checkbox" checked={agentControl} onChange={(e) => toggleAgentControl(e.target.checked)} />
           Let agents open and drive terminals in any project
         </label>
+        <button className="btn-ghost sm" onClick={() => { setViewing(null); setShowPeers((v) => !v); }} title="Pair other PCs running Lattice">
+          PCs{machines.length ? ` (${machines.length})` : ''}
+        </button>
       </div>
       {error && <div className="error-msg">Fleet unavailable: {error}</div>}
       <div className="fleet-body">
@@ -97,14 +104,44 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
                 setViewing({ id: r.id, label: r.label, project: p.name });
                 poll();
               }}
-              onOpenTerminal={(t) => setViewing({ id: t.id, label: t.label, project: p.name })}
+              onOpenTerminal={(t) => { setShowPeers(false); setViewing({ id: t.id, label: t.label, project: p.name }); }}
               onSwitch={() => onSelectFolder(p.path)}
             />
           ))}
+          {machines.map((m) => (
+            <div key={m.name} className="fleet-machine">
+              <div className="fleet-machine-head">
+                <strong>{m.name}</strong>
+                <span className="fleet-muted">{m.ok ? ` · ${(m.projects ?? []).length} active project(s)` : ` · unreachable${m.error ? `: ${m.error}` : ''}`}</span>
+              </div>
+              {(m.projects ?? []).filter((p) => projectMatches(p, filter)).map((p) => (
+                <FleetProjectCard
+                  key={`${m.name}:${p.path}`}
+                  project={p}
+                  machine={m.name}
+                  isActive={false}
+                  now={now}
+                  prompting={prompting === `${m.name}:${p.path}`}
+                  selectedTerminal={viewing?.machine === m.name ? viewing.id : null}
+                  onPrompt={(open) => setPrompting(open ? `${m.name}:${p.path}` : null)}
+                  onLaunched={(r) => {
+                    setPrompting(null);
+                    setShowPeers(false);
+                    setViewing({ id: r.id, label: r.label, project: p.name, machine: m.name });
+                    poll();
+                  }}
+                  onOpenTerminal={(t) => { setShowPeers(false); setViewing({ id: t.id, label: t.label, project: p.name, machine: m.name }); }}
+                  onSwitch={() => {}}
+                />
+              ))}
+            </div>
+          ))}
         </div>
         <div className="fleet-side">
-          {viewing ? (
-            <FleetTerminalViewer key={viewing.id} id={viewing.id} label={viewing.label} projectName={viewing.project} onClose={() => setViewing(null)} />
+          {showPeers ? (
+            <FleetPeersPanel onClose={() => setShowPeers(false)} onChanged={poll} />
+          ) : viewing ? (
+            <FleetTerminalViewer key={`${viewing.machine ?? ''}:${viewing.id}`} id={viewing.id} label={viewing.label} projectName={viewing.project} machine={viewing.machine} onClose={() => setViewing(null)} />
           ) : (
             <div className="fleet-feed">
               <div className="fleet-feed-head">Activity across projects</div>

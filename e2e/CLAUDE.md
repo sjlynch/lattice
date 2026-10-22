@@ -32,8 +32,11 @@
   `<tmp>/lattice-playwright-fleet-*` with one task and one shell terminal.
   Checks the `/api/fleet` snapshot, the agent gate (a request without browser
   headers is refused control), type → wait → read back, and the navbar Fleet
-  panel's terminal view. Cleanup kills its pty, deletes its task and removes
-  only that direct child of `os.tmpdir()`.
+  panel's terminal view, and pairing the instance with itself through Fleet →
+  PCs (gateway on a random port, bound to loopback via
+  `LATTICE_PEER_GATEWAY_HOST`), then typing into its shell through the peer
+  route. Cleanup kills its pty, deletes its task, unpairs, revokes, switches
+  the gateway off and removes only that direct child of `os.tmpdir()`.
 - [graph-stability.spec.ts](./graph-stability.spec.ts) intercepts all API and
   WebSocket traffic before navigation; its fixture graph never reaches a real
   backend. Keep response shapes complete (notably terminal restore's summary).

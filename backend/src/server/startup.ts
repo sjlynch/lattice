@@ -26,6 +26,7 @@ import { createHttpServerWithWebSockets } from './http.js';
 import { beginWorkflowRecovery } from '../workflowRuns/recoveryReadiness.js';
 import { startTerminalRegistryWatch } from '../terminalRegistry/watch.js';
 import { startFleet } from '../fleet.js';
+import { startPeers } from '../peers.js';
 import { ensureCallbackScript, startCallbackOutboxLoop } from '../callbackOutbox.js';
 import { fireOwedPostMergeHooks } from '../recovery/owedPostMergeHooks.js';
 import { recoverSecurityReviews, sweepSecurityReviews } from '../opengrep/reviewRecovery.js';
@@ -225,6 +226,8 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // The machine-wide Fleet activity feed (task / run / agent / terminal events
   // across every project) — see fleet.ts.
   startFleet();
+  // The peer gateway (LAN listener for paired PCs), when the user left it on.
+  void startPeers();
   // Periodic `[mem]` console line + ~/.lattice/logs/mem-backend.jsonl
   // (LATTICE_MEM_LOG_MS, 0 disables). See memDiag/CLAUDE.md.
   registerMemProbe('executor', readExecutorMemory);

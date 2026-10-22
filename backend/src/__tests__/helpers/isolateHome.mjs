@@ -52,6 +52,9 @@ delete process.env.LATTICE_HOME;
 // LATTICE_TEST_TERMINAL_PORT is the explicit opt-in to another port.
 process.env.TERMINAL_PORT = process.env.LATTICE_TEST_TERMINAL_PORT || '9';
 delete process.env.LATTICE_TERMINAL_TOKEN;
+// A peer gateway a test switches on binds loopback only (no LAN exposure, no
+// Windows Firewall prompt).
+process.env.LATTICE_PEER_GATEWAY_HOST = '127.0.0.1';
 
 // Best-effort cleanup when the test process exits (sync — 'exit' can't await).
 process.on('exit', () => {

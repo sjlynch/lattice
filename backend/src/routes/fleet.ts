@@ -22,11 +22,22 @@ import {
   TerminalControlError,
   waitTerminalQuiet,
 } from '../fleet.js';
+import { forwardedPeerScope, scopeAllows, type PeerScope } from '../peers.js';
+import { isBrowserRequest } from './requestOrigin.js';
 
-const isBrowserRequest = (req: Request) => !!(req.get('origin') || req.get('sec-fetch-site'));
+// The scope a gateway-forwarded request needs here: launching an agent is
+// `operate`, anything with a terminal is `terminals` (peers/gateway.ts).
+const forwardedScope = (req: Request) => forwardedPeerScope((h) => req.get(h));
 
 // True when the caller may control terminals; else answers 403 and returns false.
-async function requireControl(req: Request, res: Response): Promise<boolean> {
+// A paired PC whose grant covers `need` was explicitly allowed by the user.
+async function requireControl(req: Request, res: Response, need: PeerScope = 'terminals'): Promise<boolean> {
+  const peer = forwardedScope(req);
+  if (peer) {
+    if (scopeAllows(peer, need)) return true;
+    res.status(403).json({ code: 'peer-scope', error: `this PC was granted ${peer}; this needs ${need}` });
+    return false;
+  }
   if (isBrowserRequest(req) || (await isFleetAgentControlOn())) return true;
   res.status(403).json({
     code: 'fleet-agent-control-off',
@@ -50,12 +61,17 @@ export function buildFleetRouter(): Router {
 
   r.get('/api/fleet', async (req, res) => {
     const since = Number(req.query.since);
-    res.json(await readFleetSnapshot(Number.isFinite(since) && since > 0 ? since : 0));
+    // A snapshot served to another PC never includes ITS paired PCs (two PCs
+    // paired both ways would otherwise ask each other forever).
+    const machines = !forwardedScope(req) && req.query.machines !== '0';
+    res.json(await readFleetSnapshot(Number.isFinite(since) && since > 0 ? since : 0, { machines }));
   });
 
   r.post('/api/fleet/agents', async (req, res) => {
-    if (!(await requireControl(req, res))) return;
-    const parsed = parseFleetLaunch(req.body, isBrowserRequest(req) ? 'user' : 'agent');
+    if (!(await requireControl(req, res, 'operate'))) return;
+    // A human at this UI launches a plain user tab; an agent — or anything
+    // arriving from another PC — launches a scoped one (no fleet tools).
+    const parsed = parseFleetLaunch(req.body, isBrowserRequest(req) && !forwardedScope(req) ? 'user' : 'agent');
     if ('error' in parsed) return res.status(400).json({ error: parsed.error });
     try {
       res.json(await launchFleetAgentNow(parsed));

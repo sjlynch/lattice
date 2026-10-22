@@ -13,6 +13,7 @@ export * from './opengrep';
 export * from './tasks';
 export * from './mergeRuns';
 export * from './fleet';
+export * from './peers';
 export {
   checkGit,
   fetchPushRunStatus,

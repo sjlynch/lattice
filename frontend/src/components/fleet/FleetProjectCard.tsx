@@ -6,6 +6,8 @@ import { FleetPromptForm } from './FleetPromptForm';
 
 type Props = {
   project: FleetProject;
+  // Set for a project on a paired PC.
+  machine?: string;
   isActive: boolean;
   now: number;
   prompting: boolean;
@@ -16,7 +18,7 @@ type Props = {
   onSwitch: () => void;
 };
 
-export function FleetProjectCard({ project: p, isActive, now, prompting, selectedTerminal, onPrompt, onLaunched, onOpenTerminal, onSwitch }: Props) {
+export function FleetProjectCard({ project: p, machine, isActive, now, prompting, selectedTerminal, onPrompt, onLaunched, onOpenTerminal, onSwitch }: Props) {
   return (
     <section className={`fleet-card${isActive ? ' is-active' : ''}`}>
       <div className="fleet-card-head">
@@ -30,7 +32,7 @@ export function FleetProjectCard({ project: p, isActive, now, prompting, selecte
           <button className="icon-btn sm" onClick={() => onPrompt(!prompting)} title="Prompt an agent in this project" aria-label={`Prompt an agent in ${p.name}`}>
             <MessageSquarePlus size={13} />
           </button>
-          {!isActive && (
+          {!isActive && !machine && (
             <button className="icon-btn sm" onClick={onSwitch} title="Switch this tab to this project" aria-label={`Switch to ${p.name}`}>
               <FolderOpen size={13} />
             </button>
@@ -73,7 +75,7 @@ export function FleetProjectCard({ project: p, isActive, now, prompting, selecte
           ))}
         </div>
       )}
-      {prompting && <FleetPromptForm project={p.path} onLaunched={onLaunched} onCancel={() => onPrompt(false)} />}
+      {prompting && <FleetPromptForm project={p.path} machine={machine} onLaunched={onLaunched} onCancel={() => onPrompt(false)} />}
     </section>
   );
 }

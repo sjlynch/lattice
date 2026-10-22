@@ -6,6 +6,8 @@ type Props = {
   id: string;
   label: string;
   projectName: string;
+  // A paired PC this terminal lives on (through the peer proxy).
+  machine?: string;
   onClose: () => void;
 };
 
@@ -14,7 +16,7 @@ const POLL_MS = 1500;
 // A live, text-rendered view of any project's terminal (the backend renders
 // the pty through a headless xterm), with a line to type into it. Read-mostly
 // by design: the full interactive pane lives in that project's sidebar.
-export function FleetTerminalViewer({ id, label, projectName, onClose }: Props) {
+export function FleetTerminalViewer({ id, label, projectName, machine, onClose }: Props) {
   const [text, setText] = useState('');
   const [gone, setGone] = useState(false);
   const [draft, setDraft] = useState('');
@@ -29,14 +31,14 @@ export function FleetTerminalViewer({ id, label, projectName, onClose }: Props) 
     setText('');
     const load = () => {
       if (document.hidden) return;
-      fetchTerminalScreen(id)
+      fetchTerminalScreen(id, 400, machine)
         .then((s) => { if (!cancelled) setText(s.tail); })
         .catch((err) => { if (!cancelled && err instanceof HttpError && err.status === 404) setGone(true); });
     };
     load();
     const timer = window.setInterval(load, POLL_MS);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [id]);
+  }, [id, machine]);
 
   // Follow the bottom unless the user scrolled up to read.
   useEffect(() => {
@@ -46,17 +48,17 @@ export function FleetTerminalViewer({ id, label, projectName, onClose }: Props) 
 
   const send = useCallback((value: string, enter: boolean) => {
     setSendError(null);
-    sendTerminalText(id, value, enter)
+    sendTerminalText(id, value, enter, machine)
       .then(() => setDraft(''))
       .catch((err) => setSendError(err instanceof Error ? err.message : String(err)));
-  }, [id]);
+  }, [id, machine]);
 
   return (
     <div className="fleet-term">
       <div className="fleet-term-head">
         <span className="fleet-term-title">
           <strong>{label}</strong>
-          <span className="fleet-muted"> · {projectName}</span>
+          <span className="fleet-muted"> · {projectName}{machine ? ` · on ${machine}` : ''}</span>
         </span>
         <button className="icon-btn sm" onClick={onClose} title="Back to activity" aria-label="Close terminal view">
           <X size={13} />

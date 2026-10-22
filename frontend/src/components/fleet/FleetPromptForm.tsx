@@ -6,13 +6,15 @@ import { usePiModelMenu } from '../../hooks/usePiModelMenu';
 
 type Props = {
   project: string;
+  // A paired PC to launch on (through the peer proxy); default this PC.
+  machine?: string;
   onLaunched: (r: FleetLaunchResult) => void;
   onCancel: () => void;
 };
 
 // "Prompt this project": opens an agent terminal in it, already working on
 // the request (it appears in that project's sidebar too).
-export function FleetPromptForm({ project, onLaunched, onCancel }: Props) {
+export function FleetPromptForm({ project, machine, onLaunched, onCancel }: Props) {
   const { harnessAvail } = useHarnessAvailability();
   const piMenu = usePiModelMenu();
   const harnesses = (['claude', 'codex', 'pi'] as AgentHarness[]).filter((h) => harnessAvail[h]);
@@ -35,7 +37,7 @@ export function FleetPromptForm({ project, onLaunched, onCancel }: Props) {
       ...(harness !== 'pi' && model.trim() ? { model: model.trim() } : {}),
       ...(harness === 'pi' && piModel ? { piModel } : {}),
       ...(effort ? { effort } : {}),
-    })
+    }, machine)
       .then(onLaunched)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setBusy(false));

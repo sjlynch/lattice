@@ -25,6 +25,7 @@ import { buildSettingsRouter } from '../routes/settings.js';
 import { buildTasksRouter } from '../routes/tasks.js';
 import { buildTerminalsRouter } from '../routes/terminals.js';
 import { buildFleetRouter } from '../routes/fleet.js';
+import { buildPeersRouter } from '../routes/peers.js';
 import { buildTerminalTabsRouter } from '../routes/terminalTabs.js';
 import { buildWorkflowsRouter } from '../routes/workflows.js';
 import { buildRestartDrainAdmissionGate, buildRestartDrainRouter } from '../routes/restartDrain.js';
@@ -134,6 +135,8 @@ export function mountRouteFactories(
   // Fleet: cross-project snapshot + agent launches, and /api/terminals/:id/
   // {screen,input,wait-idle} (only GET /api/terminals and DELETE …/:id above).
   app.use(buildFleetRouter());
+  // Peers: pairing other PCs + `/api/peer/:name/*` proxy (peers.ts).
+  app.use(buildPeersRouter());
   app.use(buildTerminalTabsRouter());
   app.use(buildTasksRouter(options.backendOrigin));
   app.use(buildAgentActivityRouter());

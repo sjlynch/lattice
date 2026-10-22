@@ -20,7 +20,8 @@ import { getActiveRunsForProject } from './workflowRuns.js';
 import { createFleetEventLog, wireFleetEvents } from './fleet/events.js';
 import { launchFleetAgent, type FleetLaunchInput } from './fleet/launch.js';
 import { buildFleetProjects } from './fleet/snapshot.js';
-import type { FleetLaunchResult, FleetSnapshot } from './fleet/types.js';
+import type { FleetLaunchResult, FleetMachine, FleetProject, FleetSnapshot } from './fleet/types.js';
+import { readRemoteFleets } from './peers.js';
 
 export { FleetLaunchError, parseFleetLaunch } from './fleet/launch.js';
 export { readTerminalScreen, sendTerminalInput, waitTerminalQuiet, TerminalControlError } from './fleet/terminal.js';
@@ -41,7 +42,7 @@ export async function isFleetAgentControlOn(): Promise<boolean> {
   return (await getGlobalSettings().catch(() => null))?.fleetAgentControl === true;
 }
 
-export async function readFleetSnapshot(since = 0): Promise<FleetSnapshot> {
+export async function readFleetSnapshot(since = 0, opts: { machines?: boolean } = {}): Promise<FleetSnapshot> {
   const projects = await buildFleetProjects({
     knownProjects: listKnownProjects,
     tasksOf: listTasks,
@@ -56,12 +57,21 @@ export async function readFleetSnapshot(since = 0): Promise<FleetSnapshot> {
     harnessFor: agentHarnessForCommand,
     now: Date.now,
   });
+  const machines: FleetMachine[] | undefined = opts.machines
+    ? (await readRemoteFleets()).map((m) => {
+      const snap = m.snapshot as Partial<FleetSnapshot> | undefined;
+      return m.ok && snap
+        ? { name: m.name, ok: true, projects: (snap.projects ?? []) as FleetProject[], events: (snap.events ?? []).slice(-50), agentControl: snap.agentControl === true }
+        : { name: m.name, ok: false, ...(m.error ? { error: m.error } : {}) };
+    })
+    : undefined;
   return {
     generatedAt: Date.now(),
     projects,
     events: log.since(since),
     seq: log.seq(),
     agentControl: await isFleetAgentControlOn(),
+    ...(machines?.length ? { machines } : {}),
   };
 }
 
