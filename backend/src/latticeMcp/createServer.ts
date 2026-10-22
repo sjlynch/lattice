@@ -29,6 +29,7 @@ import {
 } from './client.js';
 import { registerBoardManagementTools } from './tools/boardManagementTools.js';
 import { registerPlanUsageTool } from './tools/usageTools.js';
+import { registerFleetTools } from './tools/fleetTools.js';
 import { registerOpengrepIgnoreTool, registerOpengrepTools } from './tools/opengrepTools.js';
 import { registerReadTools } from './tools/readTools.js';
 import { registerWriteTools } from './tools/writeTools.js';
@@ -44,6 +45,8 @@ export type CreateLatticeMcpServerOptions = {
   // the `my_task` tool and lets `append_summary` omit its `id`. Undefined for
   // every other kind of session — sidebar, workflow step, push, QA, hooks.
   taskId?: string;
+  // A user-started session (`LATTICE_FLEET=1`): register the Fleet tools.
+  fleet?: boolean;
   // Injectable for tests; defaults to the global `fetch`.
   fetchImpl?: FetchLike;
   // Restart-retry tuning, passed through to LatticeClient (tests use 0).
@@ -108,6 +111,8 @@ export function createLatticeMcpServer(
   registerBoardManagementTools(host);
   // plan_usage — machine-wide subscription usage, for sessions that launch runs.
   registerPlanUsageTool(server, () => client);
+  // fleet, open_agent, read/send/wait_terminal — user-started sessions only.
+  if (opts.fleet) registerFleetTools(server, () => client);
 
   return server;
 }

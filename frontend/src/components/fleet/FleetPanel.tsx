@@ -1,0 +1,125 @@
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { fetchFleet, patchGlobalSettings, type FleetEvent, type FleetProject } from '../../api';
+import { sameProjectPath } from '../../terminal/terminalScope';
+import { ago, feedNewestFirst, mergeFeed, projectMatches, projectName } from './fleetDerive';
+import { FleetProjectCard } from './FleetProjectCard';
+import { FleetTerminalViewer } from './FleetTerminalViewer';
+
+type Props = {
+  activeFolder: string;
+  onSelectFolder: (path: string) => void;
+};
+
+const POLL_MS = 3000;
+
+// The Fleet panel body: every project with something going on (left) and the
+// machine-wide activity feed or one terminal's live screen (right). Polls
+// GET /api/fleet while open; the feed accumulates by `seq`.
+export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
+  const [projects, setProjects] = useState<FleetProject[]>([]);
+  const [feed, setFeed] = useState<FleetEvent[]>([]);
+  const [agentControl, setAgentControl] = useState(false);
+  const [loaded, setLoaded] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [filter, setFilter] = useState('');
+  const [now, setNow] = useState(() => Date.now());
+  const [prompting, setPrompting] = useState<string | null>(null);
+  const [viewing, setViewing] = useState<{ id: string; label: string; project: string } | null>(null);
+  const seqRef = useRef(0);
+
+  const poll = useCallback(() => {
+    if (document.hidden) return;
+    fetchFleet(seqRef.current)
+      .then((snap) => {
+        // A backend restart starts a fresh feed: its seq goes backwards.
+        if (snap.seq < seqRef.current) {
+          seqRef.current = 0;
+          setFeed([]);
+          return;
+        }
+        seqRef.current = snap.seq;
+        setProjects(snap.projects);
+        setFeed((f) => mergeFeed(f, snap.events));
+        setAgentControl(snap.agentControl);
+        setNow(snap.generatedAt);
+        setLoaded(true);
+        setError(null);
+      })
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
+  }, []);
+
+  useEffect(() => {
+    poll();
+    const timer = window.setInterval(poll, POLL_MS);
+    return () => window.clearInterval(timer);
+  }, [poll]);
+
+  const toggleAgentControl = (on: boolean) => {
+    setAgentControl(on);
+    patchGlobalSettings({ fleetAgentControl: on }).catch(() => setAgentControl(!on));
+  };
+
+  const shown = projects.filter((p) => projectMatches(p, filter));
+  return (
+    <div className="fleet">
+      <div className="fleet-bar">
+        <input
+          className="text-input fleet-filter"
+          value={filter}
+          onChange={(e) => setFilter(e.target.value)}
+          placeholder="Filter projects, terminals, tasks…"
+          aria-label="Filter projects"
+        />
+        <label
+          className="fleet-check"
+          title="When on, agents (MCP fleet tools in sessions you start, or scripted API calls) may open agent terminals in any project and read, type into and wait on any terminal. Off by default. This panel is never gated."
+        >
+          <input type="checkbox" checked={agentControl} onChange={(e) => toggleAgentControl(e.target.checked)} />
+          Let agents open and drive terminals in any project
+        </label>
+      </div>
+      {error && <div className="error-msg">Fleet unavailable: {error}</div>}
+      <div className="fleet-body">
+        <div className="fleet-projects">
+          {!loaded && !error && <div className="fleet-muted fleet-empty">Loading…</div>}
+          {loaded && !shown.length && <div className="fleet-muted fleet-empty">No active projects{filter ? ' match' : ''}.</div>}
+          {shown.map((p) => (
+            <FleetProjectCard
+              key={p.path}
+              project={p}
+              isActive={sameProjectPath(p.path, activeFolder)}
+              now={now}
+              prompting={prompting === p.path}
+              selectedTerminal={viewing?.id ?? null}
+              onPrompt={(open) => setPrompting(open ? p.path : null)}
+              onLaunched={(r) => {
+                setPrompting(null);
+                setViewing({ id: r.id, label: r.label, project: p.name });
+                poll();
+              }}
+              onOpenTerminal={(t) => setViewing({ id: t.id, label: t.label, project: p.name })}
+              onSwitch={() => onSelectFolder(p.path)}
+            />
+          ))}
+        </div>
+        <div className="fleet-side">
+          {viewing ? (
+            <FleetTerminalViewer key={viewing.id} id={viewing.id} label={viewing.label} projectName={viewing.project} onClose={() => setViewing(null)} />
+          ) : (
+            <div className="fleet-feed">
+              <div className="fleet-feed-head">Activity across projects</div>
+              {!feed.length && <div className="fleet-muted fleet-empty">Nothing yet — task moves, runs, agents and terminals from every project show up here.</div>}
+              {feedNewestFirst(feed).map((e) => (
+                <div key={e.seq} className={`fleet-event kind-${e.kind}`}>
+                  <span className="fleet-event-time">{ago(e.at, now)}</span>
+                  <span className="fleet-event-project" title={e.projectPath}>{projectName(e.projectPath)}</span>
+                  <span className="fleet-event-text">{e.text}</span>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}

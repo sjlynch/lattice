@@ -30,6 +30,7 @@ see "Controller mode" below; the pinned server is unchanged by it.
 | [tools/opengrepTools.ts](tools/opengrepTools.ts) | Scan/findings; separately registered ignore. |
 | [tools/workflowTools.ts](tools/workflowTools.ts) | Controller: workflow definitions and runs, incl. `wait_workflow_run`. |
 | [tools/controllerTools.ts](tools/controllerTools.ts) | Controller: `instances`, merge runs, `export_board`, `api_request`. |
+| [tools/fleetTools.ts](tools/fleetTools.ts) | Fleet: `fleet`, `open_agent`, `read_terminal`, `send_terminal`, `wait_terminal` — controller (`instance`) + pinned user-started sessions (`LATTICE_FLEET=1`). |
 | [tools/usageTools.ts](tools/usageTools.ts) | `plan_usage` (machine-wide Claude/Codex plan usage): pinned non-task sessions + controller (`instance`). |
 
 ## Registration and session scope
@@ -39,7 +40,10 @@ Opengrep ignore → board management → `plan_usage`. `createServer.ts` returns
 before the last three groups when `taskId` is set. Normal sessions have 15 tools; task-worktree
 sessions have 10: add `my_task`, allow `append_summary.id` to default to the
 session task, and omit board management, `opengrep_ignore` and `plan_usage`. Otherwise
-`append_summary.id` is required.
+`append_summary.id` is required. A session the user started (`LATTICE_FLEET=1`,
+set by the resolver only for user-launched spawns) adds the five Fleet tools
+after `plan_usage` (20); they take `targetProject`, never `project`, and the
+backend refuses everything but `fleet` until `fleetAgentControl` is on.
 
 ## Shared contracts
 

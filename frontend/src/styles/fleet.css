@@ -1,0 +1,120 @@
+/* Fleet (components/fleet/): every project at once — project cards on the
+   left, the cross-project activity feed or one terminal's live screen on the
+   right. Lives in a FloatingPanel; owns only .fleet* classes. */
+
+.fleet {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  gap: 8px;
+  padding: 10px 12px 12px;
+  font-size: 12px;
+  color: var(--text-primary);
+}
+.fleet .btn-primary.sm,
+.fleet .btn-ghost.sm { padding: 4px 10px; font-size: 12px; }
+.fleet-muted { color: var(--text-tertiary); }
+.fleet-empty { padding: 12px 4px; }
+.fleet-ellipsis { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+
+.fleet-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.fleet-filter { flex: 1 1 220px; min-width: 0; }
+.fleet-check { display: inline-flex; align-items: center; gap: 6px; color: var(--text-secondary); cursor: pointer; user-select: none; }
+
+.fleet-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr);
+  gap: 10px;
+}
+@media (max-width: 760px) { .fleet-body { grid-template-columns: minmax(0, 1fr); } }
+.fleet-projects, .fleet-side { min-height: 0; overflow: auto; }
+.fleet-projects { display: flex; flex-direction: column; gap: 8px; padding-right: 2px; }
+
+.fleet-card {
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg-elev);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fleet-card.is-active { border-color: var(--accent); }
+.fleet-card-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fleet-card-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-card-actions { display: inline-flex; gap: 2px; flex-shrink: 0; }
+.fleet-tag {
+  margin-left: 6px;
+  padding: 0 6px;
+  border-radius: var(--radius-pill);
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 10px;
+}
+.fleet-tag.is-busy { background: var(--tool-on-bg); color: var(--tool-on); }
+.fleet-card-lanes { color: var(--text-secondary); }
+.fleet-line { display: flex; align-items: center; gap: 6px; min-width: 0; color: var(--text-secondary); }
+
+.fleet-dot { flex: 0 0 auto; width: 7px; height: 7px; border-radius: 50%; background: var(--text-tertiary); }
+.fleet-dot.is-run { background: var(--workflow-parallel); }
+.fleet-dot.is-task { background: var(--accent); }
+.fleet-dot.is-agent { background: #e0af68; }
+
+.fleet-terms { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 2px; }
+.fleet-term-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 100%;
+  padding: 2px 8px;
+  border-radius: var(--radius-pill);
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fleet-term-chip:hover { background: var(--bg-hover); }
+.fleet-term-chip.is-busy .fleet-dot { background: var(--tool-on); box-shadow: 0 0 0 2px var(--tool-on-bg); }
+.fleet-term-chip.is-selected { border-color: var(--accent); color: var(--text-primary); }
+
+.fleet-prompt { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--border); }
+.fleet-prompt-row { display: flex; gap: 6px; flex-wrap: wrap; }
+.fleet-prompt-row > .text-input { flex: 1 1 120px; min-width: 0; }
+.fleet-prompt-text { resize: vertical; min-height: 64px; font-family: inherit; }
+.fleet-prompt-actions { justify-content: flex-end; }
+
+.fleet-feed { display: flex; flex-direction: column; gap: 2px; }
+.fleet-feed-head { font-weight: 600; color: var(--text-secondary); padding: 2px 0 6px; }
+.fleet-event { display: grid; grid-template-columns: 44px minmax(0, 90px) minmax(0, 1fr); gap: 8px; padding: 3px 0; border-bottom: 1px solid var(--border); }
+.fleet-event-time { color: var(--text-tertiary); text-align: right; font-variant-numeric: tabular-nums; }
+.fleet-event-project { color: var(--accent); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-event-text { color: var(--text-secondary); overflow-wrap: anywhere; }
+
+.fleet-term { display: flex; flex-direction: column; height: 100%; min-height: 0; gap: 6px; }
+.fleet-term-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.fleet-term-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-term-screen {
+  flex: 1 1 auto;
+  min-height: 120px;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border-radius: var(--radius-sm);
+  background: var(--bg-graph);
+  border: 1px solid var(--border);
+  font-family: var(--mono);
+  font-size: 11px;
+  line-height: 1.35;
+  white-space: pre;
+  color: var(--text-primary);
+}
+.fleet-term-input { display: flex; align-items: center; gap: 6px; }
+.fleet-term-input .text-input { flex: 1 1 auto; min-width: 0; }

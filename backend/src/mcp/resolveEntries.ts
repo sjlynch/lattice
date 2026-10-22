@@ -156,6 +156,9 @@ function shapeLatticeEntry(
       // Only a task-run spawn carries one; the key is omitted (not set empty)
       // otherwise, so the server registers `my_task` exactly when it applies.
       ...(ctx.taskId && entry.id === LATTICE_MCP_SERVER_ID ? { LATTICE_TASK_ID: ctx.taskId } : {}),
+      // A session the user started gets the Fleet tools (every project, any
+      // terminal); task agents, workflow steps and fleet-launched agents don't.
+      ...(ctx.userLaunched === true && entry.id === LATTICE_MCP_SERVER_ID ? { LATTICE_FLEET: '1' } : {}),
     },
   };
 }

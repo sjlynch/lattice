@@ -12,6 +12,7 @@ export * from './mcp';
 export * from './opengrep';
 export * from './tasks';
 export * from './mergeRuns';
+export * from './fleet';
 export {
   checkGit,
   fetchPushRunStatus,

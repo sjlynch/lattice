@@ -50,12 +50,13 @@ export async function connect(
   canned?: CannedResponse | (() => CannedResponse | Promise<never>),
   // `taskId` makes this a task-worktree session (what LATTICE_TASK_ID does for
   // the real stdio entry): `my_task` appears and `append_summary` gains a default.
-  opts: { taskId?: string } = {},
+  opts: { taskId?: string; fleet?: boolean } = {},
 ) {
   const server = createLatticeMcpServer({
     apiUrl: API,
     project: PROJECT,
     taskId: opts.taskId,
+    fleet: opts.fleet,
     fetchImpl: fakeFetch(calls, canned),
     // No restart retry here: these tests pin single-round-trip outcomes (the
     // retry has its own tests in latticeMcp.failures.test.ts).

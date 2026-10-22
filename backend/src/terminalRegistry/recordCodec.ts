@@ -47,7 +47,7 @@ function parseLaunch(v: unknown): TerminalRecord['launch'] {
   if (raw.isQaRun === true) launch.isQaRun = true;
   const taskId = str(raw.taskId);
   if (taskId) launch.taskId = taskId;
-  if (raw.mcpScope === 'task-worktree') launch.mcpScope = 'task-worktree';
+  if (raw.mcpScope === 'task-worktree' || raw.mcpScope === 'fleet-agent') launch.mcpScope = raw.mcpScope;
   return launch;
 }
 

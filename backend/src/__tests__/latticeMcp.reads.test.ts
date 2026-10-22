@@ -121,3 +121,39 @@ test('plan_usage GETs /api/plan-usage, refresh only on request; absent in task w
     await worktree.close();
   }
 });
+
+// Fleet tools exist only in a session the user started (LATTICE_FLEET=1) and
+// reach the machine-wide routes: the overview, an agent launch (targetProject
+// → project), and a terminal's screen / input / wait by pty id.
+test('fleet tools: only with fleet on; each hits its route', async () => {
+  const plain = await connect([]);
+  try {
+    const { tools } = await plain.client.listTools();
+    assert.ok(!tools.some((t) => ['fleet', 'open_agent', 'read_terminal', 'send_terminal', 'wait_terminal'].includes(t.name)));
+  } finally {
+    await plain.close();
+  }
+  const calls: Recorded[] = [];
+  const { client, close } = await connect(calls, undefined, { fleet: true });
+  try {
+    await client.callTool({ name: 'fleet', arguments: { since: 7 } });
+    await client.callTool({ name: 'open_agent', arguments: { targetProject: 'C:\other', harness: 'codex', prompt: 'do it' } });
+    await client.callTool({ name: 'read_terminal', arguments: { id: 'p 1', lines: 50 } });
+    await client.callTool({ name: 'send_terminal', arguments: { id: 'p1', text: 'yes', submit: true } });
+    await client.callTool({ name: 'wait_terminal', arguments: { id: 'p1' } });
+    const urls = calls.map((c) => { const u = new URL(c.url); return `${c.method} ${u.pathname}`; });
+    assert.deepEqual(urls, [
+      'GET /api/fleet',
+      'POST /api/fleet/agents',
+      'GET /api/terminals/p%201/screen',
+      'POST /api/terminals/p1/input',
+      'POST /api/terminals/p1/wait-idle',
+    ]);
+    assert.equal(new URL(calls[0].url).searchParams.get('since'), '7');
+    assert.deepEqual(JSON.parse(String(calls[1].body)), { project: 'C:\other', harness: 'codex', prompt: 'do it' });
+    assert.deepEqual(JSON.parse(String(calls[3].body)), { text: 'yes', submit: true });
+    assert.deepEqual(JSON.parse(String(calls[4].body)), { timeoutMs: 50000 });
+  } finally {
+    await close();
+  }
+});

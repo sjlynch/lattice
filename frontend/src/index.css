@@ -24,6 +24,7 @@
 @import './styles/legend.css';
 @import './styles/merge-run.css';
 @import './styles/workflows.css';
+@import './styles/fleet.css';
 
 @import './styles/timeline.css';
 @import './styles/health-overlay.css';

@@ -57,7 +57,9 @@ function pinnedServer(): McpServer {
   // Optional: present only for a task worktree's session (run/resume). Unlocks
   // `my_task` and the id-less `append_summary`; every other session omits it.
   const taskId = process.env.LATTICE_TASK_ID?.trim() || undefined;
-  return createLatticeMcpServer({ apiUrl, project, taskId });
+  // Optional: set only for a session the user started — adds the Fleet tools.
+  const fleet = process.env.LATTICE_FLEET?.trim() === '1';
+  return createLatticeMcpServer({ apiUrl, project, taskId, fleet });
 }
 
 async function main(): Promise<void> {

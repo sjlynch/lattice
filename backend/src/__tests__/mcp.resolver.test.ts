@@ -71,6 +71,15 @@ test('lattice: a task-run spawn adds LATTICE_TASK_ID; every other spawn omits th
   assert.equal('LATTICE_TASK_ID' in (without.env ?? {}), false);
 });
 
+test('lattice: only a user-launched spawn sets LATTICE_FLEET (the Fleet tools)', () => {
+  // A session the user started may see and drive every project; a task agent,
+  // workflow step or fleet-launched agent (not user-launched) must not.
+  const user = asStdio(resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}, { ...LATTICE_CTX, userLaunched: true }).lattice);
+  assert.equal(user.env?.LATTICE_FLEET, '1');
+  const other = asStdio(resolveClaudeServers(BUILTIN_MCP_SERVERS, {}, {}, { ...LATTICE_CTX, taskId: 't_abc' }).lattice);
+  assert.equal('LATTICE_FLEET' in (other.env ?? {}), false);
+});
+
 test('lattice: an override env can tune the server but never pre-seed a LATTICE_* key', () => {
   // `mcpBuiltinOverrides.lattice.env` survives the sanitizer (env is a tunable
   // field). LATTICE_API_URL/LATTICE_PROJECT would be overwritten by the ctx

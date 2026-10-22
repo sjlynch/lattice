@@ -27,6 +27,13 @@
   `GET /api/projects` prunes the missing project from the index. Do not wipe
   the whole E2E home: it persists across runs to retain the terminal-server
   auth token while an earlier executor may still be draining.
+- [fleet.spec.ts](./fleet.spec.ts) uses the **real backend + executor** with a
+  plain shell (no coding harness): a disposable project in
+  `<tmp>/lattice-playwright-fleet-*` with one task and one shell terminal.
+  Checks the `/api/fleet` snapshot, the agent gate (a request without browser
+  headers is refused control), type → wait → read back, and the navbar Fleet
+  panel's terminal view. Cleanup kills its pty, deletes its task and removes
+  only that direct child of `os.tmpdir()`.
 - [graph-stability.spec.ts](./graph-stability.spec.ts) intercepts all API and
   WebSocket traffic before navigation; its fixture graph never reaches a real
   backend. Keep response shapes complete (notably terminal restore's summary).
@@ -66,7 +73,7 @@ npm run test:e2e
 npm run test:e2e -- e2e/<spec>.spec.ts
 ```
 
-Replace `<spec>` with `graph-stability`, `workflow-editor-drag`,
+Replace `<spec>` with `fleet`, `graph-stability`, `workflow-editor-drag`,
 `workflow-parallel` or `workflow-queue`. For unit tests and package validation,
 use the [backend](../backend/CLAUDE.md#validation) and
 [frontend](../frontend/CLAUDE.md#validation) command guides. Their type-check

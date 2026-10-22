@@ -68,6 +68,18 @@ export type {
 } from '../piModels/types.js';
 export type { CodexModelInfo } from '../codexModels/types.js';
 export type {
+  FleetAgent,
+  FleetEvent,
+  FleetEventKind,
+  FleetLaunchResult,
+  FleetProject,
+  FleetRun,
+  FleetSnapshot,
+  FleetTask,
+  FleetTerminal,
+  TerminalScreen,
+} from '../fleet/types.js';
+export type {
   PlanUsageProvider,
   PlanUsageProviderId,
   PlanUsageReport,

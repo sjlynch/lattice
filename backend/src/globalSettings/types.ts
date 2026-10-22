@@ -50,4 +50,9 @@ export type GlobalSettings = {
   // saturated or RAM is low, beneath the `maxConcurrentAgents` ceiling. Absent
   // counts as true; false opts out. See spawnQueue/resourceGovernor.ts.
   resourceGovernor?: boolean;
+  // Fleet: let AGENTS (MCP fleet tools, scripted API calls) open agent
+  // terminals in any project and read / type into / wait on any terminal.
+  // Absent counts as false. The Fleet view itself (a human in the browser)
+  // is never gated by it. See ../fleet.ts.
+  fleetAgentControl?: boolean;
 };

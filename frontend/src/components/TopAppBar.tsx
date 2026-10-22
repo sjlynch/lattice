@@ -3,6 +3,7 @@ import { FolderOpen, GitBranch, Settings } from 'lucide-react';
 import { FolderPicker } from './FolderPicker';
 import { TaskBoardLauncher } from './TaskBoard';
 import { WorkflowsLauncher } from './Workflows';
+import { FleetLauncher } from './fleet/FleetLauncher';
 import { SettingsDialog } from './SettingsDialog';
 import { BackendConnectionIndicator } from './BackendConnectionIndicator';
 import { TerminalServerChip } from './TerminalServerChip';
@@ -148,6 +149,7 @@ export const TopAppBar = memo(function TopAppBar({
         <BackendConnectionIndicator />
         <TerminalServerChip />
         <PlanUsageChip />
+        <FleetLauncher activeFolder={activeFolder} onSelectFolder={onSelectFolder} />
         <WorkflowsLauncher activeFolder={activeFolder} scanResult={scanResult} />
         <TaskBoardLauncher activeFolder={activeFolder} />
         <button

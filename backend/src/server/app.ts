@@ -24,6 +24,7 @@ import { buildSearchRouter } from '../routes/search.js';
 import { buildSettingsRouter } from '../routes/settings.js';
 import { buildTasksRouter } from '../routes/tasks.js';
 import { buildTerminalsRouter } from '../routes/terminals.js';
+import { buildFleetRouter } from '../routes/fleet.js';
 import { buildTerminalTabsRouter } from '../routes/terminalTabs.js';
 import { buildWorkflowsRouter } from '../routes/workflows.js';
 import { buildRestartDrainAdmissionGate, buildRestartDrainRouter } from '../routes/restartDrain.js';
@@ -130,6 +131,9 @@ export function mountRouteFactories(
   // them and they shadow nothing.
   app.use(buildProjectInitRouter());
   app.use(buildTerminalsRouter());
+  // Fleet: cross-project snapshot + agent launches, and /api/terminals/:id/
+  // {screen,input,wait-idle} (only GET /api/terminals and DELETE …/:id above).
+  app.use(buildFleetRouter());
   app.use(buildTerminalTabsRouter());
   app.use(buildTasksRouter(options.backendOrigin));
   app.use(buildAgentActivityRouter());

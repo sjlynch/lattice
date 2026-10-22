@@ -62,6 +62,12 @@ export function buildGlobalSettingsRouter(): Router {
       }
       patch.resourceGovernor = body.resourceGovernor;
     }
+    if (body.fleetAgentControl !== undefined) {
+      if (typeof body.fleetAgentControl !== 'boolean') {
+        return res.status(400).json({ error: 'fleetAgentControl must be a boolean' });
+      }
+      patch.fleetAgentControl = body.fleetAgentControl;
+    }
 
     const updated = await updateGlobalSettings(patch);
     // Apply the new softCap to the live queue so it takes effect without a

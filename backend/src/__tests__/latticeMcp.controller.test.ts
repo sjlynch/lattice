@@ -27,11 +27,16 @@ import {
 
 const CONTROLLER_TOOLS = [
   'api_request', 'board_summary', 'cancel_workflow_run', 'create_tasks', 'delete_task',
-  'delete_workflow', 'export_board', 'get_merge_run', 'get_task', 'get_workflow',
-  'get_workflow_run', 'instances', 'list_tasks', 'list_workflow_runs', 'list_workflows',
-  'plan_usage', 'run_task', 'save_workflow', 'search_tasks', 'start_merge_run', 'start_workflow_run',
-  'transition_tasks', 'update_task', 'wait_workflow_run',
+  'delete_workflow', 'export_board', 'fleet', 'get_merge_run', 'get_task',
+  'get_workflow', 'get_workflow_run', 'instances', 'list_tasks', 'list_workflow_runs',
+  'list_workflows', 'open_agent', 'plan_usage', 'read_terminal', 'run_task',
+  'save_workflow', 'search_tasks', 'send_terminal', 'start_merge_run', 'start_workflow_run',
+  'transition_tasks', 'update_task', 'wait_terminal', 'wait_workflow_run',
 ];
+
+// Machine-level tools: `instance`, never `project` (fleet tools name a
+// `targetProject` where they need one).
+const INSTANCE_ONLY = new Set(['api_request', 'plan_usage', 'fleet', 'open_agent', 'read_terminal', 'send_terminal', 'wait_terminal']);
 
 const props = (tool: { inputSchema: unknown }) =>
   Object.keys((tool.inputSchema as { properties?: object }).properties ?? {});
@@ -101,7 +106,7 @@ test('controller tools/list: the fixed set; every scoped tool takes instance + p
       assert.ok((tool.description ?? '').length > 40, `${tool.name} needs a real description`);
       const p = props(tool);
       if (tool.name === 'instances') assert.deepEqual(p, []);
-      else if (tool.name === 'api_request' || tool.name === 'plan_usage') assert.ok(p.includes('instance') && !p.includes('project'), `${tool.name}: ${p}`);
+      else if (INSTANCE_ONLY.has(tool.name)) assert.ok(p.includes('instance') && !p.includes('project'), `${tool.name}: ${p}`);
       else assert.ok(p.includes('instance') && p.includes('project'), `${tool.name}: ${p}`);
     }
     const run = tools.find((t) => t.name === 'run_task')!;

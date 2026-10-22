@@ -104,6 +104,9 @@ function sanitize(raw: Partial<GlobalSettings>): Partial<GlobalSettings> {
   if (typeof raw.resourceGovernor === 'boolean') {
     out.resourceGovernor = raw.resourceGovernor;
   }
+  if (typeof raw.fleetAgentControl === 'boolean') {
+    out.fleetAgentControl = raw.fleetAgentControl;
+  }
   if (raw.mcpCustomServers !== undefined) {
     out.mcpCustomServers = sanitizeCustomServers(raw.mcpCustomServers);
   }

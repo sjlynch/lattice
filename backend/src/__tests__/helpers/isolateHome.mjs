@@ -46,7 +46,12 @@ delete process.env.LATTICE_HOME;
 // at best, and under load a stalled request that hung postMergeHookTrigger for
 // minutes. Point it at a port nothing listens on; tests that need an executor
 // start a fake one and set TERMINAL_PORT themselves before importing.
-process.env.TERMINAL_PORT ??= '9';
+// Overwritten, not defaulted: a suite run from inside a Lattice terminal
+// inherits that pty's TERMINAL_PORT=5185 (and its executor token), which a
+// `??=` kept — so tests reached the live executor after all.
+// LATTICE_TEST_TERMINAL_PORT is the explicit opt-in to another port.
+process.env.TERMINAL_PORT = process.env.LATTICE_TEST_TERMINAL_PORT || '9';
+delete process.env.LATTICE_TERMINAL_TOKEN;
 
 // Best-effort cleanup when the test process exits (sync — 'exit' can't await).
 process.on('exit', () => {

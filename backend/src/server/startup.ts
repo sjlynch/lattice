@@ -25,6 +25,7 @@ import {
 import { createHttpServerWithWebSockets } from './http.js';
 import { beginWorkflowRecovery } from '../workflowRuns/recoveryReadiness.js';
 import { startTerminalRegistryWatch } from '../terminalRegistry/watch.js';
+import { startFleet } from '../fleet.js';
 import { ensureCallbackScript, startCallbackOutboxLoop } from '../callbackOutbox.js';
 import { fireOwedPostMergeHooks } from '../recovery/owedPostMergeHooks.js';
 import { recoverSecurityReviews, sweepSecurityReviews } from '../opengrep/reviewRecovery.js';
@@ -221,6 +222,9 @@ export function resumeRunsAfterListen(backendOrigin: string, finishWorkflowRecov
   // (exited ptys are ended so restore never relaunches them; busy transitions
   // are stamped for the interruption detector). See terminalRegistry/watch.ts.
   startTerminalRegistryWatch();
+  // The machine-wide Fleet activity feed (task / run / agent / terminal events
+  // across every project) — see fleet.ts.
+  startFleet();
   // Periodic `[mem]` console line + ~/.lattice/logs/mem-backend.jsonl
   // (LATTICE_MEM_LOG_MS, 0 disables). See memDiag/CLAUDE.md.
   registerMemProbe('executor', readExecutorMemory);

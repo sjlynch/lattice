@@ -50,6 +50,7 @@ its cascade needs — files are not auto-globbed.
 - **Health** — `health-overlay.css` (`.health-legend*`, `.health-tooltip*`).
 - **Task board** — `taskboard.css` + `taskboard/` partials.
 - **Workflows** — `workflows.css` + `workflows/` partials.
+- **Fleet** — `fleet.css` (`.fleet*`, the navbar Fleet panel).
 
 ## Convention
 

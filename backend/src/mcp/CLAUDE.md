@@ -59,7 +59,9 @@ project-root `.pi/mcp.json`.
   task run/resume and WORKTREE merge resolvers — **omitted, never empty**: it
   is what makes the server add `my_task` and drop board management +
   `opengrep_ignore` (an untrusted worktree brief must not write permanent
-  ignores). `shapeLatticeEntry` strips `LATTICE_*` from an override's env.
+  ignores). `LATTICE_FLEET=1` is likewise set ONLY for a user-launched spawn
+  (`ctx.userLaunched`) — it adds the Fleet tools; a fleet-launched agent
+  (`mcpScope: 'fleet-agent'`) is never user-launched, so it can't recurse. `shapeLatticeEntry` strips `LATTICE_*` from an override's env.
   `command` is **`process.execPath`**, not bare `node` (no shell; the harness's
   PATH isn't ours); as an absolute `.exe` it stays unwrapped (`cmd /c` breaks a
   path with a space).

@@ -115,6 +115,11 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | GET | `/api/terminals` | Debug: active pty sessions |
 | POST | `/api/terminals` | Pre-spawn a sidebar harness pty through the spawn chokepoint → `serverId` |
 | DELETE | `/api/terminals/:id` | Kill a pty (ends its tab; aborts an owning post-merge hook) |
+| GET | `/api/terminals/:id/screen?lines=` | Fleet: a pty's rendered screen + last `lines` lines (agents need `fleetAgentControl`) |
+| POST | `/api/terminals/:id/input` | Fleet: `{text, submit?, paste?}` typed into a pty (agents need `fleetAgentControl`) |
+| POST | `/api/terminals/:id/wait-idle` | Fleet: `{quietMs?, timeoutMs?}` → `{idle, waitedMs}` once the pty prints nothing for `quietMs` (agents need `fleetAgentControl`) |
+| GET | `/api/fleet?since=` | Fleet: every active project (lanes, in-progress tasks, runs, agents, terminals) + activity events after `since` |
+| POST | `/api/fleet/agents` | Fleet: `{project, harness, prompt, model?, effort?, piModel?, label?}` → an agent terminal in that project working on the prompt (agents need `fleetAgentControl`) |
 | GET | `/api/terminal-tabs?project=` | Durable terminal-tab records |
 | POST | `/api/terminal-tabs/restore?project=` | Rebuild sidebar tabs (adopt live, relaunch dead into their conversation) |
 | PATCH | `/api/terminal-tabs?project=` | Persist tab order `{order}` |

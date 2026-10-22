@@ -27,6 +27,7 @@ effects (`../terminal/terminalApi.ts`) and React state (feature hooks).
 - `opengrep.ts` — engine status / install / rule packs / scans (Settings → Tools) and the Security chip's graph scan (`runOpengrepGraphScan`, `waitForOpengrepGraphScan`, `fetchOpengrepGraphResult`, `cancelOpengrepGraphScan`, `subscribeOpengrepStatus`).
 - `opengrepReview.ts` — security review sessions, local triage/history, shared suppression tasks; reads accept abort signals.
 - `terminals.ts` — `subscribeTerminalActivity` (`/ws/terminal-activity`, per-tab spinner) and `fetchTerminalServerStatus` (navbar `TerminalServerChip`).
+- `fleet.ts` — Fleet (every project at once): `fetchFleet` (snapshot + activity since a seq), `launchFleetAgent`, `fetchTerminalScreen` / `sendTerminalText` for any project's pty (navbar Fleet panel).
 - `terminalTabs.ts` — the durable terminal-tab registry: `fetchTerminalTabs`, `restoreTerminalTabs` (`retry` also retries failed relaunches), label/order PATCHes, `closeTerminalTab`, `subscribeTerminalTabs`. Consumed by `../TerminalsContext.tsx` and `../terminal/terminalRegistrySync.ts`.
 
 ## Invariants
