@@ -9,6 +9,7 @@ export type FetchedToggles = {
   disableMemory: boolean;
   qaTerminalAutoClose: boolean;
   keepWorkflowStepTerminals: boolean;
+  mergeContinueOnStall: boolean;
   restoreTerminalsOnOpen: RestoreTerminalsMode;
   restoreNudgeAgents: boolean;
   restoreNudgeUserTabs: boolean;
@@ -29,6 +30,8 @@ export const FETCHED_TOGGLE_DEFAULTS: Readonly<FetchedToggles> = {
   qaTerminalAutoClose: false,
   // Default OFF (a finished workflow step's tab closes) — only `true` keeps it.
   keepWorkflowStepTerminals: false,
+  // Default ON — a stalled round task no longer fails the whole run.
+  mergeContinueOnStall: true,
   // Terminal-tab restore: mode defaults to 'always', the agent nudge to ON,
   // the user-tab nudge to OFF (see backend userSettings/types.ts).
   restoreTerminalsOnOpen: 'always',
@@ -52,6 +55,7 @@ export function readFetchedToggles(s: UserSettings): FetchedToggles {
     disableMemory: s.disableClaudeMemory !== false,
     qaTerminalAutoClose: s.qaTerminalAutoClose === true,
     keepWorkflowStepTerminals: s.keepWorkflowStepTerminals === true,
+    mergeContinueOnStall: s.mergeContinueOnStall !== false,
     restoreTerminalsOnOpen: normalizeRestoreMode(s.restoreTerminalsOnOpen),
     restoreNudgeAgents: s.restoreNudgeAgents !== false,
     restoreNudgeUserTabs: s.restoreNudgeUserTabs === true,

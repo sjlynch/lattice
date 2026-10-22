@@ -26,6 +26,7 @@ export {
   isClaudeMemoryDisabled,
   isQaTerminalAutoCloseEnabled,
   isKeepWorkflowStepTerminalsEnabled,
+  isMergeContinueOnStallEnabled,
   isPostMergeHookEnabled,
   isCodexYoloEnabled,
   isTaskAgentsLatticeMcpOnly,

@@ -20,6 +20,13 @@ export type MergeWorkWaitDeps = LaneWaitDeps & {
   hasQueuedRun: (taskId: string) => boolean;
 };
 
+// Stall handling (the Merge step's `mergeContinueOnStall`): `ignore` holds
+// round tasks already given up on — they never block. With `resolveOnStall`,
+// the no-progress timeout adds every still-pending task to `ignore` and
+// RESOLVES with the last board read (so the ready work merges) instead of
+// rejecting.
+export type MergeWorkStall = { ignore: Set<string>; resolveOnStall: boolean };
+
 const productionMergeWorkWaitDeps: MergeWorkWaitDeps = {
   ...productionLaneWaitDeps,
   hasQueuedRun: (id) => hasSpawnRequest(taskRunDedupeKey(id)),
@@ -42,9 +49,12 @@ export function waitForMergeWork(
   onProgress: (count: number, total: number) => void,
   maxWaitMs: number,
   deps: MergeWorkWaitDeps = productionMergeWorkWaitDeps,
+  stall?: MergeWorkStall,
 ): Promise<Task[]> {
   return new Promise((resolve, reject) => {
     let lastCount = 0;
+    let lastTasks: Task[] | null = null;
+    let lastPending: string[] = [];
     let total = 0;
     let revision = 0;
     let reading = false;
@@ -57,10 +67,17 @@ export function waitForMergeWork(
     let unsubRun: (() => void) | undefined;
     let poll: ReturnType<typeof setInterval> | undefined;
 
-    const timer = createUnrefTimer(maxWaitMs, () => fail(new Error(
-      `waitForMergeWork: queued/In Progress tasks made no progress for ${maxWaitMs}ms ` +
-      `(${lastCount} task(s) still pending) — aborting so the project run-lock is released`,
-    )));
+    const timer = createUnrefTimer(maxWaitMs, () => {
+      if (stall?.resolveOnStall && lastTasks) {
+        for (const id of lastPending) stall.ignore.add(id);
+        finish(lastTasks);
+        return;
+      }
+      fail(new Error(
+        `waitForMergeWork: queued/In Progress tasks made no progress for ${maxWaitMs}ms ` +
+        `(${lastCount} task(s) still pending) — aborting so the project run-lock is released`,
+      ));
+    });
 
     const cleanup = () => {
       unsubTasks?.();
@@ -77,8 +94,9 @@ export function waitForMergeWork(
       if (run.status !== 'running') { finish([]); return; }
       const pending = new Map<string, number>();
       let diskHeld = 0;
+      lastTasks = tasks;
       for (const task of tasks) {
-        if (!isRoundTask(run, task.id)) continue;
+        if (!isRoundTask(run, task.id) || stall?.ignore.has(task.id)) continue;
         if (task.status === 'in_progress') pending.set(task.id, PHASE_RUNNING);
         else if (task.runQueued === true || deps.hasQueuedRun(task.id)) {
           pending.set(task.id, PHASE_QUEUED);
@@ -98,6 +116,7 @@ export function waitForMergeWork(
         }
       }
       lastCount = pending.size;
+      lastPending = [...pending.keys()];
       total = Math.max(total, phases.size, 1);
       if (progressed) timer.arm();
       onProgress(lastCount, total);

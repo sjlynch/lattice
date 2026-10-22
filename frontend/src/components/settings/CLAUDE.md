@@ -26,8 +26,9 @@ the tab: Pi → [piEndpoints/CLAUDE.md](piEndpoints/CLAUDE.md), MCP →
   a tab: terminal-default harness / skip-permissions / Codex `--yolo` (default
   ON, part of `terminalLaunchSettings`; also feeds the sidebar's new-Codex
   command and every backend Codex spawn; its label must keep saying it disables
-  the sandbox and approval prompts) plus the seven *fetched toggles*
+  the sandbox and approval prompts) plus the eight *fetched toggles*
   (instrument-Claude, disable-memory, QA auto-close, `keepWorkflowStepTerminals`,
+  `mergeContinueOnStall`,
   `restoreTerminalsOnOpen` / `restoreNudgeAgents` / `restoreNudgeUserTabs`).
   Adding a fetched toggle = key + default + read in `fetchedToggles.ts`, plus its
   value/setter pair on `SettingsDrafts`.

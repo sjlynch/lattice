@@ -55,7 +55,11 @@ named below.
   moves forward, so a slow batch never trips (a total cap once stranded a
   whole batch at ready_to_merge), while a stalled lane (an agent died without
   committing; the in-progress sweep refuses `no-commits`) still **rejects**,
-  erroring the run and freeing the lock. Merge: `TASK_DRAIN_TIMEOUT_MS`,
+  erroring the run and freeing the lock — except Merge with the project's
+  `mergeContinueOnStall` (default on): `waitForMergeWork` then gives up on
+  the stalled round tasks (a `MergeWorkStall.ignore` set; they stop blocking
+  every later wait in the step), the ready ones merge, and the step completes
+  with a run note naming them (`stalledNote`). Merge: `TASK_DRAIN_TIMEOUT_MS`,
   `PHASE_C_HOOK_TIMEOUT_MS` (30 min); Push: `PUSH_DRAIN_TIMEOUT_MS` (15 min).
   They also bound a hung initial read.
 - Task-read and progress-callback failures reject the wait and release its

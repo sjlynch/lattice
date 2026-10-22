@@ -101,6 +101,13 @@ export async function getTaskWorktreeLfsContent(projectPath: string): Promise<'p
   return taskWorktreeLfsContentIn(await getUserSettings(projectPath));
 }
 
+// Whether a workflow Merge step merges what is ready and continues when a
+// round task stalls (default ON), instead of failing the run.
+export async function isMergeContinueOnStallEnabled(projectPath: string): Promise<boolean> {
+  const settings = await getUserSettings(projectPath);
+  return settings.mergeContinueOnStall !== false;
+}
+
 // Whether a finished workflow agent step's terminal stays open (its pty left
 // running) instead of being killed on advance. Default off.
 export async function isKeepWorkflowStepTerminalsEnabled(

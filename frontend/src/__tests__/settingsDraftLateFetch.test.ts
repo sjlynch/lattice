@@ -166,6 +166,7 @@ test('a successful settings GET makes every fetched toggle savable', async () =>
     disableMemory: true,
     qaTerminalAutoClose: true,
     keepWorkflowStepTerminals: false,
+    mergeContinueOnStall: true,
     restoreTerminalsOnOpen: 'never',
     restoreNudgeAgents: true,
     restoreNudgeUserTabs: false,
@@ -185,6 +186,7 @@ test('pickSavableFetchedToggles: loaded → all, unloaded → only touched', () 
     restoreNudgeAgents: true,
     restoreNudgeUserTabs: false,
     keepWorkflowStepTerminals: true,
+    mergeContinueOnStall: false,
   };
   const none = {
     instrumentClaude: false,
@@ -194,6 +196,7 @@ test('pickSavableFetchedToggles: loaded → all, unloaded → only touched', () 
     restoreNudgeAgents: false,
     restoreNudgeUserTabs: false,
     keepWorkflowStepTerminals: false,
+    mergeContinueOnStall: false,
   };
   assert.deepEqual(pickSavableFetchedToggles(values, none, true), values);
   assert.deepEqual(pickSavableFetchedToggles(values, none, false), {});

@@ -141,4 +141,26 @@ export const TERMINAL_TOGGLE_SECTIONS: readonly TerminalToggleSectionSpec[] = [
     ),
     label: 'Keep workflow step terminals open after the step finishes',
   },
+  {
+    draftKey: 'mergeContinueOnStall',
+    setterKey: 'setMergeContinueOnStall',
+    title: 'Workflow Merge step',
+    infoLabel: 'About a stalled task in the Merge step',
+    info: (
+      <>
+        <p>
+          A Merge step waits for every task in the run’s round before it
+          merges. When one makes no progress for 30 minutes (its agent died,
+          or its start was never admitted), the step merges the tasks that are
+          ready, leaves the stalled ones In Progress with a note on the run,
+          and the workflow continues.
+        </p>
+        <p>
+          Turn this off to stop the whole run instead, as before: nothing in
+          the round merges until you sort out the stalled task.
+        </p>
+      </>
+    ),
+    label: 'When a task stalls, merge the ready ones and continue the run',
+  },
 ];

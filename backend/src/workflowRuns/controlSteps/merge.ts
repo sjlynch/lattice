@@ -19,7 +19,9 @@ import type { MergeRun } from '../../mergeRuns/state.js';
 import type { Workflow } from '../../workflows.js';
 import { runPostMergeHookGate } from '../../postMergeHooks.js';
 import { isPostMergeHookOwed } from '../../postMergeHooks/owed.js';
-import { subscribe, type WorkflowRun } from '../state.js';
+import { notify, subscribe, type WorkflowRun } from '../state.js';
+import { isMergeContinueOnStallEnabled } from '../../userSettings.js';
+import type { MergeWorkStall } from './mergeWorkWait.js';
 import {
   emitControlProgress,
   isRunEndedEvent,
@@ -65,6 +67,9 @@ export type MergeStepDeps = {
     backendOrigin: string,
     shouldStop: () => boolean,
   ) => Promise<void>;
+  // The project's `mergeContinueOnStall` (default on). Optional so test doubles
+  // can omit it (→ the old fail-the-run behavior).
+  continueOnStall?: (projectPath: string) => Promise<boolean>;
 };
 
 const productionDeps: MergeStepDeps = {
@@ -77,6 +82,7 @@ const productionDeps: MergeStepDeps = {
   waitForMergeWork,
   waitForPostMergeHookIdle,
   fireOwedPostMergeHook,
+  continueOnStall: isMergeContinueOnStallEnabled,
 };
 
 async function fireOwedPostMergeHook(
@@ -129,14 +135,22 @@ export function raceWorkflowRunEnd(
 // subscriber so a workflow cancel can abort it.
 type ActiveMergeRun = { id: string | null };
 
-async function waitForTaskWork(wf: Workflow, run: WorkflowRun, stepIndex: number, deps: MergeStepDeps) {
+async function waitForTaskWork(wf: Workflow, run: WorkflowRun, stepIndex: number, deps: MergeStepDeps, stall?: MergeWorkStall) {
   let hadPending = false;
   const tasks = await deps.waitForMergeWork(wf.projectPath, run, (count, total) => {
     if (count > 0) hadPending = true;
     emitControlProgress(run, stepIndex, 'merge', Math.max(0, total - count), total,
       `waiting for the run's queued/In Progress tasks before merging: ${count} remaining`);
-  }, TASK_DRAIN_TIMEOUT_MS);
+  }, TASK_DRAIN_TIMEOUT_MS, undefined, stall);
   return { tasks, hadPending };
+}
+
+// The run note for round tasks the step gave up on (mergeContinueOnStall).
+export function stalledNote(stalled: ReadonlySet<string>, tasks: Array<{ id: string; title: string }>): string {
+  const titles = [...stalled].map((id) => tasks.find((t) => t.id === id)?.title ?? id);
+  const shown = titles.slice(0, 5).map((t) => `“${t.length > 60 ? `${t.slice(0, 59)}…` : t}”`).join(', ');
+  return `Merge: ${stalled.size} task(s) made no progress for ${TASK_DRAIN_TIMEOUT_MS / 60_000} min and were left unmerged: ${shown}${titles.length > 5 ? `, +${titles.length - 5} more` : ''}. ` +
+    'The ready tasks were merged and the run continued; resume or re-run the stalled ones from the board, then merge.';
 }
 
 // Wait for the round, then drain Ready-to-Merge. A single
@@ -165,9 +179,10 @@ async function drainReadyToMerge(
   backendOrigin: string,
   deps: MergeStepDeps,
   activeMergeRun: ActiveMergeRun,
+  stall?: MergeWorkStall,
 ): Promise<void> {
   while (run.status === 'running') {
-    const { tasks: cur } = await waitForTaskWork(wf, run, stepIndex, deps);
+    const { tasks: cur } = await waitForTaskWork(wf, run, stepIndex, deps, stall);
     if (run.status !== 'running') return;
     const ready = cur.filter((t) => t.status === 'ready_to_merge');
     if (ready.length === 0) break;
@@ -245,6 +260,11 @@ export async function runMergeStep(
   // Cancellation propagation: when the workflow run is cancelled, abort any
   // inner merge run we kicked off. Subscribe once for the whole step.
   const activeMergeRun: ActiveMergeRun = { id: null };
+  // Round tasks given up on after a no-progress window (when the project
+  // continues on stall); they stop blocking every later wait in this step.
+  const stall: MergeWorkStall | undefined = (await deps.continueOnStall?.(wf.projectPath).catch(() => true))
+    ? { ignore: new Set<string>(), resolveOnStall: true }
+    : undefined;
   const wfUnsub = deps.subscribeWorkflowRuns((ev) => {
     if (ev.type !== 'cancelled') return;
     if (!('run' in ev) || ev.run.id !== run.id) return;
@@ -261,7 +281,7 @@ export async function runMergeStep(
     while (run.status === 'running') {
       // Re-evaluate the round after EVERY merge round: a disk-held start that an
       // early merge unblocked must finish and merge before the step moves on.
-      await drainReadyToMerge(wf, run, stepIndex, backendOrigin, deps, activeMergeRun);
+      await drainReadyToMerge(wf, run, stepIndex, backendOrigin, deps, activeMergeRun, stall);
 
       // Phase C: wait out the post-merge hook. A hook fired BY a merge run is
       // covered by waitForMergeRunFinished. This also gates hooks fired OUTSIDE
@@ -299,11 +319,18 @@ export async function runMergeStep(
 
       // A task may have been admitted or finished while the hook gate was active.
       // Drain its work too, then pass the hook gate after the actual final merge.
-      const { tasks: remaining, hadPending } = await waitForTaskWork(wf, run, stepIndex, deps);
+      const { tasks: remaining, hadPending } = await waitForTaskWork(wf, run, stepIndex, deps, stall);
       if (run.status !== 'running') return;
       // Pending work can settle via an outside resolver too. Re-run the hook
       // gate even when that work already reached QA during this last wait.
       if (hadPending || remaining.some((task) => task.status === 'ready_to_merge')) continue;
+      if (stall?.ignore.size) {
+        const note = stalledNote(stall.ignore, remaining);
+        run.notes = [...(run.notes ?? []), note];
+        notify({ type: 'progress', run });
+        emitControlProgress(run, stepIndex, 'merge', 1, 1, `merge complete — ${stall.ignore.size} stalled task(s) left unmerged`);
+        return;
+      }
       emitControlProgress(run, stepIndex, 'merge', 1, 1, 'merge complete');
       return;
     }

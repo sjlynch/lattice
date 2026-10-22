@@ -27,7 +27,9 @@ keeps importing from `'../userSettings.js'` and the public surface is unchanged.
   `isPostMergeHookEnabled`, `isCodexYoloEnabled`, `isTaskAgentsLatticeMcpOnly`
   (+ its pure `taskAgentsLatticeMcpOnlyIn(settings)` for callers that already
   hold the settings) (all default ON — an absent field counts as `true`) and `isQaTerminalAutoCloseEnabled` (default
-  OFF/stay-open — only explicit `true` opts in), `isKeepWorkflowStepTerminalsEnabled`
+  OFF/stay-open — only explicit `true` opts in), `isMergeContinueOnStallEnabled` (default ON — a Merge step
+  with a stalled round task merges the ready ones and continues; see
+  `../workflowRuns/controlSteps/merge.ts`), `isKeepWorkflowStepTerminalsEnabled`
   (default OFF — only explicit `true` keeps a finished workflow agent step's
   pty alive; read by the workflow advance to pick `releaseWorkflowStepSession`
   over the kill, see `../workflowRuns/CLAUDE.md`), `isTaskAgentTypecheckEnabled`

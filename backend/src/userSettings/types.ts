@@ -207,6 +207,12 @@ export type UserSettings = {
   // identically either way; closing the tab ends the session. Cancel/error
   // still tear sessions down. See workflowRuns/advance.ts advanceCompletedStep.
   keepWorkflowStepTerminals?: boolean;
+  // A workflow Merge step whose round has a task that made no progress for
+  // 30 min (an agent died, a start never admitted): absent/true merges the
+  // ready tasks, leaves the stalled ones In Progress with a run note, and lets
+  // the run continue; false fails the run (the old behavior — nothing merges).
+  // See workflowRuns/controlSteps/merge.ts.
+  mergeContinueOnStall?: boolean;
   // Per-project overrides of the agent instruction templates Lattice writes
   // (LATTICE_TASK.md, MERGE_INSTRUCTIONS.md, the QA/push/post-merge/workflow
   // briefs). Keyed by template id (see instructionTemplates/defs.ts). The

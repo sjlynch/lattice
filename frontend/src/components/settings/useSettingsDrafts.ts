@@ -44,6 +44,8 @@ export type SettingsDrafts = {
   setQaTerminalAutoClose: (value: boolean) => void;
   keepWorkflowStepTerminals: boolean;
   setKeepWorkflowStepTerminals: (value: boolean) => void;
+  mergeContinueOnStall: boolean;
+  setMergeContinueOnStall: (value: boolean) => void;
   // Terminal-tab restore (see api/types/terminalTabs.ts).
   restoreTerminalsOnOpen: RestoreTerminalsMode;
   setRestoreTerminalsOnOpen: (value: RestoreTerminalsMode) => void;
@@ -151,6 +153,10 @@ export function useSettingsDrafts(
     (value: boolean) => setFetched('keepWorkflowStepTerminals', value),
     [setFetched],
   );
+  const setMergeContinueOnStallDraft = useCallback(
+    (value: boolean) => setFetched('mergeContinueOnStall', value),
+    [setFetched],
+  );
   const setRestoreTerminalsOnOpenDraft = useCallback(
     (value: RestoreTerminalsMode) => setFetched('restoreTerminalsOnOpen', value),
     [setFetched],
@@ -240,6 +246,8 @@ export function useSettingsDrafts(
     setQaTerminalAutoClose: setQaTerminalAutoCloseDraft,
     keepWorkflowStepTerminals: fetched.keepWorkflowStepTerminals,
     setKeepWorkflowStepTerminals: setKeepWorkflowStepTerminalsDraft,
+    mergeContinueOnStall: fetched.mergeContinueOnStall,
+    setMergeContinueOnStall: setMergeContinueOnStallDraft,
     restoreTerminalsOnOpen: fetched.restoreTerminalsOnOpen,
     setRestoreTerminalsOnOpen: setRestoreTerminalsOnOpenDraft,
     restoreNudgeAgents: fetched.restoreNudgeAgents,
