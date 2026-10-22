@@ -141,6 +141,18 @@ export class LatticeClient {
     this.sleep = opts.retry?.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
   }
 
+  // The same backend pinned to ANOTHER project (Fleet's cross-project board
+  // tools): `project=` and the response assertion follow that project.
+  forProject(project: string): LatticeClient {
+    return new LatticeClient({
+      apiUrl: this.apiUrl,
+      project,
+      projectSource: 'argument',
+      fetchImpl: this.fetchImpl,
+      retry: { budgetMs: this.retryBudgetMs, sleep: this.sleep },
+    });
+  }
+
   // Wait between polls of a long-running backend job (the Opengrep scan). Uses
   // the same injectable sleep as the restart retry, so tests stay instant.
   pause(ms: number): Promise<void> {

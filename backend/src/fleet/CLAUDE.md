@@ -2,7 +2,9 @@
 
 Fleet: one view of, and one set of controls over, every project on this
 machine. Facade: `../fleet.ts`. Routes: `../routes/fleet.ts`. UI:
-`frontend/src/components/fleet/`. MCP: `../latticeMcp/tools/fleetTools.ts`.
+`frontend/src/components/fleet/`. MCP: `../latticeMcp/tools/fleetTools.ts`
+(terminals, plus `fleet_tasks` / `fleet_create_task` / `fleet_merge` over the
+plain task and merge-run API of the target project).
 
 ## Map
 

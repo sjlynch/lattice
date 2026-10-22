@@ -27,7 +27,8 @@ import {
 
 const CONTROLLER_TOOLS = [
   'api_request', 'board_summary', 'cancel_workflow_run', 'create_tasks', 'delete_task',
-  'delete_workflow', 'export_board', 'fleet', 'get_merge_run', 'get_task',
+  'delete_workflow', 'export_board', 'fleet', 'fleet_create_task', 'fleet_merge',
+  'fleet_tasks', 'get_merge_run', 'get_task',
   'get_workflow', 'get_workflow_run', 'instances', 'list_tasks', 'list_workflow_runs',
   'list_workflows', 'open_agent', 'plan_usage', 'read_terminal', 'run_task',
   'save_workflow', 'search_tasks', 'send_terminal', 'start_merge_run', 'start_workflow_run',
@@ -36,7 +37,7 @@ const CONTROLLER_TOOLS = [
 
 // Machine-level tools: `instance`, never `project` (fleet tools name a
 // `targetProject` where they need one).
-const INSTANCE_ONLY = new Set(['api_request', 'plan_usage', 'fleet', 'open_agent', 'read_terminal', 'send_terminal', 'wait_terminal']);
+const INSTANCE_ONLY = new Set(['api_request', 'plan_usage', 'fleet', 'open_agent', 'read_terminal', 'send_terminal', 'wait_terminal', 'fleet_tasks', 'fleet_create_task', 'fleet_merge']);
 
 const props = (tool: { inputSchema: unknown }) =>
   Object.keys((tool.inputSchema as { properties?: object }).properties ?? {});
