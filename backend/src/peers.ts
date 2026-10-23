@@ -34,16 +34,21 @@ export class PeersError extends Error {
   }
 }
 
-async function applyGateway(): Promise<void> {
+// Serialized: boot and a settings POST racing each other would otherwise each
+// start a gateway (or responder) and leak one.
+let applying: Promise<void> = Promise.resolve();
+function applyGateway(): Promise<void> {
+  const run = applying.then(applyGatewayNow);
+  applying = run.catch(() => {});
+  return run;
+}
+
+async function applyGatewayNow(): Promise<void> {
   const peers = await readPeers();
   const want = peers.gateway.enabled;
   if (gateway && (!want || gateway.port() !== peers.gateway.port)) {
     await gateway.close();
     gateway = null;
-  }
-  if (!want && responder) {
-    await responder.close();
-    responder = null;
   }
   gatewayError = undefined;
   if (want && !gateway) {
@@ -62,6 +67,12 @@ async function applyGateway(): Promise<void> {
         ? `port ${peers.gateway.port} is in use`
         : (err as Error).message;
     }
+  }
+  // Discovery answers only while the gateway really listens: never advertise
+  // a port nothing is bound to (a failed start after a port change).
+  if (!gateway && responder) {
+    await responder.close();
+    responder = null;
   }
   if (gateway && !responder) {
     // Best effort: another Lattice on this PC may hold the port already.

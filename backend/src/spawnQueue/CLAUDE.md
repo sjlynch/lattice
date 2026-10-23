@@ -86,9 +86,12 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
   provider's 5-hour or weekly window is at or past the threshold — never Pi,
   never `priority` / `interactive`, never a model-only window
   (`week-opus`), an unreadable plan or a window whose `resetsAt` has passed.
-  The check is sync over the last `readPlanUsage()`; a read older than 90 s
-  refreshes in the background and re-drains. A hold is logged once per
-  request; `GET /api/spawn-queue` shows `heldByPlan` per item and
+  The check is sync over the last `readPlanUsage()`, but a reading older
+  than 2 min is never trusted (usage climbs while agents run with nothing
+  queued): Claude / Codex batch spawns wait in a "checking" hold until the
+  re-read lands and re-drains. A failed or expired read never replaces a
+  provider's last OK reading, so one bad read can't release a hold. A hold
+  is logged once per request; `GET /api/spawn-queue` shows `heldByPlan` per item and
   `planGuard: {percent, held}`, which `GET /api/plan-usage` echoes as `guard`
   for the top-bar chip. Added after Codex drew paid credits overnight
   (2026-10-19).

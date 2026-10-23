@@ -53,7 +53,9 @@ export function FleetPromptForm({ project, machine, onLaunched, onFiled, onCance
     setBusy(true);
     setError(null);
     fileFleetTask(project, taskFromPrompt(prompt), launch, machine)
-      .then((t) => onFiled(`Filed “${t.title}” and ${t.queued ? 'queued its run' : 'started it'}.`))
+      .then((t) => onFiled(t.runError
+        ? `Filed “${t.title}” but could not start it (${t.runError}). Start it from that project's board.`
+        : `Filed “${t.title}” and ${t.queued ? 'queued its run' : 'started it'}.`))
       .catch(fail)
       .finally(() => setBusy(false));
   };

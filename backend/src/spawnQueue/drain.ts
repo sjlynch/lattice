@@ -40,6 +40,9 @@ function admitWhilePossible(): void {
   // batch item can stop being admittable while a priority item still is.
   const now = Date.now();
   s.governor.sample();
+  // Every pending batch request's plan hold first, so the snapshot is right
+  // even while the cap or the governor stops admission anyway.
+  for (const r of s.pendingSorted()) if (r.priority === 'batch') notePlanHold(r);
   for (;;) {
     const next = s
       .pendingSorted()
@@ -51,21 +54,21 @@ function admitWhilePossible(): void {
         // Fan-out work waits while the machine is saturated (resourceGovernor.ts).
         !(r.priority === 'batch' && s.governor.holdsBatch(s.accounting.effectiveAgents())) &&
         // …and while its plan is nearly spent (planGuard.ts).
-        !(r.priority === 'batch' && isPlanHeld(r)));
+        !(r.priority === 'batch' && r.planHeld));
     if (!next) break;
     admit(next);
   }
 }
 
-// Is this request's harness plan-held? Logged once when a hold starts, not on
-// every drain; the snapshot reads the hold off the request.
-function isPlanHeld(request: QueueRequest): boolean {
+// Record whether this request's harness is plan-held. Logged once when a
+// plan hold starts (not for the brief "checking" wait, not on every drain);
+// the snapshot reads the hold off the request.
+function notePlanHold(request: QueueRequest): void {
   const hold = queueState.planGuard.holds(request.harness);
-  if (hold && !request.planHeld) {
+  if (hold?.window && !request.planHeld?.window) {
     console.log(`[spawn-queue] ${request.kind} (${request.dedupeKey}) held — ${hold.reason}`);
   }
   request.planHeld = hold ?? undefined;
-  return hold !== null;
 }
 
 // A disk-deferred request sits out its backoff; the poll loop (which keeps

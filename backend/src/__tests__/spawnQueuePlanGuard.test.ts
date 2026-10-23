@@ -89,6 +89,32 @@ test('a stale read refreshes in the background and re-drains when it lands', asy
   assert.equal(g.holds('claude'), null, 'the window was reset upstream');
 });
 
+// Review 10-22: usage climbs while agents run with nothing queued, so the next
+// Run All must not be judged on an old reading; and one failed read must not
+// release a hold (the readers return status:'error', they don't throw).
+test('a stale reading holds until the re-read; a failed read keeps the last good one', async () => {
+  let t = T0;
+  let next: PlanUsageReport = report(50);
+  const g = new PlanGuard(async () => next, () => {}, () => t);
+  g.setPercent(90);
+  await g.ready();
+  assert.equal(g.holds('claude'), null, '50%: admitted');
+  t += 30 * 60_000;
+  next = report(97);
+  assert.match(g.holds('claude')?.reason ?? '', /checking Claude plan usage/, 'stale: wait for the re-read');
+  assert.equal(g.holds('pi'), null, 'Pi never waits');
+  await g.ready();
+  assert.match(g.holds('claude')?.reason ?? '', /at 97%/);
+
+  t += REFRESH_MS + 1;
+  next = report(0, 10, { claudeStatus: 'error' });
+  await g.ready();
+  assert.match(g.holds('claude')?.reason ?? '', /at 97%/, 'an error read keeps the held reading');
+  t = Date.parse(report(97).providers[0].windows[0].resetsAt!) + 1;
+  await g.ready();
+  assert.equal(g.holds('claude'), null, 'released once that window resets, good read or not');
+});
+
 test('the queue holds a Claude batch spawn but admits Pi and priority beside it, and starts it once released', async (t) => {
   const original = queueState.planGuard;
   // Real clock here: the reset must lie in the real future.

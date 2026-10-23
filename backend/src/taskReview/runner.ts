@@ -46,7 +46,7 @@ export async function runTaskReview(task: Task, settings: UserSettings, deps = {
           // Pi reads the prompt from stdin too; no tools, extensions, skills
           // or session — it only reads what the prompt carries.
           ? ['-p', ...(model ? ['--model', model] : []), '--thinking', effort,
-            '--no-tools', '--no-extensions', '--no-skills', '--no-session']
+            '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-session']
           : ['-p', '--model', model!];
       // Windows resolves npm's codex.cmd through cmd. Every argv is fixed or
       // normalized to the harness model/effort grammar; all task text is stdin.
@@ -71,12 +71,12 @@ export async function runTaskReview(task: Task, settings: UserSettings, deps = {
 // A local model's own "accept" is lenient: ornith accepted 104 of 120 balanced
 // patches (half of them failing). Its p ranks them as well as sol/low does
 // (AUC 0.82 each on the same 104), so a Pi reviewer accepts only at p >= 90 —
-// there 83% of what it accepted passed, vs 78% for sol/low's own verdict.
+// there 83% of what it accepted passed, vs 78% for sol/low's own verdict. An
+// explicit reject stays a reject whatever p says.
 export const LOCAL_ACCEPT_P = 90;
 
 function localVerdict(reply: ReviewReply): ReviewReply {
-  if (reply.p >= LOCAL_ACCEPT_P) return { ...reply, verdict: 'accept' };
-  if (reply.verdict === 'reject') return reply;
+  if (reply.verdict === 'reject' || reply.p >= LOCAL_ACCEPT_P) return reply;
   return { ...reply, verdict: 'reject', reason: `p ${reply.p} is under the local reviewer's bar of ${LOCAL_ACCEPT_P}: ${reply.reason}`.slice(0, 300) };
 }
 

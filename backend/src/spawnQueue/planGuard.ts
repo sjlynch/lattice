@@ -7,21 +7,27 @@
 // Like the resource governor: held requests stay pending and the queue's poll
 // loop re-checks, nothing is dropped, `priority` / `interactive` spawns
 // (resolvers, push, a user's own click) are never held, and Pi agents never
-// are. The check is synchronous over the last plan-usage read; a read older
-// than REFRESH_MS is refreshed in the background and `onChange` re-drains the
-// queue when it lands. A window whose reset time has passed no longer holds,
-// even before the next read. Model-only windows (`week-opus`, `week-sonnet`)
-// are skipped: they bind one model, and the spawn's model isn't known here.
+// are. The check is synchronous over the last plan-usage reading:
+//   - a reading older than REFRESH_MS is never trusted — usage climbs while
+//     agents run with nothing queued, so a Run All judged on an old reading
+//     would start a whole burst. Claude / Codex spawns wait (a "checking"
+//     hold) until the re-read lands; `onChange` then re-drains;
+//   - a failed or expired read never replaces a provider's last OK reading, so
+//     one bad read can't release a hold. A window whose reset time has passed
+//     no longer holds, even before the next good read;
+//   - model-only windows (`week-opus`, `week-sonnet`) are skipped: they bind
+//     one model, and the spawn's model isn't known here.
 // Off unless `globalSettings.planGuardPercent` is set (1–100).
 
-import type { PlanUsageProviderId, PlanUsageReport } from '../planUsage/types.js';
+import type { PlanUsageProvider, PlanUsageProviderId, PlanUsageReport } from '../planUsage/types.js';
 
-export const REFRESH_MS = 90_000;
+export const REFRESH_MS = 120_000;
 
 export type PlanHold = {
   provider: PlanUsageProviderId;
-  window: string;
-  usedPercent: number;
+  // The binding window; absent while a stale reading is being re-read.
+  window?: string;
+  usedPercent?: number;
   resetsAt?: string;
   reason: string;
 };
@@ -31,8 +37,8 @@ const NAME: Record<PlanUsageProviderId, string> = { claude: 'Claude', codex: 'Co
 
 export class PlanGuard {
   private percent: number | null = null;
-  private report: PlanUsageReport | null = null;
-  private readAt = 0;
+  private readonly latest = new Map<PlanUsageProviderId, PlanUsageProvider>();
+  private readAt = Number.NEGATIVE_INFINITY;
   private reading: Promise<void> | null = null;
 
   constructor(
@@ -51,10 +57,13 @@ export class PlanGuard {
     return this.percent;
   }
 
-  // For a caller that can wait (the workflow Start step): the first read, so
-  // a guard just switched on doesn't wave the first launches through unseen.
+  private stale(): boolean {
+    return this.now() - this.readAt >= REFRESH_MS;
+  }
+
+  // For a caller that can wait (the workflow Start step): a fresh reading.
   async ready(): Promise<void> {
-    if (this.percent === null || this.report) return;
+    if (this.percent === null || !this.stale()) return;
     this.refreshIfStale();
     await this.reading;
   }
@@ -63,9 +72,12 @@ export class PlanGuard {
   holds(harness: string | undefined): PlanHold | null {
     const provider = harness ? PROVIDER_OF[harness] : undefined;
     if (this.percent === null || !provider) return null;
-    this.refreshIfStale();
-    const p = this.report?.providers.find((x) => x.provider === provider);
-    if (!p || p.status !== 'ok') return null;
+    if (this.stale()) {
+      this.refreshIfStale();
+      if (this.reading) return { provider, reason: `checking ${NAME[provider]} plan usage (plan guard ${this.percent}%)` };
+    }
+    const p = this.latest.get(provider);
+    if (!p) return null;
     const t = this.now();
     for (const w of p.windows) {
       if (w.id.startsWith('week-') || w.usedPercent < this.percent) continue;
@@ -85,17 +97,18 @@ export class PlanGuard {
   }
 
   private refreshIfStale(): void {
-    if (this.reading || this.now() - this.readAt < REFRESH_MS) return;
+    if (this.reading || !this.stale()) return;
     this.reading = this.read()
       .then((r) => {
-        this.report = r;
-        this.onChange();
+        for (const p of r.providers) if (p.status === 'ok') this.latest.set(p.provider, p);
       })
-      // Unreadable usage never holds anything: keep the last report.
-      .catch(() => {})
+      .catch(() => { /* unreadable: keep the last good readings */ })
       .finally(() => {
         this.reading = null;
         this.readAt = this.now();
+        // Re-drain either way: requests waiting on this read must not sit
+        // until the next unrelated drain.
+        this.onChange();
       });
   }
 }

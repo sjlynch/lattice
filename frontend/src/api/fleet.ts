@@ -46,14 +46,20 @@ export async function fileFleetTask(
   task: { title: string; description: string },
   launch: { harness: string; model?: string; effort?: string; piModel?: string } | null,
   machine?: string,
-): Promise<{ id: string; title: string; queued?: boolean }> {
+): Promise<{ id: string; title: string; queued?: boolean; runError?: string }> {
   const created = await postJson<{ id: string; title: string }>(onMachine(machine, '/api/tasks'), { project, ...task });
   if (!launch) return created;
-  const run = await postJson<{ accepted: boolean; queued: boolean }>(
-    onMachine(machine, `/api/tasks/${encodeURIComponent(created.id)}/run?project=${encodeURIComponent(project)}`),
-    launch,
-  );
-  return { ...created, queued: run.queued };
+  // The task exists from here on: a failed start is reported, never thrown,
+  // so the form can't be submitted again and file the task twice.
+  try {
+    const run = await postJson<{ accepted: boolean; queued: boolean }>(
+      onMachine(machine, `/api/tasks/${encodeURIComponent(created.id)}/run?project=${encodeURIComponent(project)}`),
+      launch,
+    );
+    return { ...created, queued: run.queued };
+  } catch (err) {
+    return { ...created, runError: err instanceof Error ? err.message : String(err) };
+  }
 }
 
 // Merge every Ready-to-Merge task of a project (a merge run).

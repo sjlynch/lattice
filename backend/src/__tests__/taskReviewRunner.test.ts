@@ -79,9 +79,9 @@ test('Pi reviewer: stdin prompt, no tools, thinking high, its own or the project
   const unsafe = await runTaskReview(task, { taskReviewHarness: 'pi', taskReviewPiModel: 'x"; rm -rf /' }, { collect, spawn, cleanup });
   assert.equal(unsafe.reviewer, 'pi/default');
   assert.deepEqual(seen, [
-    ['-p', '--model', 'endpoint-2/ornith-1.5', '--thinking', 'high', '--no-tools', '--no-extensions', '--no-skills', '--no-session'],
-    ['-p', '--model', 'endpoint-2/qwen', '--thinking', 'medium', '--no-tools', '--no-extensions', '--no-skills', '--no-session'],
-    ['-p', '--thinking', 'high', '--no-tools', '--no-extensions', '--no-skills', '--no-session'],
+    ['-p', '--model', 'endpoint-2/ornith-1.5', '--thinking', 'high', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-session'],
+    ['-p', '--model', 'endpoint-2/qwen', '--thinking', 'medium', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-session'],
+    ['-p', '--thinking', 'high', '--no-tools', '--no-extensions', '--no-skills', '--no-prompt-templates', '--no-context-files', '--no-session'],
   ]);
 });
 
@@ -97,6 +97,7 @@ test('Pi reviewer verdicts follow p: accept only at the local bar', async () => 
   assert.match(lenient.reason, /under the local reviewer's bar of 90: Looks fine/);
   assert.equal((await verdictFor(`{"verdict":"accept","p":${LOCAL_ACCEPT_P},"reason":"ok"}`)).verdict, 'accept');
   assert.equal((await verdictFor('{"verdict":"reject","p":20,"reason":"misses the empty case"}')).reason, 'misses the empty case');
+  assert.equal((await verdictFor('{"verdict":"reject","p":95,"reason":"contradicts itself"}')).verdict, 'reject', 'an explicit reject stays a reject');
 });
 
 test('missing CLI, timeout, nonzero exit and invalid output all yield error and cleanup', async () => {

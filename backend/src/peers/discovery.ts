@@ -60,11 +60,11 @@ export function startDiscoveryResponder(
     const answer: Answer = { lattice: 'here', v: 1, name: os.hostname(), gatewayPort, addresses };
     socket.send(JSON.stringify(answer), rinfo.port, rinfo.address);
   });
-  socket.on('error', () => { /* a bad datagram must not take the backend down */ });
   return new Promise((resolve, reject) => {
-    socket.once('error', reject);
+    socket.once('error', (err) => { socket.close(); reject(err); });
     socket.bind(opts.port ?? DISCOVERY_PORT, opts.host ?? '0.0.0.0', () => {
-      socket.off('error', reject);
+      socket.removeAllListeners('error');
+      socket.on('error', () => { /* a bad datagram must not take the backend down */ });
       resolve({ close: () => new Promise<void>((r) => socket.close(() => r())), port: () => socket.address().port });
     });
   });
@@ -97,9 +97,13 @@ export function discoverPcs(opts: { waitMs?: number; port?: number; targets?: st
     if (!a) return;
     found.set(`${rinfo.address}:${a.gatewayPort}`, { name: a.name, host: rinfo.address, gatewayPort: a.gatewayPort, addresses: a.addresses });
   });
-  socket.on('error', () => { /* unreachable interfaces are routine */ });
   return new Promise((resolve) => {
+    let bound = false;
+    // Unreachable interfaces are routine once bound; a failed bind means no
+    // answers at all, never a promise that hangs.
+    socket.on('error', () => { if (!bound) { socket.close(); resolve([]); } });
     socket.bind(0, () => {
+      bound = true;
       socket.setBroadcast(true);
       for (const t of targets) socket.send(PROBE, port, t, () => { /* best effort */ });
       setTimeout(() => {

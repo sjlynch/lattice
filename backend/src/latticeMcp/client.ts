@@ -334,7 +334,10 @@ export function assertCanonicalProject(
 }
 
 function normalizeForCompare(p: string): string {
-  return canonicalProjectPath(p)
+  // Never resolve a UNC path (`\\host\share`): realpath would open an SMB
+  // connection to that host (an answer from a paired PC can name one), which
+  // hands it the user's NTLM credentials. Compare those as strings.
+  return (/^[\\/]{2}/.test(p) ? p : canonicalProjectPath(p))
     .replace(/\\/g, '/')
     .replace(/\/+$/, '')
     .toLowerCase();
