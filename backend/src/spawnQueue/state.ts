@@ -43,6 +43,7 @@ export type QueueRequest = {
   // holds it, why (drain.ts logs a hold once, when it starts).
   harness?: string;
   planHeld?: PlanHold;
+  onPlanHold?: (reason: string | null) => void;
   reservationId?: number;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
@@ -122,6 +123,7 @@ export class SpawnQueueState {
       enqueuedAt: Date.now(),
       state: 'pending',
       ...(args.harness ? { harness: args.harness } : {}),
+      ...(args.onPlanHold ? { onPlanHold: args.onPlanHold } : {}),
       resolve,
       reject,
       done,

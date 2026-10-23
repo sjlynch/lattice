@@ -91,7 +91,8 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
   queued): Claude / Codex batch spawns wait in a "checking" hold until the
   re-read lands and re-drains. A failed or expired read never replaces a
   provider's last OK reading, so one bad read can't release a hold. A hold
-  is logged once per request; `GET /api/spawn-queue` shows `heldByPlan` per item and
+  is logged once per request and reported through `onPlanHold` (a task run
+  stamps `runWaitingForPlan`, so its card says "waiting for plan"); `GET /api/spawn-queue` shows `heldByPlan` per item and
   `planGuard: {percent, held}`, which `GET /api/plan-usage` echoes as `guard`
   for the top-bar chip. Added after Codex drew paid credits overnight
   (2026-10-19).

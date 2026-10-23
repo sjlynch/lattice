@@ -65,10 +65,20 @@ function admitWhilePossible(): void {
 // the snapshot reads the hold off the request.
 function notePlanHold(request: QueueRequest): void {
   const hold = queueState.planGuard.holds(request.harness);
-  if (hold?.window && !request.planHeld?.window) {
-    console.log(`[spawn-queue] ${request.kind} (${request.dedupeKey}) held — ${hold.reason}`);
+  const was = request.planHeld;
+  if (hold && !hold.window) {
+    // The brief "checking" wait while a stale reading is re-read: still held,
+    // but neither the start nor the end of a plan hold — keep the one we had.
+    request.planHeld = was?.window ? was : hold;
+    return;
   }
   request.planHeld = hold ?? undefined;
+  if (hold && hold.reason !== was?.reason) {
+    if (!was?.window) console.log(`[spawn-queue] ${request.kind} (${request.dedupeKey}) held — ${hold.reason}`);
+    request.onPlanHold?.(hold.reason);
+  } else if (!hold && was?.window) {
+    request.onPlanHold?.(null);
+  }
 }
 
 // A disk-deferred request sits out its backoff; the poll loop (which keeps

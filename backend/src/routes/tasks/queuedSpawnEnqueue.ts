@@ -64,6 +64,8 @@ export async function enqueueTaskRun(
     dedupeKey: taskRunDedupeKey(taskId),
     // What startTaskById will run (an absent request is Claude there too).
     harness: normalizeAgentHarness(requestedHarness),
+    // The card says why the run waits while the plan guard holds it.
+    onPlanHold: (reason) => void notePlanWait(taskId, reason),
     // The request's signal is aborted by `dequeueTaskRun` / a task delete even
     // once the run is in flight; startTaskById then backs out instead of
     // spawning an agent the user already cancelled.
@@ -84,6 +86,18 @@ export async function enqueueTaskRun(
   // task-spawn-failed event, and the queue logs the error).
   done.catch(() => {});
   return { queued };
+}
+
+// Record (or clear) the plan guard's hold on a queued run, for the card. Only
+// while the run is still queued: a cancel or a start already cleared it.
+async function notePlanWait(taskId: string, reason: string | null): Promise<void> {
+  try {
+    const task = await getTask(taskId);
+    if (!task?.runQueued || (task.runWaitingForPlan ?? null) === reason) return;
+    await updateTask(taskId, { runWaitingForPlan: reason ?? undefined });
+  } catch (err) {
+    console.error(`[task-run] failed to record the plan wait for ${taskId}:`, err);
+  }
 }
 
 // Enqueue a resume of an in-progress task. Resume is transient — not

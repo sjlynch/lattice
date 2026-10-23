@@ -29,6 +29,9 @@ export type EnqueueSpawnArgs<T = unknown> = {
   // The agent harness this spawn runs, when known — what the plan guard
   // holds a `batch` spawn on (planGuard.ts). Absent → never plan-held.
   harness?: string;
+  // Called when a plan hold on this request starts (its reason) and when it
+  // lifts (null) — transitions only, never the brief "checking" wait.
+  onPlanHold?: (reason: string | null) => void;
 };
 
 export type EnqueueSpawnResult<T = unknown> = {

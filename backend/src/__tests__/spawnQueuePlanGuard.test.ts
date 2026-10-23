@@ -126,8 +126,12 @@ test('the queue holds a Claude batch spawn but admits Pi and priority beside it,
   await queueState.planGuard.ready();
 
   const started: string[] = [];
+  const holds: Array<string | null> = [];
   const spawn = (key: string, harness: string, priority: 'batch' | 'priority' = 'batch') =>
-    enqueueSpawn({ kind: 'task-run', priority, dedupeKey: `plan-guard:${key}`, harness, thunk: async () => { started.push(key); } }).done;
+    enqueueSpawn({
+      kind: 'task-run', priority, dedupeKey: `plan-guard:${key}`, harness,
+      onPlanHold: (reason) => holds.push(reason), thunk: async () => { started.push(key); },
+    }).done;
 
   // The queue's own poll targets the preload's closed executor port, and a
   // failed poll freezes admission — so mark it healthy and enqueue (each
@@ -150,6 +154,10 @@ test('the queue holds a Claude batch spawn but admits Pi and priority beside it,
   setSpawnQueuePlanGuard(undefined);
   await within(claude);
   assert.deepEqual(started, ['pi', 'resolver', 'claude']);
+  // The task card was told once when the hold started and once when it lifted.
+  assert.equal(holds.length, 2);
+  assert.match(holds[0] ?? '', /Claude plan/);
+  assert.equal(holds[1], null);
 });
 
 test('PATCH /api/global-settings validates planGuardPercent and applies it to the live queue', async (t) => {

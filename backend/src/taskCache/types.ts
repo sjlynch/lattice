@@ -86,6 +86,10 @@ export type Task = {
   // the message the card shows instead of a bare "queued". Cleared with the
   // rest of the run-queue state. See worktree/diskSpace.ts.
   runWaitingForDisk?: string;
+  // Set while the spawn queue's plan guard holds this task's queued run (the
+  // Claude / Codex plan is past the threshold; spawnQueue/planGuard.ts): why,
+  // for the card. Cleared when the hold lifts and with the run-queue state.
+  runWaitingForPlan?: string;
   // How many times this task's queued run has been ADMITTED (attempted) without
   // succeeding. Bumped crash-safely at admission time — BEFORE the spawn — so a
   // run that deterministically crashes the whole process mid-spawn (never

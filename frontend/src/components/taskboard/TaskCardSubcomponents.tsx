@@ -70,10 +70,12 @@ export const TaskCardBody = memo(function TaskCardBody({
             title={
               task.runWaitingForDisk
                 ? `Waiting for disk space — ${task.runWaitingForDisk}`
-                : 'Waiting for a free agent slot — runs automatically when one frees up'
+                : task.runWaitingForPlan
+                  ? `Waiting for the plan to reset — ${task.runWaitingForPlan}. Change the plan guard in the top bar's plan usage.`
+                  : 'Waiting for a free agent slot — runs automatically when one frees up'
             }
           >
-            <Hourglass size={9} /> {task.runWaitingForDisk ? 'waiting for disk' : 'queued'}
+            <Hourglass size={9} /> {task.runWaitingForDisk ? 'waiting for disk' : task.runWaitingForPlan ? 'waiting for plan' : 'queued'}
           </span>
         )}
         <TaskReviewBadge task={task} />

@@ -53,6 +53,7 @@ export const CLEARED_RUN_QUEUE_STATE = {
   runQueuedEffort: undefined,
   runFailureCount: undefined,
   runWaitingForDisk: undefined,
+  runWaitingForPlan: undefined,
 } as const;
 
 // Thrown by startTaskById/resumeTaskById when withdrawn while they ran: the
