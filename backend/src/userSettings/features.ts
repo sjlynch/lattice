@@ -9,8 +9,7 @@ export function taskReviewIn(settings: UserSettings): 'off' | 'flag' | 'rerun' {
 }
 
 // A Pi reviewer's model is a "provider/model" (its own field, else the
-// project's Pi model; absent → Pi's default) and it thinks `high` unless set:
-// that is where a local model reviewed best (tmp/experiments/bvlocal.mjs).
+// project's Pi model; absent → Pi's default) and it thinks `high` unless set.
 export function taskReviewerIn(settings: UserSettings): { harness: 'codex' | 'claude' | 'pi'; model: string | undefined; effort: string } {
   if (settings.taskReviewHarness === 'pi') {
     return {

@@ -68,11 +68,12 @@ export async function runTaskReview(task: Task, settings: UserSettings, deps = {
   });
 }
 
-// A local model's own "accept" is lenient: ornith accepted 104 of 120 balanced
-// patches (half of them failing). Its p ranks them as well as sol/low does
-// (AUC 0.82 each on the same 104), so a Pi reviewer accepts only at p >= 90 —
-// there 83% of what it accepted passed, vs 78% for sol/low's own verdict. An
-// explicit reject stays a reject whatever p says.
+// A local model's own "accept" is lenient: ornith accepted 104 to 109 of 120
+// balanced patches (half of them failing), so a Pi reviewer accepts only at
+// p >= 90, where its accepts pass well above the base rate (83% and 63% on two
+// sets of 120, vs 50%). It is a weaker gate than sol/low (AUC 0.65 vs 0.79 on
+// a held-out set) — a free option, not the default. An explicit reject stays
+// a reject whatever p says.
 export const LOCAL_ACCEPT_P = 90;
 
 function localVerdict(reply: ReviewReply): ReviewReply {

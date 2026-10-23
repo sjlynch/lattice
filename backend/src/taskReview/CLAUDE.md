@@ -19,8 +19,8 @@ never enter it. Errors fail open. A review holds the task In Progress.
   prompt, ten-minute timeout, injected CLI seam. Cleanup uses homeScratch.
   Codex (default sol/low), Claude, or Pi — a free local reviewer with no
   tools, `taskReviewPiModel` else the project's `piModel`, thinking `high`
-  by default (where a local reviewer separated passing from failing
-  patches best). A local model's own "accept" is lenient, so a Pi reviewer
+  by default. A free but weaker gate than sol/low (AUC 0.65 vs 0.79 on a
+  held-out set of patches). A local model's own "accept" is lenient, so a Pi reviewer
   accepts only at p >= `LOCAL_ACCEPT_P` (90); an explicit reject stays a
   reject. Pi runs with no context files or prompt templates either.
 - `queue.ts`: four backend-wide jobs, FIFO, per-task single flight. Memory
