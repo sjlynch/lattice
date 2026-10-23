@@ -161,10 +161,12 @@ export type UserSettings = {
   taskAgentTests?: boolean;
   // Second opinion before Ready to Merge. Absent = off; errors fail open.
   taskReview?: 'off' | 'flag' | 'rerun';
-  // Reviewer defaults: codex / gpt-6.1-sol / low (effort is Codex-only).
-  // Claude's default model is claude-sonnet-5-5.
-  taskReviewHarness?: 'codex' | 'claude';
+  // Reviewer defaults: codex / gpt-6.1-sol / low. Claude's default model is
+  // claude-sonnet-5-5 (no effort). Pi reviews with `taskReviewPiModel`, else
+  // the project's `piModel`, at thinking `taskReviewEffort` (default high).
+  taskReviewHarness?: 'codex' | 'claude' | 'pi';
   taskReviewModel?: string;
+  taskReviewPiModel?: string;
   taskReviewEffort?: AgentEffort;
   // A rejected first attempt is started fresh only with an explicit harness.
   // Other absent fields mean the task harness's normal model/effort default.

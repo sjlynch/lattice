@@ -11,7 +11,7 @@ import { withTempDir } from './helpers/tempDir.js';
 
 test('review settings validate enum/string shapes and heal malformed stored fields', async () => {
   const settings: UserSettings = {
-    taskReview: 'rerun', taskReviewHarness: 'claude', taskReviewModel: 'claude-sonnet-5-5', taskReviewEffort: 'low',
+    taskReview: 'rerun', taskReviewHarness: 'claude', taskReviewModel: 'claude-sonnet-5-5', taskReviewPiModel: 'local/judge', taskReviewEffort: 'low',
     taskReviewRerunHarness: 'pi', taskReviewRerunPiModel: 'local/strong', taskReviewRerunModel: 'opus', taskReviewRerunEffort: 'high',
   };
   assert.equal(userSettingsShapeError(settings), null);
@@ -20,7 +20,7 @@ test('review settings validate enum/string shapes and heal malformed stored fiel
   for (const field of Object.keys(settings)) {
     assert.match(userSettingsShapeError({ [field]: 42 })!, new RegExp(field));
   }
-  for (const [field, value] of Object.entries({ taskReview: 'yes', taskReviewHarness: 'pi',
+  for (const [field, value] of Object.entries({ taskReview: 'yes', taskReviewHarness: 'gemini',
     taskReviewRerunHarness: 'interleave', taskReviewEffort: 'turbo', taskReviewRerunEffort: '' })) {
     assert.match(userSettingsShapeError({ [field]: value })!, new RegExp(field));
   }

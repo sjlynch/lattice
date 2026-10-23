@@ -10,6 +10,8 @@ export function TaskReviewSection({ draft }: { draft: ReturnType<typeof useTaskR
   const piMenu = usePiModelMenu();
   const { values, set } = draft;
   const harness = values.taskReviewHarness ?? 'codex';
+  // Pi thinks `high` unless set — where a local reviewer measured best.
+  const effortDefault = harness === 'pi' ? 'high' : 'low';
   return (
     <div className="settings-section">
       <div className="settings-section-title">Second opinion</div>
@@ -29,19 +31,29 @@ export function TaskReviewSection({ draft }: { draft: ReturnType<typeof useTaskR
         <label className="settings-review-field">
           Reviewer harness
           <select className="text-input" value={harness}
-            onChange={(e) => set({ taskReviewHarness: e.target.value as 'codex' | 'claude' })}>
+            onChange={(e) => set({ taskReviewHarness: e.target.value as 'codex' | 'claude' | 'pi' })}>
             <option value="codex">Codex</option><option value="claude">Claude</option>
+            <option value="pi">Pi (local model, free)</option>
           </select>
         </label>
-        <label className="settings-review-field">
+        {harness === 'pi' ? <label className="settings-review-field">
+          Reviewer model
+          <select className="text-input" value={values.taskReviewPiModel ?? ''}
+            onChange={(e) => set({ taskReviewPiModel: e.target.value || undefined })}>
+            <option value="">The project's Pi model</option>
+            {piMenu.map((m) => <option key={m.pattern} value={m.pattern}>{m.label}</option>)}
+            {values.taskReviewPiModel && !piMenu.some((m) => m.pattern === values.taskReviewPiModel) &&
+              <option value={values.taskReviewPiModel}>{values.taskReviewPiModel}</option>}
+          </select>
+        </label> : <label className="settings-review-field">
           Reviewer model
           <input className="text-input" value={values.taskReviewModel ?? ''}
             placeholder={harness === 'codex' ? 'gpt-6.1-sol' : 'claude-sonnet-5-5'}
             onChange={(e) => set({ taskReviewModel: e.target.value })} />
-        </label>
-        {harness === 'codex' && <label className="settings-review-field">
-          Reviewer effort
-          <select className="text-input" value={values.taskReviewEffort ?? 'low'}
+        </label>}
+        {harness !== 'claude' && <label className="settings-review-field">
+          {harness === 'pi' ? 'Reviewer thinking' : 'Reviewer effort'}
+          <select className="text-input" value={values.taskReviewEffort ?? effortDefault}
             onChange={(e) => set({ taskReviewEffort: e.target.value as AgentEffort })}>
             {ALL_AGENT_EFFORTS.map((effort) => <option key={effort} value={effort}>{effort}</option>)}
           </select>

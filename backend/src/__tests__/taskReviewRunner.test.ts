@@ -58,6 +58,33 @@ test('Claude reviewer reads text stdout, uses its default and omits Codex effort
   assert.equal(result.reviewer, 'claude/claude-sonnet-5-5');
 });
 
+// A free local reviewer: Pi reads the prompt from stdin with no tools, thinks
+// `high` by default, and falls back to the project's Pi model (an unsafe
+// pattern is dropped, never put on the command line).
+test('Pi reviewer: stdin prompt, no tools, thinking high, its own or the project Pi model', async () => {
+  const seen: string[][] = [];
+  const cleanup = async ({ paths, projectPath, id }: { paths: typeof reviewScratchPaths; projectPath: string; id: string }) =>
+    fs.rm(paths.assertSafeSessionPath(projectPath, id), { recursive: true, force: true });
+  const spawn = async (command: string, args: string[], opts: { input?: string }) => {
+    assert.equal(command, 'pi');
+    assert.match(opts.input!, /AGENT PATCH:/);
+    seen.push(args);
+    return success({ stdout: `thinking…\n${reply}` });
+  };
+  const own = await runTaskReview(task, { taskReviewHarness: 'pi', taskReviewPiModel: 'endpoint-2/ornith-1.5', piModel: 'endpoint-2/qwen' }, { collect, spawn, cleanup });
+  assert.equal(own.verdict, 'accept');
+  assert.equal(own.reviewer, 'pi/endpoint-2/ornith-1.5');
+  const project = await runTaskReview(task, { taskReviewHarness: 'pi', piModel: 'endpoint-2/qwen', taskReviewEffort: 'medium' }, { collect, spawn, cleanup });
+  assert.equal(project.reviewer, 'pi/endpoint-2/qwen');
+  const unsafe = await runTaskReview(task, { taskReviewHarness: 'pi', taskReviewPiModel: 'x"; rm -rf /' }, { collect, spawn, cleanup });
+  assert.equal(unsafe.reviewer, 'pi/default');
+  assert.deepEqual(seen, [
+    ['-p', '--model', 'endpoint-2/ornith-1.5', '--thinking', 'high', '--no-tools', '--no-extensions', '--no-skills', '--no-session'],
+    ['-p', '--model', 'endpoint-2/qwen', '--thinking', 'medium', '--no-tools', '--no-extensions', '--no-skills', '--no-session'],
+    ['-p', '--thinking', 'high', '--no-tools', '--no-extensions', '--no-skills', '--no-session'],
+  ]);
+});
+
 test('missing CLI, timeout, nonzero exit and invalid output all yield error and cleanup', async () => {
   for (const cli of [success({ error: new Error('ENOENT') }), success({ timedOut: true }), success({ code: 1 }), success({ stdout: '{}' })]) {
     let cleaned = false;

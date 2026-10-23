@@ -29,7 +29,7 @@ export async function runTaskReview(task: Task, settings: UserSettings, deps = {
 }): Promise<ReviewResult> {
   return runExclusive(reviewScratchKey(task.projectPath, task.id), async () => {
     const { harness, model, effort } = taskReviewerIn(settings);
-    const reviewer = `${harness}/${model}`;
+    const reviewer = `${harness}/${model ?? 'default'}`;
     try {
       const cwd = reviewScratchPaths.assertSafeSessionPath(task.projectPath, task.id);
       await fs.mkdir(cwd, { recursive: true });
@@ -40,9 +40,14 @@ export async function runTaskReview(task: Task, settings: UserSettings, deps = {
       const files = await deps.collect(task, task.review!.head);
       const prompt = renderReviewPrompt(task.title, task.description ?? '', files);
       const args = harness === 'codex'
-        ? ['exec', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only', '-m', model,
+        ? ['exec', '--skip-git-repo-check', '--ephemeral', '-s', 'read-only', '-m', model!,
           '-c', `model_reasoning_effort=${effort}`, '-o', output, '-']
-        : ['-p', '--model', model];
+        : harness === 'pi'
+          // Pi reads the prompt from stdin too; no tools, extensions, skills
+          // or session — it only reads what the prompt carries.
+          ? ['-p', ...(model ? ['--model', model] : []), '--thinking', effort,
+            '--no-tools', '--no-extensions', '--no-skills', '--no-session']
+          : ['-p', '--model', model!];
       // Windows resolves npm's codex.cmd through cmd. Every argv is fixed or
       // normalized to the harness model/effort grammar; all task text is stdin.
       const result = await deps.spawn(harness, args, {

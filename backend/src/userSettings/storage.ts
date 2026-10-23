@@ -82,11 +82,11 @@ const STRING_ARRAY_FIELDS = ['deadCodeEntryGlobs', 'metricsIgnoredExts'] as cons
 // Plain-string fields consumers `.trim()` / regex-match without checking
 // (`postMergeHookPrompt` in the post-merge trigger, the Pi model ids).
 const STRING_FIELDS = ['postMergeHookPrompt', 'piModel', 'postMergeHookPiModel',
-  'taskReviewModel', 'taskReviewRerunModel', 'taskReviewRerunPiModel'] as const;
+  'taskReviewModel', 'taskReviewPiModel', 'taskReviewRerunModel', 'taskReviewRerunPiModel'] as const;
 const VERIFICATION_FIELDS = ['taskAgentTypecheck', 'taskAgentTests'] as const;
 const REVIEW_ENUM_FIELDS = {
   taskReview: ['off', 'flag', 'rerun'],
-  taskReviewHarness: ['codex', 'claude'],
+  taskReviewHarness: ['codex', 'claude', 'pi'],
   taskReviewEffort: ALL_AGENT_EFFORTS,
   taskReviewRerunHarness: ALL_AGENT_HARNESSES,
   taskReviewRerunEffort: ALL_AGENT_EFFORTS,

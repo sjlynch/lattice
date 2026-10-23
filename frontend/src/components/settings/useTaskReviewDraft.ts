@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchUserSettingsStrict, type UserSettings } from '../../api';
 
-const FIELDS = ['taskReview', 'taskReviewHarness', 'taskReviewModel', 'taskReviewEffort',
+const FIELDS = ['taskReview', 'taskReviewHarness', 'taskReviewModel', 'taskReviewPiModel', 'taskReviewEffort',
   'taskReviewRerunHarness', 'taskReviewRerunModel', 'taskReviewRerunPiModel', 'taskReviewRerunEffort'] as const;
 type ReviewSettings = Pick<UserSettings, typeof FIELDS[number]>;
 

@@ -17,6 +17,10 @@ never enter it. Errors fail open. A review holds the task In Progress.
   pre-change non-test source budget (14,000 chars), strict reply parsing.
 - `runner.ts`: headless CLI in guarded home scratch `reviews/<taskId>/`, stdin
   prompt, ten-minute timeout, injected CLI seam. Cleanup uses homeScratch.
+  Codex (default sol/low), Claude, or Pi — a free local reviewer with no
+  tools, `taskReviewPiModel` else the project's `piModel`, thinking `high`
+  by default (where a local reviewer separated passing from failing
+  patches best).
 - `queue.ts`: four backend-wide jobs, FIFO, per-task single flight. Memory
   gauges live beside the singleton in service.
 

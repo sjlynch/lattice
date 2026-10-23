@@ -1,13 +1,24 @@
 import { getUserSettings } from './storage.js';
 import type { UserSettings } from './types.js';
 import { normalizeAgentEffort, normalizeAgentModel } from '../shared/harnesses.js';
+import { normalizePiModel } from '../agentCommandBuilder.js';
 
 // Default OFF. Unknown hand-written values never enable the reviewer.
 export function taskReviewIn(settings: UserSettings): 'off' | 'flag' | 'rerun' {
   return settings.taskReview === 'flag' || settings.taskReview === 'rerun' ? settings.taskReview : 'off';
 }
 
-export function taskReviewerIn(settings: UserSettings) {
+// A Pi reviewer's model is a "provider/model" (its own field, else the
+// project's Pi model; absent → Pi's default) and it thinks `high` unless set:
+// that is where a local model reviewed best (tmp/experiments/bvlocal.mjs).
+export function taskReviewerIn(settings: UserSettings): { harness: 'codex' | 'claude' | 'pi'; model: string | undefined; effort: string } {
+  if (settings.taskReviewHarness === 'pi') {
+    return {
+      harness: 'pi',
+      model: normalizePiModel(settings.taskReviewPiModel) ?? normalizePiModel(settings.piModel),
+      effort: normalizeAgentEffort(settings.taskReviewEffort) ?? 'high',
+    };
+  }
   const harness = settings.taskReviewHarness === 'claude' ? 'claude' : 'codex';
   return {
     harness,
