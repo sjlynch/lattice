@@ -39,6 +39,19 @@ allows) can see and drive their projects. Facade: `../peers.ts`. Routes:
   Fleet's control gate accepts a forwarded request whose scope covers the
   action; an agent launch arriving from a peer is always a scoped
   (`fleet-agent`) launch.
+- **`operate` runs code as the user here** (it launches agents), so it and
+  `terminals` mean full trust; the invite UI says so.
+- **A forwarded `project` must already be known** (`unknownProject`: query
+  or JSON body, string-compared to `listKnownProjects`, before any fs call).
+  Resolving an unknown one — a `\\host\share` path — opened an SMB
+  connection that hands that host the user's NTLM hash, and blocked the
+  backend. Peer bodies must be declared JSON (a form body could smuggle one).
+- Connection cap 64, 10 s handshake; the client bounds a whole exchange
+  (deadline) and its body (8 MB).
+- The `/api/peer/*` proxy always answers `application/json` + `nosniff`: a
+  paired PC must not serve HTML on this UI's origin. `isBrowserRequest`
+  counts only same-origin / same-site / none, never a cross-site navigation;
+  `fleetAgentControl` can only be changed from the UI.
 - A request carrying `Origin` is refused (browsers can't speak PSK).
 - A snapshot served to a peer never includes ITS peers (no A↔B loops).
 - Invites travel like passwords: shown once, never readable again.

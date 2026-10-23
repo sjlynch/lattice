@@ -13,6 +13,11 @@ export type PeerResponse = { status: number; body: string; contentType: string }
 
 export class PeerUnreachableError extends Error {}
 
+// A paired PC's answer is bounded in time (the whole exchange, not just idle
+// gaps) and size, so a slow or hostile remote can't hang a Fleet poll or
+// grow this process's memory.
+const MAX_RESPONSE_BYTES = 8 * 1024 * 1024;
+
 export function peerRequest(
   remote: Pick<PeerRemote, 'host' | 'port' | 'identity' | 'key'>,
   method: string,
@@ -36,11 +41,18 @@ export function peerRequest(
       timeout: timeoutMs,
     } as https.RequestOptions, (res) => {
       const chunks: Buffer[] = [];
-      res.on('data', (c: Buffer) => chunks.push(c));
+      let size = 0;
+      res.on('data', (c: Buffer) => {
+        size += c.length;
+        if (size > MAX_RESPONSE_BYTES) { req.destroy(new Error('response too large')); return; }
+        chunks.push(c);
+      });
       res.on('end', () => resolve({ status: res.statusCode ?? 502, body: Buffer.concat(chunks).toString('utf8'), contentType: String(res.headers['content-type'] ?? 'application/json') }));
       res.on('error', (err) => reject(new PeerUnreachableError(err.message)));
     });
     req.on('timeout', () => req.destroy(new Error('timed out')));
+    const deadline = setTimeout(() => req.destroy(new Error('timed out')), timeoutMs);
+    req.on('close', () => clearTimeout(deadline));
     req.on('error', (err) => reject(new PeerUnreachableError(`${remote.host}:${remote.port}: ${(err as NodeJS.ErrnoException).code ?? err.message}`)));
     req.end(payload);
   });

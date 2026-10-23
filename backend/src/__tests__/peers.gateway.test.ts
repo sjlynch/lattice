@@ -9,7 +9,11 @@
 //   - a request carrying Origin is refused;
 //   - forwarded requests carry the per-process gateway token + scope, which
 //     `forwardedPeerScope` accepts only from this process;
-//   - revoking a grant closes its connections and refuses the next handshake.
+//   - revoking a grant closes its connections and refuses the next handshake;
+//   - a forwarded `project` must be one of this PC's known projects, matched as
+//     a string: a UNC path (`\\host\share`) made the backend open an SMB
+//     connection, handing that host the user's NTLM credentials (review 10-22);
+//   - bodies must be declared JSON (a form body could smuggle a `project`).
 
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
@@ -22,7 +26,7 @@ import test from 'node:test';
 
 import { peerRequest } from '../peers/client.js';
 import { formatPeerConnection, lanAddresses, parsePeerConnection } from '../peers/connection.js';
-import { forwardedPeerScope, GATEWAY_TOKEN, GATEWAY_TOKEN_HEADER, requiredScope, startPeerGateway } from '../peers/gateway.js';
+import { forwardedPeerScope, GATEWAY_TOKEN, GATEWAY_TOKEN_HEADER, requiredScope, startPeerGateway, unknownProject } from '../peers/gateway.js';
 import { newIdentity, newKey, type PeerGrant } from '../peers/store.js';
 
 async function fakeBackend() {
@@ -140,4 +144,27 @@ test('gateway: PSK auth, scope, Origin refusal, forwarding headers, revocation',
   gw.disconnect(reader.identity);
   await assert.rejects(peerRequest(as(reader), 'GET', '/api/fleet'));
   assert.equal((await peerRequest(as(operator), 'GET', '/api/fleet')).status, 200);
+});
+
+test('gateway: only known projects pass, never a UNC path', async (t) => {
+  const known = async () => ['C:\\work\\alpha'];
+  const u = (q: string) => new URL(`https://peer/api/tasks${q}`);
+  const none = Buffer.alloc(0);
+  assert.equal(await unknownProject(u(''), none, known), null);
+  assert.equal(await unknownProject(u('?project=c:/work/alpha/'), none, known), null, 'case and slashes normalize');
+  assert.equal(await unknownProject(u('?project=%5C%5C10.0.0.66%5Cs%5Cx'), none, known), '\\\\10.0.0.66\\s\\x');
+  assert.equal(await unknownProject(u('?project=C:%5Cwork%5Cbeta'), none, known), 'C:\\work\\beta');
+  assert.equal(await unknownProject(u(''), Buffer.from('{"project":"//evil/share","title":"x"}'), known), '//evil/share');
+  assert.equal(await unknownProject(u(''), Buffer.from('{"title":"x"}'), known), null);
+
+  const backend = await fakeBackend();
+  const g = grant('operate', 'ops');
+  const gw = await startPeerGateway(0, '127.0.0.1', { grants: () => [g], backendPort: backend.port, knownProjects: known,
+    auditFile: path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'peer-audit-')), 'a.jsonl') });
+  t.after(async () => { await gw.close(); await backend.close(); });
+  const as = { host: '127.0.0.1', port: gw.port(), identity: g.identity, key: g.key };
+  const before = backend.seen.length;
+  assert.equal((await peerRequest(as, 'GET', '/api/tasks?project=%5C%5C10.0.0.66%5Cs%5Cx')).status, 403);
+  assert.equal((await peerRequest(as, 'POST', '/api/tasks', '{"project":"C:\\\\work\\\\beta","title":"x"}')).status, 403);  assert.equal(backend.seen.length, before, 'refused before reaching the backend');
+  assert.equal((await peerRequest(as, 'GET', '/api/tasks?project=C:%5Cwork%5Calpha')).status, 200);
 });

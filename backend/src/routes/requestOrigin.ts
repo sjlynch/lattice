@@ -7,4 +7,8 @@
 
 import type { Request } from 'express';
 
-export const isBrowserRequest = (req: Request): boolean => !!(req.get('origin') || req.get('sec-fetch-site'));
+// `Sec-Fetch-Site: cross-site` is a page on ANOTHER site navigating here (a
+// top-level GET carries no Origin): never the user at the UI.
+const SAME_SITE = new Set(['same-origin', 'same-site', 'none']);
+export const isBrowserRequest = (req: Request): boolean =>
+  !!req.get('origin') || SAME_SITE.has(String(req.get('sec-fetch-site') ?? '').toLowerCase());

@@ -25,7 +25,7 @@ const CONTROL_OFF: ToolResult = {
     type: 'text',
     text:
       'Agents may not change other projects: the user has not enabled it (Fleet panel → "Let agents act ' +
-      'in any project (terminals, tasks, merges)", or global setting fleetAgentControl). Ask the user.',
+      'in any project (terminals, tasks, merges)"). Ask the user.',
   }],
   isError: true,
 };

@@ -77,7 +77,7 @@ test('fleet_create_task: refused here while agent control is off; files + starts
   try {
     const res = await a.client.callTool({ name: 'fleet_create_task', arguments: { targetProject: TARGET, title: 'Fix it', run: true } });
     assert.equal(isError(res), true);
-    assert.match(textOf(res), /fleetAgentControl/);
+    assert.match(textOf(res), /Fleet panel .*Ask the user/);
     assert.deepEqual(off.map(route), [`GET /api/fleet @${PROJECT}`], 'nothing written');
   } finally {
     await a.close();

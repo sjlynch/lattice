@@ -43,7 +43,7 @@ async function requireControl(req: Request, res: Response, need: PeerScope = 'te
     code: 'fleet-agent-control-off',
     error:
       'Agents may not open or drive terminals: the user has not enabled it (Fleet panel → ' +
-      '"Let agents act in any project (terminals, tasks, merges)", or global setting fleetAgentControl).',
+      '"Let agents act in any project (terminals, tasks, merges)"). Ask the user.',
   });
   return false;
 }

@@ -61,7 +61,7 @@ export function updatePeers<T>(fn: (p: PeersFile) => T, file = peersFile()): Pro
     const peers = await readPeers(file);
     const result = fn(peers);
     await fs.mkdir(path.dirname(file), { recursive: true });
-    await atomicWriteFile(file, `${JSON.stringify(peers, null, 2)}\n`);
+    await atomicWriteFile(file, `${JSON.stringify(peers, null, 2)}\n`, { mode: 0o600 });
     await fs.chmod(file, 0o600).catch(() => {});
     return { peers, result };
   });

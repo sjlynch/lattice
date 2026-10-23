@@ -12,6 +12,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { buildFleetRouter } from '../routes/fleet.js';
+import { buildGlobalSettingsRouter } from '../routes/globalSettings.js';
 
 async function serve() {
   const app = express();
@@ -48,5 +49,32 @@ test('fleet: snapshot open to all; control gated for agents while fleetAgentCont
     assert.equal((await post(`${base}/api/fleet/agents`, { project: 'relative', harness: 'claude', prompt: 'x' }, browser)).status, 400);
   } finally {
     await close();
+  }
+});
+
+// A page on another site navigating here (`Sec-Fetch-Site: cross-site`, no
+// Origin on a top-level GET) is not the user at the UI; and the agent-control
+// switch can only be flipped from the UI (review 10-22: an agent could PATCH
+// it on for itself).
+test('cross-site navigations are not "the browser"; agents cannot flip agent control', async () => {
+  const { base, close } = await serve();
+  try {
+    const crossSite = await fetch(`${base}/api/terminals/p1/screen`, { headers: { 'sec-fetch-site': 'cross-site' } });
+    assert.equal(crossSite.status, 403);
+  } finally {
+    await close();
+  }
+  const app = express();
+  app.use(express.json());
+  app.use(buildGlobalSettingsRouter());
+  const server = app.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  try {
+    const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}/api/global-settings`;
+    const patch = (headers: Record<string, string>) => fetch(url, { method: 'PATCH', headers: { 'content-type': 'application/json', ...headers }, body: JSON.stringify({ fleetAgentControl: true }) });
+    assert.equal((await patch({})).status, 403);
+    assert.equal((await patch({ 'sec-fetch-site': 'cross-site' })).status, 403);
+  } finally {
+    await new Promise<void>((r) => server.close(() => r()));
   }
 });

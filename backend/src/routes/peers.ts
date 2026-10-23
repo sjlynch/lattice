@@ -77,7 +77,7 @@ export function buildPeersRouter(): Router {
   // and JSON body (re-serialized from the app's JSON parser).
   r.all('/api/peer/:name/*', async (req, res) => {
     if (!isBrowserRequest(req) && !(await isFleetAgentControlOn())) {
-      return res.status(403).json({ code: 'fleet-agent-control-off', error: 'Agents may reach other PCs only when the user enabled agent control (Fleet panel).' });
+      return res.status(403).json({ code: 'fleet-agent-control-off', error: 'Agents may reach other PCs only when the user turned on agent control in the Fleet panel. Ask the user.' });
     }
     const rest = `/${String((req.params as unknown as Record<string, unknown>)['0'] ?? '')}`;
     if (!rest.startsWith('/api/')) return res.status(400).json({ error: 'only /api/ paths can be forwarded' });
@@ -86,7 +86,9 @@ export function buildPeersRouter(): Router {
     const body = hasBody ? Buffer.from(JSON.stringify(req.body ?? {})) : undefined;
     try {
       const up = await callRemote(req.params.name, req.method, rest + (q >= 0 ? req.originalUrl.slice(q) : ''), body, 120_000);
-      res.status(up.status).type(up.contentType).send(up.body);
+      // Always JSON, never sniffed: a paired PC must not be able to serve
+      // HTML (and script) on this UI's origin.
+      res.status(up.status).set('X-Content-Type-Options', 'nosniff').type('application/json').send(up.body);
     } catch (err) {
       peersError(res, err);
     }

@@ -7,6 +7,7 @@
 import os from 'node:os';
 
 import { backendPort } from './server/config.js';
+import { listKnownProjects } from './tasks.js';
 import { formatPeerConnection, lanAddresses, parsePeerConnection } from './peers/connection.js';
 import { startPeerGateway, type PeerGateway } from './peers/gateway.js';
 import { peerRequest, PeerUnreachableError, type PeerResponse } from './peers/client.js';
@@ -44,6 +45,7 @@ async function applyGateway(): Promise<void> {
       gateway = await startPeerGateway(peers.gateway.port, process.env.LATTICE_PEER_GATEWAY_HOST || '0.0.0.0', {
         grants: () => grantsCache,
         backendPort: backendPort(),
+        knownProjects: listKnownProjects,
         onSeen: (id, at) => lastSeen.set(id, at),
       });
     } catch (err) {

@@ -11,6 +11,7 @@ import {
 } from '../globalSettings.js';
 import { setSpawnQueuePlanGuard, setSpawnQueueResourceGovernor, setSpawnQueueSoftCap } from '../spawnQueue.js';
 import { reconcilePiModelsJson, refreshEndpointDiscovery } from '../piModels.js';
+import { isBrowserRequest } from './requestOrigin.js';
 import { PI_MODELS_CONFIG } from '../piModels/config.js';
 
 export function buildGlobalSettingsRouter(): Router {
@@ -63,6 +64,11 @@ export function buildGlobalSettingsRouter(): Router {
       patch.resourceGovernor = body.resourceGovernor;
     }
     if (body.fleetAgentControl !== undefined) {
+      // The switch that lets agents act across projects is the user's to
+      // flip, from the Fleet panel — an agent must not grant it to itself.
+      if (!isBrowserRequest(req)) {
+        return res.status(403).json({ error: 'agent control can only be changed in the Lattice UI (Fleet panel)' });
+      }
       if (typeof body.fleetAgentControl !== 'boolean') {
         return res.status(400).json({ error: 'fleetAgentControl must be a boolean' });
       }

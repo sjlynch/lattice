@@ -17,8 +17,8 @@ type Props = { onClose: () => void; onChanged: () => void };
 
 const SCOPE_HELP: Record<PeerScope, string> = {
   read: 'see projects, boards, runs and plan usage',
-  operate: '+ create and run tasks, start workflows and merges, launch agents',
-  terminals: '+ read, type into and wait on any terminal',
+  operate: '+ create and run tasks, start workflows and merges, launch agents. Agents run code as you on this PC, so give this only to a PC you trust as much as this one',
+  terminals: '+ read, type into and wait on any terminal (the same trust as operate)',
 };
 
 // Pairing other PCs: this PC's gateway (off by default), invites for PCs that
