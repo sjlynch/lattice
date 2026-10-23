@@ -30,6 +30,9 @@ handshake, backend deps) is `backend/scripts/dev.mjs` —
   tests with their error, captured console output of failing files only, one
   summary line. Agents read test output; there is deliberately no verbose mode.
 - `opengrep-pin.mjs` — maintainer tool that bumps the Opengrep engine pin.
+- `setup-peer.ps1` — install / update Lattice on another Windows PC (clone or
+  fast-forward, `install:all`, then the Fleet → PCs pairing steps). Starts
+  nothing and changes no settings.
 - `soak/` — the self-hosting soak; see [soak/CLAUDE.md](soak/CLAUDE.md).
 
 Tests: named after the module — grep it in `backend/src/__tests__/`.

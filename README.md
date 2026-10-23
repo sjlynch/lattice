@@ -35,6 +35,17 @@ compares every dependency each workspace declares (and the version its
 `package-lock.json` pins) with what is in `node_modules`, and re-runs
 `install:all` when a pull added or bumped a package.
 
+## Another PC
+
+To let Fleet see and drive a second Windows PC (say, one with a GPU for local
+models), run this in PowerShell on that PC, then follow the steps it prints
+(start Lattice there, turn on its gateway in Fleet → PCs, create an invite and
+paste it on this PC):
+
+```
+irm https://raw.githubusercontent.com/sjlynch/lattice/main/scripts/setup-peer.ps1 | iex
+```
+
 ## Run
 
 ```
