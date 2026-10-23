@@ -259,3 +259,21 @@ test('no npm boot context of any kind reaches a spawned terminal', () => {
     fs.rmSync(tmp, { recursive: true, force: true });
   }
 });
+
+// The executor reads its control-route token from its own env; a pty that
+// inherited it could create or kill any session behind the backend's back.
+test('the executor token never reaches a spawned terminal', (t) => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'lattice-tokenleak-'));
+  const saved = process.env.LATTICE_TERMINAL_TOKEN;
+  process.env.LATTICE_TERMINAL_TOKEN = 'secret-executor-token';
+  t.after(() => {
+    if (saved === undefined) delete process.env.LATTICE_TERMINAL_TOKEN;
+    else process.env.LATTICE_TERMINAL_TOKEN = saved;
+    fs.rmSync(tmp, { recursive: true, force: true });
+  });
+  const ctx = buildSessionLaunchContext({ cwd: tmp, projectPath: tmp });
+  assert.ok(!('error' in ctx));
+  if ('error' in ctx) return;
+  assert.ok(!Object.values(ctx.env).includes('secret-executor-token'));
+  assert.ok(!Object.keys(ctx.env).some((k) => k.toUpperCase() === 'LATTICE_TERMINAL_TOKEN'));
+});

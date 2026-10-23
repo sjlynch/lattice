@@ -4,6 +4,7 @@ import { existingLatticeApiDocPath } from '../latticeApiDocs/docPath.js';
 import type { CreateOpts } from './sessionTypes.js';
 import { applyFreshWindowsPath, applyPtyPathPrepend } from './windowsPath.js';
 import { applyClaudeOverheadEnv, scrubInheritedNpmEnv } from './envSetup.js';
+import { TERMINAL_SERVER_TOKEN_ENV } from '../terminalServerAuth.js';
 import {
   configureCodexProjectMcp,
   configureCodexProjectTrust,
@@ -96,6 +97,12 @@ export function buildSessionLaunchContext(
   // own `tsc`/`playwright`. Runs BEFORE applyFreshWindowsPath so that on
   // Windows the registry PATH is still merged over whatever is left.
   scrubInheritedNpmEnv(baseEnv);
+  // The executor's own auth token authorizes its control routes (create /
+  // kill any session). It reaches this process through its env; no pty
+  // needs it, so it never rides into one (any case, for Windows).
+  for (const key of Object.keys(baseEnv)) {
+    if (key.toUpperCase() === TERMINAL_SERVER_TOKEN_ENV) delete baseEnv[key];
+  }
   applyFreshWindowsPath(baseEnv);
   applyPtyPathPrepend(baseEnv);
   applyClaudeOverheadEnv(baseEnv);
