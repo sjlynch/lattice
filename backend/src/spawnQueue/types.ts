@@ -26,6 +26,9 @@ export type EnqueueSpawnArgs<T = unknown> = {
   thunk: SpawnThunk<T>;
   // Optional external cancellation, forwarded into the request's own signal.
   signal?: AbortSignal;
+  // The agent harness this spawn runs, when known — what the plan guard
+  // holds a `batch` spawn on (planGuard.ts). Absent → never plan-held.
+  harness?: string;
 };
 
 export type EnqueueSpawnResult<T = unknown> = {
@@ -45,6 +48,8 @@ export type SpawnQueueSnapshotItem = {
   state: 'pending' | 'in-flight';
   // Set while the request is backing off after a disk-space deferral.
   waitingForDisk?: { reason: string; retryAt: number };
+  // Set while the plan guard holds it (planGuard.ts): why.
+  heldByPlan?: string;
 };
 
 export type SpawnQueueSnapshot = {
@@ -66,6 +71,9 @@ export type SpawnQueueSnapshot = {
     holdingBatch: boolean;
     reason: string | null;
   };
+  // The plan-usage brake (planGuard.ts): its threshold (null = off) and how
+  // many pending requests it holds right now.
+  planGuard: { percent: number | null; held: number };
 };
 
 // Thrown by a thunk (or surfaced by the queue) when the terminal-server's

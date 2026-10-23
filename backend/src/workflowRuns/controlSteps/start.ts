@@ -41,9 +41,10 @@ export type StartStepDeps = {
   listTasks: typeof listTasks;
   startTask: typeof startTaskById;
   enqueueRun: typeof enqueueTaskRun;
-  // Why a batch spawn would be held right now (agent cap / resource
-  // governor), or null. Optional so hand-built test deps keep compiling.
-  admissionHold?: () => Promise<string | null>;
+  // Why a batch spawn of `harness` would be held right now (agent cap /
+  // resource governor / plan guard), or null. Optional so hand-built test
+  // deps keep compiling.
+  admissionHold?: (harness?: string) => Promise<string | null>;
   // Does the spawn queue hold a run for this task (pending or in flight)?
   // Optional so hand-built test deps keep compiling.
   hasQueuedRun?: (taskId: string) => boolean;
@@ -224,7 +225,7 @@ async function startOneTask(
   // used to launch 50 agents at once. When the queue would hold a batch
   // spawn right now, hand the task to it instead (the same deferral a cap
   // rejection takes below) — it starts as soon as capacity returns.
-  const hold = await deps.admissionHold?.();
+  const hold = await deps.admissionHold?.(harness);
   if (!isCurrentStartStep(run, stepIndex)) return { outcome: 'withdrawn' };
   // Already being started by the spawn queue: leave it to that run. Counted
   // as deferred — it is queued forward progress, not a failure. Checked after

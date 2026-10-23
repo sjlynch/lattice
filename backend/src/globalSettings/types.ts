@@ -55,4 +55,9 @@ export type GlobalSettings = {
   // Absent counts as false. The Fleet view itself (a human in the browser)
   // is never gated by it. See ../fleet.ts.
   fleetAgentControl?: boolean;
+  // Plan guard: hold new fan-out spawns (task runs, workflow steps) of a
+  // Claude / Codex agent while that provider's subscription plan has used at
+  // least this percent of its 5-hour or weekly window, until it resets.
+  // Absent or 0 → off. See spawnQueue/planGuard.ts.
+  planGuardPercent?: number;
 };

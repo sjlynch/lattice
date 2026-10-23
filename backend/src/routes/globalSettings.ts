@@ -9,7 +9,7 @@ import {
   updateGlobalSettings,
   type GlobalSettings,
 } from '../globalSettings.js';
-import { setSpawnQueueResourceGovernor, setSpawnQueueSoftCap } from '../spawnQueue.js';
+import { setSpawnQueuePlanGuard, setSpawnQueueResourceGovernor, setSpawnQueueSoftCap } from '../spawnQueue.js';
 import { reconcilePiModelsJson, refreshEndpointDiscovery } from '../piModels.js';
 import { PI_MODELS_CONFIG } from '../piModels/config.js';
 
@@ -68,12 +68,20 @@ export function buildGlobalSettingsRouter(): Router {
       }
       patch.fleetAgentControl = body.fleetAgentControl;
     }
+    if (body.planGuardPercent !== undefined) {
+      const n = body.planGuardPercent;
+      if (typeof n !== 'number' || !Number.isFinite(n) || n < 0 || n > 100) {
+        return res.status(400).json({ error: 'planGuardPercent must be a number from 0 (off) to 100' });
+      }
+      patch.planGuardPercent = n;
+    }
 
     const updated = await updateGlobalSettings(patch);
     // Apply the new softCap to the live queue so it takes effect without a
     // restart (raising it drains deferred spawns into the new headroom).
     setSpawnQueueSoftCap(updated.maxConcurrentAgents);
     setSpawnQueueResourceGovernor(updated.resourceGovernor !== false);
+    setSpawnQueuePlanGuard(updated.planGuardPercent);
     // When Pi providers changed, reconcile them into ~/.pi/agent/models.json
     // so the new endpoint's models are immediately discoverable, then probe the
     // auto-discover endpoints right away (bypassing the TTL) — that is what

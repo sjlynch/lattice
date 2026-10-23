@@ -49,10 +49,23 @@ function admitWhilePossible(): void {
         !s.isWaitingOnPredecessor(r) &&
         s.accounting.canAdmit(r.priority) &&
         // Fan-out work waits while the machine is saturated (resourceGovernor.ts).
-        !(r.priority === 'batch' && s.governor.holdsBatch(s.accounting.effectiveAgents())));
+        !(r.priority === 'batch' && s.governor.holdsBatch(s.accounting.effectiveAgents())) &&
+        // …and while its plan is nearly spent (planGuard.ts).
+        !(r.priority === 'batch' && isPlanHeld(r)));
     if (!next) break;
     admit(next);
   }
+}
+
+// Is this request's harness plan-held? Logged once when a hold starts, not on
+// every drain; the snapshot reads the hold off the request.
+function isPlanHeld(request: QueueRequest): boolean {
+  const hold = queueState.planGuard.holds(request.harness);
+  if (hold && !request.planHeld) {
+    console.log(`[spawn-queue] ${request.kind} (${request.dedupeKey}) held — ${hold.reason}`);
+  }
+  request.planHeld = hold ?? undefined;
+  return hold !== null;
 }
 
 // A disk-deferred request sits out its backoff; the poll loop (which keeps

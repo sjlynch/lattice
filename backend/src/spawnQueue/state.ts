@@ -4,6 +4,7 @@
 
 import { SpawnAccounting } from './accounting.js';
 import { SPAWN_QUEUE_CONFIG } from './config.js';
+import { PlanGuard, type PlanHold } from './planGuard.js';
 import { ResourceGovernor } from './resourceGovernor.js';
 import type {
   EnqueueSpawnArgs,
@@ -38,6 +39,10 @@ export type QueueRequest = {
   state: 'pending' | 'in-flight';
   // Disk-space backoff: not admitted before `retryAt` (see drain.ts).
   waitingForDisk?: { reason: string; retryAt: number };
+  // The harness it runs (EnqueueSpawnArgs.harness) and, while the plan guard
+  // holds it, why (drain.ts logs a hold once, when it starts).
+  harness?: string;
+  planHeld?: PlanHold;
   reservationId?: number;
   resolve: (value: unknown) => void;
   reject: (reason: unknown) => void;
@@ -57,6 +62,9 @@ export class SpawnQueueState {
   );
 
   readonly governor = new ResourceGovernor();
+
+  // Inert (no usage reader) until the facade wires the real one in.
+  planGuard = new PlanGuard(async () => ({ providers: [] }));
 
   isDraining = false;
   drainAgain = false;
@@ -113,6 +121,7 @@ export class SpawnQueueState {
       settled: false,
       enqueuedAt: Date.now(),
       state: 'pending',
+      ...(args.harness ? { harness: args.harness } : {}),
       resolve,
       reject,
       done,
@@ -187,6 +196,7 @@ export class SpawnQueueState {
       enqueuedAt: r.enqueuedAt,
       state: r.state,
       ...(r.waitingForDisk ? { waitingForDisk: { ...r.waitingForDisk } } : {}),
+      ...(r.planHeld && r.state === 'pending' ? { heldByPlan: r.planHeld.reason } : {}),
     }));
     return {
       items,
@@ -199,6 +209,10 @@ export class SpawnQueueState {
       pollHealthy: this.accounting.isPollHealthy(),
       softCap: this.accounting.getSoftCap(),
       governor: this.governor.state(),
+      planGuard: {
+        percent: this.planGuard.getPercent(),
+        held: items.filter((i) => i.heldByPlan).length,
+      },
     };
   }
 }

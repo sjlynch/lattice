@@ -38,4 +38,7 @@ export interface PlanUsageProvider {
 
 export interface PlanUsageReport {
   providers: PlanUsageProvider[];
+  // GET /api/plan-usage only: the spawn queue's plan guard — its threshold
+  // (null = off) and how many agent starts it holds right now.
+  guard?: { percent: number | null; held: number };
 }

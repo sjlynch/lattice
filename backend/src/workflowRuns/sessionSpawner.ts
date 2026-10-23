@@ -6,6 +6,7 @@
 import { proxyCreateSession, proxyKillSession } from '../terminalProxy.js';
 import type { CreateSessionResult } from '../terminalServerClient.js';
 import { cancelSpawn, enqueueSpawn, notifySessionsFreed, SpawnCapacityError } from '../spawnQueue.js';
+import { normalizeAgentHarness } from '../harnesses.js';
 import { registerAgentSession, unregisterAgentSession } from '../agentSessions.js';
 import { forgetAgentQuiescence } from '../agentQuiescence.js';
 import type { Workflow } from '../workflows.js';
@@ -204,6 +205,7 @@ export function enqueueWorkflowStepSession(opts: {
     kind: 'workflow-step',
     priority: 'batch',
     dedupeKey,
+    harness: normalizeAgentHarness(opts.harness),
     thunk: async () => {
       if (!isCurrentRunningStep(run, stepIndex)) {
         unregisterAgentSession(workflowStepAgentId(run.id, stepIndex));

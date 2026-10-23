@@ -1,20 +1,23 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Gauge, RefreshCw } from 'lucide-react';
-import { getPlanUsage, type PlanUsageReport } from '../api';
+import { getPlanUsage, patchGlobalSettings, type PlanUsageReport } from '../api';
 import { useDismissOnOutside } from '../hooks/useDismissOnOutside';
-import { chipParts, chipTitle, PROVIDER_LABEL, resetText, staleText, usageTone } from './planUsageDerive';
+import { chipParts, chipTitle, guardChoices, guardHeldText, PROVIDER_LABEL, resetText, staleText, usageTone } from './planUsageDerive';
 
 // Claude and Codex subscription usage in the navbar: the most-used window per
 // provider on the chip, every window with its reset time in the popover.
 // Polled every 5 min while the page is visible (the backend caches for 60 s,
 // so tabs and agents share one provider read); opening the popover asks for
-// fresh numbers.
+// fresh numbers. The footer sets the plan guard (globalSettings
+// .planGuardPercent): new Claude / Codex task runs and workflow steps wait
+// while a plan is past it.
 const POLL_MS = 5 * 60_000;
 
 export function PlanUsageChip() {
   const [report, setReport] = useState<PlanUsageReport | null>(null);
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [guardError, setGuardError] = useState<string | null>(null);
   const [now, setNow] = useState(() => Date.now());
   const ref = useRef<HTMLDivElement>(null);
   useDismissOnOutside(open, ref, () => setOpen(false));
@@ -43,13 +46,22 @@ export function PlanUsageChip() {
     };
   }, [load]);
 
+  const setGuard = (percent: number) => {
+    setGuardError(null);
+    patchGlobalSettings({ planGuardPercent: percent })
+      .then(() => load(true))
+      .catch((err: unknown) => setGuardError(err instanceof Error ? err.message : String(err)));
+  };
+
   const parts = chipParts(report);
   if (!parts.length) return null;
+  const held = guardHeldText(report?.guard);
   return (
     <div className="appbar-usage" ref={ref}>
       <button
         className="appbar-usage-chip"
-        title={chipTitle(report)}
+        title={held ? `${chipTitle(report)}
+${held}` : chipTitle(report)}
         aria-label="Plan usage"
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -105,6 +117,28 @@ export function PlanUsageChip() {
               </section>
             );
           })}
+          {report.guard && (
+            <section className="appbar-usage-guard">
+              <label className="appbar-usage-guard-row">
+                <span>Plan guard</span>
+                <select
+                  className="text-input"
+                  value={report.guard.percent ?? 0}
+                  onChange={(e) => setGuard(Number(e.target.value))}
+                  aria-label="Plan guard threshold"
+                >
+                  {guardChoices(report.guard.percent).map((p) => (
+                    <option key={p} value={p}>{p === 0 ? 'Off' : `at ${p}%`}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="appbar-usage-note">
+                New Claude / Codex task runs and workflow steps wait while that plan is past this, until it resets. Pi, merges and your own terminals are never held.
+              </div>
+              {held && <div className="appbar-usage-guard-held">{held}</div>}
+              {guardError && <div className="error-msg">{guardError}</div>}
+            </section>
+          )}
         </div>
       )}
     </div>

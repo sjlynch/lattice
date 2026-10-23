@@ -196,6 +196,10 @@
 .appbar-usage-bar .tone-high { background: var(--danger); }
 .appbar-usage-reset, .appbar-usage-source { color: var(--text-tertiary); font-size: 11px; }
 .appbar-usage-note { color: var(--text-secondary); font-size: 11px; line-height: 1.4; }
+.appbar-usage-guard { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.appbar-usage-guard-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-weight: 600; }
+.appbar-usage-guard-row select { width: auto; font-weight: 400; }
+.appbar-usage-guard-held { color: #e0af68; font-size: 11px; }
 
 /* Task board launcher (in the appbar) */
 .fab {

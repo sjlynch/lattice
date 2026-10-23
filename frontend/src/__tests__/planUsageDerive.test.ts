@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { PlanUsageProvider, PlanUsageReport } from '../api';
-import { bindingWindow, chipParts, chipTitle, resetText, staleText, usageTone } from '../components/planUsageDerive';
+import { bindingWindow, chipParts, chipTitle, guardChoices, guardHeldText, resetText, staleText, usageTone } from '../components/planUsageDerive';
 
 const NOW = Date.parse('2026-10-22T20:00:00Z');
 const claude: PlanUsageProvider = {
@@ -53,4 +53,15 @@ test('resetText and staleText scale their units', () => {
   assert.equal(staleText('2026-10-22T19:59:30Z', NOW), '');
   assert.equal(staleText('2026-10-22T19:30:00Z', NOW), 'as of 30 min ago');
   assert.equal(staleText('2026-10-19T04:29:54Z', NOW), 'as of 4 days ago');
+});
+
+test('plan guard: the select offers presets plus any custom stored value; held text only while holding', () => {
+  assert.deepEqual(guardChoices(null), [0, 80, 90, 95, 99]);
+  assert.deepEqual(guardChoices(90), [0, 80, 90, 95, 99]);
+  assert.deepEqual(guardChoices(85), [0, 80, 85, 90, 95, 99]);
+  assert.equal(guardHeldText(undefined), '');
+  assert.equal(guardHeldText({ percent: 90, held: 0 }), '');
+  assert.equal(guardHeldText({ percent: null, held: 3 }), '');
+  assert.equal(guardHeldText({ percent: 90, held: 1 }), 'Holding 1 agent start until the plan resets');
+  assert.equal(guardHeldText({ percent: 90, held: 2 }), 'Holding 2 agent starts until the plan resets');
 });

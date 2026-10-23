@@ -107,6 +107,13 @@ function sanitize(raw: Partial<GlobalSettings>): Partial<GlobalSettings> {
   if (typeof raw.fleetAgentControl === 'boolean') {
     out.fleetAgentControl = raw.fleetAgentControl;
   }
+  if (
+    typeof raw.planGuardPercent === 'number' &&
+    Number.isFinite(raw.planGuardPercent) &&
+    raw.planGuardPercent >= 0
+  ) {
+    out.planGuardPercent = Math.min(100, raw.planGuardPercent);
+  }
   if (raw.mcpCustomServers !== undefined) {
     out.mcpCustomServers = sanitizeCustomServers(raw.mcpCustomServers);
   }

@@ -81,3 +81,20 @@ export function chipTitle(report: PlanUsageReport | null): string {
     })
     .join('\n');
 }
+
+// Plan-guard thresholds the popover offers (0 = off).
+export const GUARD_CHOICES = [0, 80, 90, 95, 99] as const;
+
+// The choice a stored threshold shows as: an off guard is 0; a value set
+// elsewhere (API, MCP) that isn't a preset is added so the select can show it.
+export function guardChoices(percent: number | null | undefined): number[] {
+  const p = percent ?? 0;
+  return GUARD_CHOICES.includes(p as (typeof GUARD_CHOICES)[number]) ? [...GUARD_CHOICES] : [...GUARD_CHOICES, p].sort((a, b) => a - b);
+}
+
+// "Holding 2 agent starts until the plan resets" / "" while nothing waits.
+export function guardHeldText(guard: PlanUsageReport['guard']): string {
+  const n = guard?.held ?? 0;
+  if (!guard?.percent || n === 0) return '';
+  return `Holding ${n} agent start${n === 1 ? '' : 's'} until the plan resets`;
+}

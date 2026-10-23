@@ -30,6 +30,8 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
   registry (dedupe-keyed), pending sort, drain-reentrancy flags.
 - `drain.ts` — `drainQueue()`: admit pending spawns while there is headroom,
   run each thunk, fold the outcome back into the accounting.
+- `planGuard.ts` — `PlanGuard`: holds `batch` spawns of a Claude / Codex
+  harness while that plan is past `globalSettings.planGuardPercent`.
 - `poll.ts` — the `GET /sessions` loop; runs only while the queue has
   pending/reserved work. Reconciles the total session count and the agent
   subset (`countAgentSessions`).
@@ -77,6 +79,19 @@ is now only a runaway backstop; the queue's `softCap` is the real governor.
   `GET /api/spawn-queue` as `governor`; opt out with
   `globalSettings.resourceGovernor: false`. Added after a 50-agent cap on a
   large repo pinned the CPU at 100% and froze the desktop (2026-09-22).
+- **The plan guard holds fan-out on a nearly spent plan** (`planGuard.ts`,
+  off unless `globalSettings.planGuardPercent` is 1–100). A `batch` request
+  whose `harness` (set by the task-run and workflow-step sites; the Start
+  step passes it to `batchAdmissionHold`) is Claude / Codex waits while that
+  provider's 5-hour or weekly window is at or past the threshold — never Pi,
+  never `priority` / `interactive`, never a model-only window
+  (`week-opus`), an unreadable plan or a window whose `resetsAt` has passed.
+  The check is sync over the last `readPlanUsage()`; a read older than 90 s
+  refreshes in the background and re-drains. A hold is logged once per
+  request; `GET /api/spawn-queue` shows `heldByPlan` per item and
+  `planGuard: {percent, held}`, which `GET /api/plan-usage` echoes as `guard`
+  for the top-bar chip. Added after Codex drew paid credits overnight
+  (2026-10-19).
 - **Cancellation reaches in-flight requests.** Every request owns an
   `AbortController` (an `EnqueueSpawnArgs.signal` is forwarded into it) and the
   thunk receives its signal. `cancelSpawn` drops a pending request (returns

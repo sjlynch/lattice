@@ -10,8 +10,10 @@
 // mergeRuns/ convention). See spawnQueue/CLAUDE.md for the contract.
 
 import { getGlobalSettings } from './globalSettings.js';
+import { readPlanUsage } from './planUsage.js';
 import { isRestartDraining, onRestartDrainEnded } from './restartDrain/gate.js';
 import { drainQueue } from './spawnQueue/drain.js';
+import { PlanGuard } from './spawnQueue/planGuard.js';
 import { ensurePolling, pokePoll, pollOnce } from './spawnQueue/poll.js';
 import { queueState } from './spawnQueue/state.js';
 import type {
@@ -39,6 +41,10 @@ export type {
 // When the drain ends without a restart (the dev runner cancelled it, or its
 // TTL ran out) admit what it held right away rather than on the next poll.
 onRestartDrainEnded(() => drainQueue());
+
+// The plan guard reads the shared plan-usage cache; a fresh read re-drains,
+// so requests it held start as soon as a window resets.
+queueState.planGuard = new PlanGuard(() => readPlanUsage(), () => drainQueue());
 
 // Enqueue a spawn. The thunk does the FULL spawn unit (setup + exactly one
 // proxyCreateSession) and runs only when the queue has headroom. `done`
@@ -113,13 +119,17 @@ export function notifyDiskSpaceFreed(): void {
 }
 
 // For code that starts task runs OUTSIDE the queue (the workflow Start step
-// calls startTaskById directly): would a `batch` spawn be admitted right now?
-// Returns why not — the agent cap or the resource governor — or null to go
-// ahead. Refreshes the live count first, since the poll loop idles while the
-// queue is empty. An unknown count (terminal-server unreachable) never blocks:
-// the caller's own spawn will surface that.
-export async function batchAdmissionHold(): Promise<string | null> {
+// calls startTaskById directly): would a `batch` spawn of `harness` be
+// admitted right now? Returns why not — the agent cap, the resource governor
+// or the plan guard — or null to go ahead. Refreshes the live count first,
+// since the poll loop idles while the queue is empty. An unknown count
+// (terminal-server unreachable) never blocks: the caller's own spawn will
+// surface that.
+export async function batchAdmissionHold(harness?: string): Promise<string | null> {
   if (isRestartDraining()) return 'a backend restart is being prepared';
+  await queueState.planGuard.ready();
+  const plan = queueState.planGuard.holds(harness);
+  if (plan) return plan.reason;
   await pollOnce();
   const s = queueState;
   s.governor.sample();
@@ -149,6 +159,13 @@ export function setSpawnQueueResourceGovernor(enabled: boolean): void {
   drainQueue();
 }
 
+// Set the plan guard's threshold (globalSettings.planGuardPercent; absent / 0
+// = off). Lowering or clearing it may free held requests, so drain.
+export function setSpawnQueuePlanGuard(percent: number | undefined): void {
+  queueState.planGuard.setPercent(percent);
+  drainQueue();
+}
+
 // Boot hook: apply the persisted softCap from global settings, then prime
 // the accounting with one /sessions poll so the first enqueue after startup
 // admits immediately instead of waiting a poll cycle. Best-effort — if the
@@ -159,6 +176,7 @@ export async function startSpawnQueue(): Promise<void> {
     const settings = await getGlobalSettings();
     queueState.accounting.setSoftCap(settings.maxConcurrentAgents);
     queueState.governor.setEnabled(settings.resourceGovernor !== false);
+    queueState.planGuard.setPercent(settings.planGuardPercent);
   } catch (err) {
     console.error(
       '[spawn-queue] could not load global settings; using default softCap:',

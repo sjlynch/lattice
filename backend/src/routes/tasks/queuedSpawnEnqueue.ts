@@ -8,7 +8,7 @@
 
 import { getTask, updateTask } from '../../tasks.js';
 import { cancelSpawn, enqueueSpawn } from '../../spawnQueue.js';
-import { isAgentHarness, normalizeAgentEffort, normalizeAgentModel } from '../../harnesses.js';
+import { isAgentHarness, normalizeAgentEffort, normalizeAgentHarness, normalizeAgentModel } from '../../harnesses.js';
 import { normalizePiModel } from '../../piModels.js';
 import { startTaskById } from './startTask.js';
 import { resumeTaskById } from './resumeTask.js';
@@ -62,6 +62,8 @@ export async function enqueueTaskRun(
     kind: 'task-run',
     priority: 'batch',
     dedupeKey: taskRunDedupeKey(taskId),
+    // What startTaskById will run (an absent request is Claude there too).
+    harness: normalizeAgentHarness(requestedHarness),
     // The request's signal is aborted by `dequeueTaskRun` / a task delete even
     // once the run is in flight; startTaskById then backs out instead of
     // spawning an agent the user already cancelled.
