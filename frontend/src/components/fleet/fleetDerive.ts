@@ -72,6 +72,20 @@ export function reviewBadge(t: FleetTask): { text: string; tone: 'ok' | 'warn' |
   return { text: 'review failed', tone: 'muted' };
 }
 
+// A prompt filed as a task: its first line (cut at a word near 80 chars) is
+// the title; the whole prompt stays the description, so nothing is lost.
+export function taskFromPrompt(prompt: string): { title: string; description: string } {
+  const text = prompt.trim();
+  const first = text.split('\n', 1)[0].trim().replace(/^#+\s*/, '');
+  let title = first;
+  if (title.length > 80) {
+    const cut = title.slice(0, 80);
+    const space = cut.lastIndexOf(' ');
+    title = `${(space > 40 ? cut.slice(0, space) : cut).trimEnd()}…`;
+  }
+  return { title, description: text };
+}
+
 // "Claude · Codex · Pi (ornith, qwen) · Claude 13% · Codex 0%" — what a PC can
 // run and how much of each plan it has used.
 export function hostSummary(h: FleetHost | undefined): string {

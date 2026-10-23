@@ -144,3 +144,4 @@
 .fleet-review-badge.tone-muted { color: var(--text-tertiary); }
 .fleet-review-summary { margin: 2px 0 4px; padding: 6px 8px; max-height: 180px; overflow: auto; white-space: pre-wrap; border-radius: var(--radius-sm); background: var(--bg-graph); font-family: var(--mono); font-size: 11px; color: var(--text-secondary); }
 .fleet-host { color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.fleet-notice { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 10px; border: 1px solid var(--border); border-radius: var(--radius-sm, 6px); color: var(--text-secondary); }

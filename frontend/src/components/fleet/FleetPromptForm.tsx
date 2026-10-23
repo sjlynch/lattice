@@ -1,20 +1,24 @@
 import { useState } from 'react';
-import { launchFleetAgent, type FleetLaunchResult } from '../../api';
+import { fileFleetTask, launchFleetAgent, type FleetLaunchResult } from '../../api';
 import { ALL_AGENT_EFFORTS, harnessLabel, type AgentHarness } from '../../harnesses';
 import { useHarnessAvailability } from '../../hooks/useHarnessAvailability';
 import { usePiModelMenu } from '../../hooks/usePiModelMenu';
+import { taskFromPrompt } from './fleetDerive';
 
 type Props = {
   project: string;
   // A paired PC to launch on (through the peer proxy); default this PC.
   machine?: string;
   onLaunched: (r: FleetLaunchResult) => void;
+  // The prompt was filed as a task there and started; says what happened.
+  onFiled: (message: string) => void;
   onCancel: () => void;
 };
 
 // "Prompt this project": opens an agent terminal in it, already working on
-// the request (it appears in that project's sidebar too).
-export function FleetPromptForm({ project, machine, onLaunched, onCancel }: Props) {
+// the request (it appears in that project's sidebar too) — or files it as a
+// task on that board and runs it in its own worktree, to review and merge.
+export function FleetPromptForm({ project, machine, onLaunched, onFiled, onCancel }: Props) {
   const { harnessAvail } = useHarnessAvailability();
   const piMenu = usePiModelMenu();
   const harnesses = (['claude', 'codex', 'pi'] as AgentHarness[]).filter((h) => harnessAvail[h]);
@@ -26,20 +30,31 @@ export function FleetPromptForm({ project, machine, onLaunched, onCancel }: Prop
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const launch = {
+    harness,
+    ...(harness !== 'pi' && model.trim() ? { model: model.trim() } : {}),
+    ...(harness === 'pi' && piModel ? { piModel } : {}),
+    ...(effort ? { effort } : {}),
+  };
+  const fail = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
+
   const start = () => {
     if (!prompt.trim()) return;
     setBusy(true);
     setError(null);
-    launchFleetAgent({
-      project,
-      harness,
-      prompt,
-      ...(harness !== 'pi' && model.trim() ? { model: model.trim() } : {}),
-      ...(harness === 'pi' && piModel ? { piModel } : {}),
-      ...(effort ? { effort } : {}),
-    }, machine)
+    launchFleetAgent({ project, prompt, ...launch }, machine)
       .then(onLaunched)
-      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .catch(fail)
+      .finally(() => setBusy(false));
+  };
+
+  const fileTask = () => {
+    if (!prompt.trim()) return;
+    setBusy(true);
+    setError(null);
+    fileFleetTask(project, taskFromPrompt(prompt), launch, machine)
+      .then((t) => onFiled(`Filed “${t.title}” and ${t.queued ? 'queued its run' : 'started it'}.`))
+      .catch(fail)
       .finally(() => setBusy(false));
   };
 
@@ -76,6 +91,14 @@ export function FleetPromptForm({ project, machine, onLaunched, onCancel }: Prop
       {error && <div className="error-msg">{error}</div>}
       <div className="fleet-prompt-row fleet-prompt-actions">
         <button className="btn-ghost sm" onClick={onCancel}>Cancel</button>
+        <button
+          className="btn-ghost sm"
+          onClick={fileTask}
+          disabled={busy || !prompt.trim()}
+          title="File this as a task on the project's board and run it in its own worktree; review and merge it when it is done"
+        >
+          Run as task
+        </button>
         <button className="btn-primary sm" onClick={start} disabled={busy || !prompt.trim()}>
           {busy ? 'Starting…' : 'Start agent'}
         </button>

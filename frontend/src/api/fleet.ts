@@ -39,6 +39,23 @@ export async function fetchFleetTask(id: string, project: string, machine?: stri
   return asJson(await fetch(onMachine(machine, `/api/tasks/${encodeURIComponent(id)}?project=${encodeURIComponent(project)}`)));
 }
 
+// File a task on a project's board (here or on a paired PC) and, with
+// `launch`, start an agent on it in its own worktree there.
+export async function fileFleetTask(
+  project: string,
+  task: { title: string; description: string },
+  launch: { harness: string; model?: string; effort?: string; piModel?: string } | null,
+  machine?: string,
+): Promise<{ id: string; title: string; queued?: boolean }> {
+  const created = await postJson<{ id: string; title: string }>(onMachine(machine, '/api/tasks'), { project, ...task });
+  if (!launch) return created;
+  const run = await postJson<{ accepted: boolean; queued: boolean }>(
+    onMachine(machine, `/api/tasks/${encodeURIComponent(created.id)}/run?project=${encodeURIComponent(project)}`),
+    launch,
+  );
+  return { ...created, queued: run.queued };
+}
+
 // Merge every Ready-to-Merge task of a project (a merge run).
 export function startFleetMergeRun(project: string, machine?: string): Promise<{ id: string }> {
   return postJson<{ id: string }>(onMachine(machine, '/api/merge-runs'), { project });

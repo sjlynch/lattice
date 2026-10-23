@@ -28,6 +28,7 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
   const [machines, setMachines] = useState<FleetMachine[]>([]);
   const [host, setHost] = useState<FleetHost | undefined>(undefined);
   const [showPeers, setShowPeers] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
   const [viewing, setViewing] = useState<{ id: string; label: string; project: string; machine?: string } | null>(null);
   const seqRef = useRef(0);
 
@@ -78,10 +79,10 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
         />
         <label
           className="fleet-check"
-          title="When on, agents (MCP fleet tools in sessions you start, or scripted API calls) may open agent terminals in any project and read, type into and wait on any terminal. Off by default. This panel is never gated."
+          title="When on, agents (MCP fleet tools in sessions you start, or scripted API calls) may open agent terminals in any project, read, type into and wait on any terminal, and file, run and merge tasks on other boards. Off by default. This panel is never gated."
         >
           <input type="checkbox" checked={agentControl} onChange={(e) => toggleAgentControl(e.target.checked)} />
-          Let agents open and drive terminals in any project
+          Let agents act in any project (terminals, tasks, merges)
         </label>
         <button className="btn-ghost sm" onClick={() => { setViewing(null); setShowPeers((v) => !v); }} title="Pair other PCs running Lattice">
           PCs{machines.length ? ` (${machines.length})` : ''}
@@ -89,6 +90,12 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
       </div>
       {host && <div className="fleet-host" title="This PC: installed harnesses, curated Pi models, plan usage"><strong>{host.name}</strong> <span className="fleet-muted">· {hostSummary(host)}</span></div>}
       {error && <div className="error-msg">Fleet unavailable: {error}</div>}
+      {notice && (
+        <div className="fleet-notice" role="status">
+          {notice}
+          <button className="btn-ghost sm" onClick={() => setNotice(null)}>Dismiss</button>
+        </div>
+      )}
       <div className="fleet-body">
         <div className="fleet-projects">
           {!loaded && !error && <div className="fleet-muted fleet-empty">Loading…</div>}
@@ -105,6 +112,11 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
               onLaunched={(r) => {
                 setPrompting(null);
                 setViewing({ id: r.id, label: r.label, project: p.name });
+                poll();
+              }}
+              onFiled={(message) => {
+                setPrompting(null);
+                setNotice(`${p.name}: ${message}`);
                 poll();
               }}
               onOpenTerminal={(t) => { setShowPeers(false); setViewing({ id: t.id, label: t.label, project: p.name }); }}
@@ -131,6 +143,11 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
                     setPrompting(null);
                     setShowPeers(false);
                     setViewing({ id: r.id, label: r.label, project: p.name, machine: m.name });
+                    poll();
+                  }}
+                  onFiled={(message) => {
+                    setPrompting(null);
+                    setNotice(`${m.name} · ${p.name}: ${message}`);
                     poll();
                   }}
                   onOpenTerminal={(t) => { setShowPeers(false); setViewing({ id: t.id, label: t.label, project: p.name, machine: m.name }); }}

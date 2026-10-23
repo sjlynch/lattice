@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { FleetEvent, FleetProject } from '../api';
-import { ago, busyCount, feedNewestFirst, laneSummary, mergeFeed, projectMatches, projectName, reviewBadge, hostSummary } from '../components/fleet/fleetDerive';
+import { ago, busyCount, feedNewestFirst, laneSummary, mergeFeed, projectMatches, projectName, reviewBadge, hostSummary, taskFromPrompt } from '../components/fleet/fleetDerive';
 
 const ev = (seq: number): FleetEvent => ({ seq, at: seq, projectPath: 'C:\\p\\a', kind: 'task', text: `e${seq}` });
 const project: FleetProject = {
@@ -66,4 +66,13 @@ test('hostSummary lists harnesses, Pi models and plan usage', () => {
     hostSummary({ name: 'pc', harnesses: { claude: true, codex: false, pi: true }, piModels: ['ornith', 'qwen'], plans: [{ provider: 'claude', usedPercent: 13.4 }, { provider: 'codex' }] }),
     'Claude · Pi (ornith, qwen) · Claude 13%',
   );
+});
+
+test('taskFromPrompt: first line (cut near 80 at a word) is the title; the whole prompt is the description', () => {
+  assert.deepEqual(taskFromPrompt('  Fix the parser\nIt drops trailing commas.  '), { title: 'Fix the parser', description: 'Fix the parser\nIt drops trailing commas.' });
+  assert.equal(taskFromPrompt('## Add a retry').title, 'Add a retry');
+  const long = 'Make the merge step keep going when one task stalls and report the stalled task on the run with its id';
+  const t = taskFromPrompt(long).title;
+  assert.ok(t.length <= 81 && t.endsWith('…'), t);
+  assert.equal(t, 'Make the merge step keep going when one task stalls and report the stalled task…');
 });

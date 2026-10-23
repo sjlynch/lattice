@@ -16,11 +16,12 @@ type Props = {
   selectedTerminal: string | null;
   onPrompt: (open: boolean) => void;
   onLaunched: (r: FleetLaunchResult) => void;
+  onFiled: (message: string) => void;
   onOpenTerminal: (t: FleetTerminal) => void;
   onSwitch: () => void;
 };
 
-export function FleetProjectCard({ project: p, machine, isActive, now, prompting, selectedTerminal, onPrompt, onLaunched, onOpenTerminal, onSwitch }: Props) {
+export function FleetProjectCard({ project: p, machine, isActive, now, prompting, selectedTerminal, onPrompt, onLaunched, onFiled, onOpenTerminal, onSwitch }: Props) {
   const [mergeMsg, setMergeMsg] = useState<string | null>(null);
   const merging = p.runs.some((r) => r.kind === 'merge');
   const merge = () => {
@@ -92,7 +93,7 @@ export function FleetProjectCard({ project: p, machine, isActive, now, prompting
           ))}
         </div>
       )}
-      {prompting && <FleetPromptForm project={p.path} machine={machine} onLaunched={onLaunched} onCancel={() => onPrompt(false)} />}
+      {prompting && <FleetPromptForm project={p.path} machine={machine} onLaunched={onLaunched} onFiled={onFiled} onCancel={() => onPrompt(false)} />}
     </section>
   );
 }
