@@ -20,7 +20,8 @@ never enter it. Errors fail open. A review holds the task In Progress.
   Codex (default sol/low), Claude, or Pi — a free local reviewer with no
   tools, `taskReviewPiModel` else the project's `piModel`, thinking `high`
   by default (where a local reviewer separated passing from failing
-  patches best).
+  patches best). A local model's own "accept" is lenient, so a Pi verdict is
+  decided by p alone: accept at `LOCAL_ACCEPT_P` (90) or above.
 - `queue.ts`: four backend-wide jobs, FIFO, per-task single flight. Memory
   gauges live beside the singleton in service.
 

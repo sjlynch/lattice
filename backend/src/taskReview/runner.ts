@@ -59,13 +59,25 @@ export async function runTaskReview(task: Task, settings: UserSettings, deps = {
       const text = harness === 'codex' ? await readReviewOutput(path.join(cwd, output)) : result.stdout;
       const reply = parseReviewReply(text);
       if (!reply) throw new Error('Reviewer returned invalid JSON');
-      return { ...reply, reviewer };
+      return { ...(harness === 'pi' ? localVerdict(reply) : reply), reviewer };
     } catch (error) {
       return { verdict: 'error', reviewer, reason: String(error instanceof Error ? error.message : error).slice(0, 300) };
     } finally {
       await deps.cleanup({ paths: reviewScratchPaths, projectPath: task.projectPath, id: task.id, logLabel: '[task-review]' });
     }
   });
+}
+
+// A local model's own "accept" is lenient: ornith accepted 104 of 120 balanced
+// patches (half of them failing). Its p ranks them as well as sol/low does
+// (AUC 0.82 each on the same 104), so a Pi reviewer accepts only at p >= 90 —
+// there 83% of what it accepted passed, vs 78% for sol/low's own verdict.
+export const LOCAL_ACCEPT_P = 90;
+
+function localVerdict(reply: ReviewReply): ReviewReply {
+  if (reply.p >= LOCAL_ACCEPT_P) return { ...reply, verdict: 'accept' };
+  if (reply.verdict === 'reject') return reply;
+  return { ...reply, verdict: 'reject', reason: `p ${reply.p} is under the local reviewer's bar of ${LOCAL_ACCEPT_P}: ${reply.reason}`.slice(0, 300) };
 }
 
 async function readReviewOutput(file: string): Promise<string> {

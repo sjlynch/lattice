@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { runTaskReview, reviewScratchPaths } from '../taskReview/runner.js';
+import { LOCAL_ACCEPT_P, runTaskReview, reviewScratchPaths } from '../taskReview/runner.js';
 import { spawnWithTimeout, type SpawnWithTimeoutResult } from '../spawnWithTimeout.js';
 import type { Task } from '../tasks.js';
 
@@ -83,6 +83,20 @@ test('Pi reviewer: stdin prompt, no tools, thinking high, its own or the project
     ['-p', '--model', 'endpoint-2/qwen', '--thinking', 'medium', '--no-tools', '--no-extensions', '--no-skills', '--no-session'],
     ['-p', '--thinking', 'high', '--no-tools', '--no-extensions', '--no-skills', '--no-session'],
   ]);
+});
+
+// ornith's own "accept" passed half-failing patches; its p ranks them like
+// sol/low, so a Pi verdict follows p against the local bar.
+test('Pi reviewer verdicts follow p: accept only at the local bar', async () => {
+  const verdictFor = async (stdout: string) => (await runTaskReview(task, { taskReviewHarness: 'pi' }, {
+    collect, spawn: async () => success({ stdout }),
+    cleanup: async ({ paths, projectPath, id }) => fs.rm(paths.assertSafeSessionPath(projectPath, id), { recursive: true, force: true }),
+  }));
+  const lenient = await verdictFor(`{"verdict":"accept","p":${LOCAL_ACCEPT_P - 5},"reason":"Looks fine"}`);
+  assert.equal(lenient.verdict, 'reject');
+  assert.match(lenient.reason, /under the local reviewer's bar of 90: Looks fine/);
+  assert.equal((await verdictFor(`{"verdict":"accept","p":${LOCAL_ACCEPT_P},"reason":"ok"}`)).verdict, 'accept');
+  assert.equal((await verdictFor('{"verdict":"reject","p":20,"reason":"misses the empty case"}')).reason, 'misses the empty case');
 });
 
 test('missing CLI, timeout, nonzero exit and invalid output all yield error and cleanup', async () => {
