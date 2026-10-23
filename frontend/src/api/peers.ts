@@ -5,6 +5,13 @@
 import { asJson, deleteJson, postJson } from './http';
 import type { PeerInvite, PeerScope, PeersView } from './types';
 
+// A Lattice PC found on the LAN (backend/src/peers.ts LanPc).
+export type LanPc = { name: string; host: string; gatewayPort: number; addresses: string[]; paired?: string; self?: boolean };
+
+export async function discoverLanPcs(): Promise<LanPc[]> {
+  return (await asJson<{ pcs: LanPc[] }>(await fetch('/api/peers/discover'))).pcs;
+}
+
 export async function fetchPeers(): Promise<PeersView> {
   return asJson<PeersView>(await fetch('/api/peers'));
 }

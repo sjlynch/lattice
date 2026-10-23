@@ -16,6 +16,12 @@ allows) can see and drive their projects. Facade: `../peers.ts`. Routes:
   and size limits, loopback forwarding with the per-process gateway token,
   audit log (`~/.lattice/logs/peer-gateway.jsonl`), revocation.
 - `client.ts` — `peerRequest`: one TLS-PSK connection per request.
+- `discovery.ts` — LAN discovery: while the gateway listens, a UDP responder
+  on 5187 (`LATTICE_PEER_DISCOVERY_PORT`) answers the exact probe with the
+  PC's name, gateway port and addresses — nothing else, rate-limited.
+  `discoverPcs` broadcasts per interface; `GET /api/peers/discover`, MCP
+  `find_pcs` and Fleet → PCs → "Find PCs" use it. Seeing a PC grants
+  nothing: pairing still needs an invite made on it.
 
 ## Security model (load-bearing)
 

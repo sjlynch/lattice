@@ -126,6 +126,19 @@ export function registerFleetTools(server: McpServer, resolve: Resolve, instance
       run(args.instance, (c) => c.call(terminalPath(args.machine, args.id, 'wait-idle'), { method: 'POST', body: { quietMs: args.quietMs, timeoutMs: args.timeoutMs ?? 50_000 } })),
   );
 
+  server.registerTool(
+    'find_pcs',
+    {
+      description:
+        'Other PCs on the local network running Lattice with their gateway on: name, address, ' +
+        'gateway port, and `paired` (its name in `machine` / fleet → machines) when this PC is ' +
+        'paired with it. Takes ~1.5 s. An unpaired PC shows no projects: the user pairs it in ' +
+        'Fleet → PCs (an invite created on that PC). Paired PCs\' projects are in `fleet`.',
+      inputSchema: { ...instanceShape },
+    },
+    async (args: { instance?: string }) => run(args.instance, (c) => c.call('/api/peers/discover')),
+  );
+
   // Board tools on another project: the task API through a client pinned to
   // the TARGET, so every answer is asserted to be that board's. A write on
   // this PC first asks for the user's agent-control setting (the switch the

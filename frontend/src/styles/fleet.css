@@ -12,6 +12,10 @@
   font-size: 12px;
   color: var(--text-primary);
 }
+/* Only the body (cards + feed) may shrink: a row with overflow:hidden (the
+   host line) has a zero min-height in a flex column, so it collapsed and the
+   cards drew over its text. */
+.fleet > :not(.fleet-body) { flex-shrink: 0; }
 .fleet .btn-primary.sm,
 .fleet .btn-ghost.sm { padding: 4px 10px; font-size: 12px; }
 .fleet-muted { color: var(--text-tertiary); }

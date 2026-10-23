@@ -119,6 +119,7 @@ the agent-facing `backend/src/latticeApiDocs/*.template.md`.
 | POST | `/api/terminals/:id/input` | Fleet: `{text, submit?, paste?}` typed into a pty (agents need `fleetAgentControl`) |
 | POST | `/api/terminals/:id/wait-idle` | Fleet: `{quietMs?, timeoutMs?}` → `{idle, waitedMs}` once the pty prints nothing for `quietMs` (agents need `fleetAgentControl`) |
 | GET | `/api/peers` | Peers: the gateway switch + LAN addresses, PCs allowed in (grants) and PCs paired to (remotes); never keys |
+| GET | `/api/peers/discover?waitMs=` | Peers: Lattice PCs on the LAN with their gateway on (UDP probe, ~1.5 s): `{pcs:[{name, host, gatewayPort, addresses, paired?, self?}]}`; no keys or projects |
 | POST | `/api/peers/gateway` | Peers (browser only): `{enabled, port?}` the LAN gateway listener |
 | POST | `/api/peers/invites` | Peers (browser only): `{name, scope, host?}` → a one-time connection string for another PC |
 | DELETE | `/api/peers/grants/:identity` | Peers (browser only): revoke a PC's access and close its connections |

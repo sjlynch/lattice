@@ -2,11 +2,13 @@ import { useCallback, useEffect, useState } from 'react';
 import { Copy, X } from 'lucide-react';
 import {
   addPeerRemote,
+  discoverLanPcs,
   createPeerInvite,
   fetchPeers,
   removePeerRemote,
   revokePeerGrant,
   setPeerGateway,
+  type LanPc,
   type PeerInvite,
   type PeerScope,
   type PeersView,
@@ -35,6 +37,12 @@ export function FleetPeersPanel({ onClose, onChanged }: Props) {
   const [connection, setConnection] = useState('');
   const [busy, setBusy] = useState(false);
   const [portDraft, setPortDraft] = useState('');
+  const [lan, setLan] = useState<LanPc[] | null>(null);
+  const [searching, setSearching] = useState(false);
+  const search = () => {
+    setSearching(true);
+    discoverLanPcs().then(setLan).catch((e) => setError(String(e?.message ?? e))).finally(() => setSearching(false));
+  };
 
   const load = useCallback(() => {
     fetchPeers().then((v) => { setView(v); setInviteHost((h) => h || v.gateway.addresses[0] || ''); }).catch((e) => setError(String(e?.message ?? e)));
@@ -65,7 +73,7 @@ export function FleetPeersPanel({ onClose, onChanged }: Props) {
           Let paired PCs connect to this one (port {g.port})
         </label>
         <div className="fleet-prompt-row">
-          <input className="text-input fleet-port" value={portDraft || String(g.port)} onChange={(e) => setPortDraft(e.target.value.replace(/D/g, ''))} aria-label="Gateway port" />
+          <input className="text-input fleet-port" value={portDraft || String(g.port)} onChange={(e) => setPortDraft(e.target.value.replace(/\D/g, ''))} aria-label="Gateway port" />
           <button className="btn-ghost sm" disabled={busy || !portDraft || Number(portDraft) === g.port} onClick={() => act(setPeerGateway(g.enabled, Number(portDraft)), () => setPortDraft(''))}>Set port</button>
         </div>
         <div className="fleet-muted">
@@ -114,6 +122,23 @@ export function FleetPeersPanel({ onClose, onChanged }: Props) {
 
       <section className="fleet-peers-section">
         <div className="fleet-peers-title">Pair with another PC</div>
+        <div className="fleet-prompt-row">
+          <button className="btn-ghost sm" disabled={searching} onClick={search}>{searching ? 'Looking…' : 'Find PCs on this network'}</button>
+          <span className="fleet-muted">Lists other PCs running Lattice with “Let paired PCs connect” on.</span>
+        </div>
+        {lan && (
+          <ul className="fleet-peers-list">
+            {lan.filter((pc) => !pc.self).length === 0 && <li className="fleet-muted">None found. On the other PC, turn on “Let paired PCs connect” in Fleet → PCs.</li>}
+            {lan.filter((pc) => !pc.self).map((pc) => (
+              <li key={`${pc.host}:${pc.gatewayPort}`}>
+                <span><strong>{pc.name}</strong> <span className="fleet-muted">· {pc.host}:{pc.gatewayPort}</span></span>
+                {pc.paired
+                  ? <span className="fleet-tag">paired as {pc.paired}</span>
+                  : <button className="btn-ghost sm" onClick={() => setRemoteName((n) => n || pc.name.toLowerCase())} title="On that PC, create an invite for this one (Fleet → PCs), then paste it here">Pair…</button>}
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="fleet-prompt-row">
           <input className="text-input" value={remoteName} onChange={(e) => setRemoteName(e.target.value)} placeholder="Name it, e.g. gpu-pc" aria-label="Name for the other PC" />
           <input className="text-input" value={connection} onChange={(e) => setConnection(e.target.value)} placeholder="lattice-peer:1:… (its invite)" aria-label="Connection string" />

@@ -10,7 +10,7 @@
 import { Router, type Request, type Response } from 'express';
 
 import { isFleetAgentControlOn } from '../fleet.js';
-import { addRemote, callRemote, createInvite, PeersError, PeerUnreachableError, readPeersView, removeRemote, revokeGrant, setGateway } from '../peers.js';
+import { addRemote, callRemote, createInvite, discoverLanPcs, PeersError, PeerUnreachableError, readPeersView, removeRemote, revokeGrant, setGateway } from '../peers.js';
 import { isBrowserRequest } from './requestOrigin.js';
 
 function browserOnly(req: Request, res: Response): boolean {
@@ -30,6 +30,13 @@ export function buildPeersRouter(): Router {
 
   r.get('/api/peers', async (_req, res) => {
     res.json(await readPeersView());
+  });
+
+  // Lattice PCs on the LAN (their gateway on): name, address, gateway port,
+  // paired or not. Seeing one grants nothing; pairing needs its invite.
+  r.get('/api/peers/discover', async (req, res) => {
+    const wait = Number(req.query.waitMs);
+    res.json({ pcs: await discoverLanPcs(Number.isFinite(wait) && wait >= 200 && wait <= 5000 ? wait : 1500) });
   });
 
   r.post('/api/peers/gateway', async (req, res) => {

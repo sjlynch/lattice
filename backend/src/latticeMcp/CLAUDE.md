@@ -30,7 +30,7 @@ see "Controller mode" below; the pinned server is unchanged by it.
 | [tools/opengrepTools.ts](tools/opengrepTools.ts) | Scan/findings; separately registered ignore. |
 | [tools/workflowTools.ts](tools/workflowTools.ts) | Controller: workflow definitions and runs, incl. `wait_workflow_run`. |
 | [tools/controllerTools.ts](tools/controllerTools.ts) | Controller: `instances`, merge runs, `export_board`, `api_request`. |
-| [tools/fleetTools.ts](tools/fleetTools.ts) | Fleet: `fleet`, `open_agent`, `read_terminal`, `send_terminal`, `wait_terminal`, and any project's board via `fleet_tasks`, `fleet_create_task`, `fleet_merge` — controller (`instance`) + pinned user-started sessions (`LATTICE_FLEET=1`). |
+| [tools/fleetTools.ts](tools/fleetTools.ts) | Fleet: `fleet`, `find_pcs` (Lattice PCs on the LAN), `open_agent`, `read_terminal`, `send_terminal`, `wait_terminal`, and any project's board via `fleet_tasks`, `fleet_create_task`, `fleet_merge` — controller (`instance`) + pinned user-started sessions (`LATTICE_FLEET=1`). |
 | [tools/usageTools.ts](tools/usageTools.ts) | `plan_usage` (machine-wide Claude/Codex plan usage): pinned non-task sessions + controller (`instance`). |
 
 ## Registration and session scope
@@ -41,8 +41,8 @@ before the last three groups when `taskId` is set. Normal sessions have 15 tools
 sessions have 10: add `my_task`, allow `append_summary.id` to default to the
 session task, and omit board management, `opengrep_ignore` and `plan_usage`. Otherwise
 `append_summary.id` is required. A session the user started (`LATTICE_FLEET=1`,
-set by the resolver only for user-launched spawns) adds the eight Fleet tools
-after `plan_usage` (23); they take `targetProject`, never `project`, an
+set by the resolver only for user-launched spawns) adds the nine Fleet tools
+(incl. `find_pcs`, LAN discovery) after `plan_usage` (24); they take `targetProject`, never `project`, an
 optional `machine` (a paired PC, via `/api/peer/<name>`), and only the reads
 (`fleet`, `fleet_tasks`, `fleet_merge` with `status`) work until
 `fleetAgentControl` is on — the backend refuses the terminal tools; the board

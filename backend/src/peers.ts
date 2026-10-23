@@ -11,6 +11,7 @@ import { listKnownProjects } from './tasks.js';
 import { formatPeerConnection, lanAddresses, parsePeerConnection } from './peers/connection.js';
 import { startPeerGateway, type PeerGateway } from './peers/gateway.js';
 import { peerRequest, PeerUnreachableError, type PeerResponse } from './peers/client.js';
+import { DISCOVERY_PORT, discoverPcs, startDiscoveryResponder, type DiscoveredPc, type DiscoveryResponder } from './peers/discovery.js';
 import { cleanPeerName, grantView, isPeerScope, newIdentity, newKey, readPeers, remoteView, updatePeers } from './peers/store.js';
 import type { PeerInvite, PeerScope, PeersView } from './peers/types.js';
 
@@ -19,6 +20,9 @@ export { PeerUnreachableError } from './peers/client.js';
 
 let gateway: PeerGateway | null = null;
 let gatewayError: string | undefined;
+// Answers LAN discovery probes while the gateway listens (peers/discovery.ts).
+let responder: DiscoveryResponder | null = null;
+const discoveryPort = () => Number(process.env.LATTICE_PEER_DISCOVERY_PORT) || DISCOVERY_PORT;
 const lastSeen = new Map<string, number>();
 // The grants the gateway's PSK callback checks: refreshed on every change,
 // so a revoke or a new invite applies without a restart.
@@ -37,6 +41,10 @@ async function applyGateway(): Promise<void> {
     await gateway.close();
     gateway = null;
   }
+  if (!want && responder) {
+    await responder.close();
+    responder = null;
+  }
   gatewayError = undefined;
   if (want && !gateway) {
     try {
@@ -49,12 +57,38 @@ async function applyGateway(): Promise<void> {
         onSeen: (id, at) => lastSeen.set(id, at),
       });
     } catch (err) {
+      gateway = null;
       gatewayError = (err as NodeJS.ErrnoException).code === 'EADDRINUSE'
         ? `port ${peers.gateway.port} is in use`
         : (err as Error).message;
     }
   }
+  if (gateway && !responder) {
+    // Best effort: another Lattice on this PC may hold the port already.
+    responder = await startDiscoveryResponder(
+      () => ({ gatewayPort: gateway?.port() ?? peers.gateway.port, addresses: lanAddresses() }),
+      { host: process.env.LATTICE_PEER_GATEWAY_HOST || '0.0.0.0', port: discoveryPort() },
+    ).catch(() => null);
+  }
   grantsCache = peers.grants;
+}
+
+// Other PCs on the LAN running Lattice with their gateway on, each marked
+// paired (a remote at that address and port) or this PC itself.
+export type LanPc = DiscoveredPc & { paired?: string; self?: boolean };
+
+export async function discoverLanPcs(waitMs = 1500): Promise<LanPc[]> {
+  const [found, peers] = await Promise.all([discoverPcs({ waitMs, port: discoveryPort() }), readPeers()]);
+  const mine = new Set(lanAddresses());
+  return found.map((pc) => {
+    const at = new Set([pc.host, ...pc.addresses]);
+    const remote = peers.remotes.find((r) => at.has(r.host) && r.port === pc.gatewayPort);
+    return {
+      ...pc,
+      ...(remote ? { paired: remote.name } : {}),
+      ...(pc.name === os.hostname() && [...at].some((a) => mine.has(a)) ? { self: true } : {}),
+    };
+  });
 }
 
 // Boot: start the gateway when it was left on. Never throws.
