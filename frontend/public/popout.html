@@ -9,6 +9,11 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Lattice</title>
+    <!-- Painted before the opener mirrors the app's stylesheets in, so the
+         window never flashes white: the app's dark scheme and panel colour
+         (styles/tokens.css --bg-elev, --text-primary). -->
+    <meta name="color-scheme" content="dark" />
+    <style>html, body { margin: 0; height: 100%; background: #23272e; color: #ebecef; color-scheme: dark; }</style>
   </head>
   <body></body>
 </html>

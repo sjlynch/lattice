@@ -4,6 +4,7 @@ import {
   isMirroredStyleNode,
   mirrorDocumentStyles,
   syncRootAttributes,
+  whenStylesheetsLoaded,
   type MirrorObserverCtor,
 } from '../components/floatingPanel/popoutStyles.ts';
 
@@ -244,4 +245,79 @@ test('a root attribute change re-syncs; stop disconnects and removes every clone
   assert.equal(rootObserver.disconnected, true);
   assert.deepEqual(mirrored(), []);
   assert.equal(dst.head.childNodes.length, 1, "the pop-out page's own <meta> stays");
+});
+
+// The pop-out moves its panel in only once mirrored <link>s have loaded, so it
+// never paints unstyled. A link already carrying a `sheet` is ready; a failed
+// one counts as settled; the timeout bounds the wait; cancel stops it.
+function sheetWaitFixture(links: { loaded: boolean }[]) {
+  const timers = new Map<number, () => void>();
+  let nextTimer = 1;
+  const nodes = links.map(({ loaded }) => {
+    const listeners = new Map<string, () => void>();
+    return {
+      nodeName: 'LINK',
+      sheet: loaded ? {} : null,
+      listeners,
+      getAttribute: (n: string) => (n === 'rel' ? 'stylesheet' : null),
+      addEventListener: (type: string, fn: () => void) => listeners.set(type, fn),
+      removeEventListener: (type: string) => listeners.delete(type),
+    };
+  });
+  const clock = {
+    setTimeout: (fn: () => void) => {
+      timers.set(nextTimer, fn);
+      return nextTimer++;
+    },
+    clearTimeout: (id: number) => timers.delete(id),
+  };
+  const doc = { head: { childNodes: nodes }, defaultView: clock } as unknown as Document;
+  const fireTimers = () => {
+    for (const [id, fn] of [...timers]) {
+      timers.delete(id);
+      fn();
+    }
+  };
+  return { doc, nodes, timers, fireTimers };
+}
+
+test('stylesheet wait: done after every loading link settles, once, listeners removed', () => {
+  const { doc, nodes, timers, fireTimers } = sheetWaitFixture([{ loaded: true }, { loaded: false }, { loaded: false }]);
+  let done = 0;
+  whenStylesheetsLoaded(doc, () => done++);
+  assert.equal(nodes[0].listeners.size, 0, 'an already-loaded link is not waited on');
+  nodes[1].listeners.get('load')!();
+  assert.equal(done, 0);
+  nodes[2].listeners.get('error')!(); // a failed sheet settles too
+  assert.equal(done, 1);
+  assert.equal(timers.size, 0, 'the timeout is cleared');
+  assert.ok(nodes.every((n) => n.listeners.size === 0));
+  fireTimers();
+  assert.equal(done, 1);
+});
+
+test('stylesheet wait: nothing loading → done on the next tick; a stuck link → done at the timeout', () => {
+  const ready = sheetWaitFixture([{ loaded: true }]);
+  let done = 0;
+  whenStylesheetsLoaded(ready.doc, () => done++);
+  assert.equal(done, 0, 'never synchronously');
+  ready.fireTimers();
+  assert.equal(done, 1);
+
+  const stuck = sheetWaitFixture([{ loaded: false }]);
+  let late = 0;
+  whenStylesheetsLoaded(stuck.doc, () => late++);
+  stuck.fireTimers();
+  assert.equal(late, 1);
+  assert.equal(stuck.nodes[0].listeners.size, 0);
+});
+
+test('stylesheet wait: cancel means done never runs', () => {
+  const { doc, nodes, timers } = sheetWaitFixture([{ loaded: false }]);
+  let done = 0;
+  const cancel = whenStylesheetsLoaded(doc, () => done++);
+  cancel();
+  assert.equal(timers.size, 0);
+  assert.equal(nodes[0].listeners.size, 0);
+  assert.equal(done, 0);
 });

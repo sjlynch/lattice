@@ -148,3 +148,39 @@ export function mirrorDocumentStyles(
     clones.clear();
   };
 }
+
+/**
+ * Run `done` once every stylesheet `<link>` in `doc`'s head has loaded (or
+ * failed), or after `timeoutMs` — a pop-out reveals its panel only then, so it
+ * never paints unstyled (Vite dev styles are inline `<style>`s, ready at once;
+ * a build's are `<link>`s). Returns a cancel.
+ */
+export function whenStylesheetsLoaded(doc: Document, done: () => void, timeoutMs = 2000): () => void {
+  const clock = doc.defaultView ?? window;
+  const loading = Array.from(doc.head.childNodes).filter(
+    (node): node is HTMLLinkElement => isMirroredStyleNode(node) && !(node as HTMLLinkElement).sheet,
+  );
+  let left = loading.length;
+  let timer: number | null = null;
+  const stop = () => {
+    if (timer !== null) clock.clearTimeout(timer);
+    timer = null;
+    for (const link of loading) {
+      link.removeEventListener('load', onOne);
+      link.removeEventListener('error', onOne);
+    }
+  };
+  const finish = () => {
+    stop();
+    done();
+  };
+  function onOne() {
+    if (--left === 0) finish();
+  }
+  for (const link of loading) {
+    link.addEventListener('load', onOne);
+    link.addEventListener('error', onOne);
+  }
+  timer = clock.setTimeout(finish, left === 0 ? 0 : timeoutMs);
+  return stop;
+}

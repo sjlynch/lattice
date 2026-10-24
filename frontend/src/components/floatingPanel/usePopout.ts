@@ -11,7 +11,7 @@ import {
   type PopoutGeometry,
 } from './popoutGeometry';
 import { registerPopout } from './popoutRegistry';
-import { mirrorDocumentStyles } from './popoutStyles';
+import { mirrorDocumentStyles, whenStylesheetsLoaded } from './popoutStyles';
 import type { PanelGeometry } from './usePanelGeometry';
 
 export const POPOUT_BLOCKED_MESSAGE =
@@ -37,6 +37,20 @@ const PAGE_ID = Math.random().toString(36).slice(2, 10);
 
 function windowName(storageKey: string | undefined): string {
   return `lattice-popout-${PAGE_ID}-${(storageKey ?? 'panel').replace(/[^\w.-]/g, '_')}`;
+}
+
+// popout.html's own pre-style colours (styles/tokens.css --bg-elev); also
+// painted onto the window's initial about:blank, which shows before it loads.
+const POPOUT_BACKGROUND = '#23272e';
+
+function paintBlank(win: Window): void {
+  try {
+    const root = win.document.documentElement;
+    root.style.background = POPOUT_BACKGROUND;
+    root.style.colorScheme = 'dark';
+  } catch {
+    /* already navigated cross-document; popout.html paints itself */
+  }
 }
 
 function isClosed(win: Window): boolean {
@@ -78,6 +92,8 @@ type Options = {
   storageKey?: string;
   /** The panel's current in-window geometry (first pop-out opens over it). */
   panelGeometry: PanelGeometry;
+  /** The user closed the pop-out window (not "Return to main window"): close the panel. */
+  onUserClose?: () => void;
 };
 
 /**
@@ -85,21 +101,33 @@ type Options = {
  * is open (null = the panel lives in the main window). `popOut` must run in a
  * user gesture (a click / the end of a titlebar drag) or the browser blocks
  * it — `error` then explains how to allow it. The pop-out closes when the
- * panel closes or unmounts; when the user closes the pop-out (or presses
- * "Return to main window") `host` goes back to null and the panel, which never
- * unmounted, reappears in the main window with all its state.
+ * panel closes or unmounts. "Return to main window" sets `host` back to null:
+ * the panel, which never unmounted, reappears in the main window with all its
+ * state. The user closing the pop-out window does the same and then calls
+ * `onUserClose` — the panel's own close.
  */
-export function usePopout({ open, storageKey, panelGeometry }: Options) {
+export function usePopout({ open, storageKey, panelGeometry, onUserClose }: Options) {
   const [host, setHost] = useState<PanelHost | null>(null);
   const [error, setError] = useState<string | null>(null);
   const pendingRef = useRef<{ win: Window; cancel: () => void } | null>(null);
+  // Styles mirrored into a pop-out before the panel moves in; the host effect adopts them.
+  const stagedRef = useRef<{ win: Window; stopStyles: () => void } | null>(null);
   const popoutKey = popoutStorageKey(storageKey);
   const geometryRef = useRef(panelGeometry);
+  const onUserCloseRef = useRef(onUserClose);
   useLayoutEffect(() => {
     geometryRef.current = panelGeometry;
-  }, [panelGeometry]);
+    onUserCloseRef.current = onUserClose;
+  }, [panelGeometry, onUserClose]);
 
   const cancelPending = useCallback(() => {
+    const staged = stagedRef.current;
+    stagedRef.current = null;
+    if (staged) {
+      // Never adopted: the panel closed before its pop-out became the host.
+      staged.stopStyles();
+      if (!isClosed(staged.win)) staged.win.close();
+    }
     const pending = pendingRef.current;
     pendingRef.current = null;
     if (!pending) return;
@@ -127,11 +155,27 @@ export function usePopout({ open, storageKey, panelGeometry }: Options) {
       }
       setError(null);
       const opened = win;
+      paintBlank(opened);
       const cancel = whenPopoutReady(
         opened,
         () => {
-          pendingRef.current = null;
-          setHost(panelHostFor(opened.document));
+          // Styled before the panel arrives: mirror now, move the panel in once
+          // linked stylesheets have loaded — it never paints unstyled.
+          const doc = opened.document;
+          const stopStyles = mirrorDocumentStyles(document, doc);
+          const cancelWait = whenStylesheetsLoaded(doc, () => {
+            pendingRef.current = null;
+            if (isClosed(opened)) return stopStyles();
+            stagedRef.current = { win: opened, stopStyles };
+            setHost(panelHostFor(doc));
+          });
+          pendingRef.current = {
+            win: opened,
+            cancel: () => {
+              cancelWait();
+              stopStyles();
+            },
+          };
         },
         () => {
           const closedByUser = isClosed(opened);
@@ -182,7 +226,9 @@ export function usePopout({ open, storageKey, panelGeometry }: Options) {
       if (last) savePopoutGeometry(popoutKey, last);
     };
     sample();
-    const stopStyles = mirrorDocumentStyles(document, doc);
+    const staged = stagedRef.current?.win === win ? stagedRef.current : null;
+    stagedRef.current = null;
+    const stopStyles = staged?.stopStyles ?? mirrorDocumentStyles(document, doc);
     const unregister = registerPopout(win, save);
     let resizeTimer: number | null = null;
     const onResize = () => {
@@ -193,10 +239,20 @@ export function usePopout({ open, storageKey, panelGeometry }: Options) {
       }, 250);
     };
     const release = () => setHost((current) => (current?.win === win ? null : current));
-    // Closed by the user (or reloaded): the panel returns to the main window.
+    // Closed by the user (or reloaded): the panel moves back into the main
+    // window, still mounted, and its own close runs — a clean panel simply
+    // closes; one with unsaved changes asks there. "Return to main window"
+    // doesn't come through here (the listener is detached before that close).
+    let closedOnce = false;
+    const userClosed = () => {
+      release();
+      if (closedOnce) return;
+      closedOnce = true;
+      onUserCloseRef.current?.();
+    };
     const onPageHide = () => {
       save();
-      release();
+      userClosed();
     };
     win.addEventListener('resize', onResize);
     win.addEventListener('pagehide', onPageHide);
@@ -204,7 +260,7 @@ export function usePopout({ open, storageKey, panelGeometry }: Options) {
     const sampler = win.setInterval(sample, 1000);
     // `pagehide` is skipped for a crashed or force-closed window; poll as well.
     const closedPoll = window.setInterval(() => {
-      if (isClosed(win)) release();
+      if (isClosed(win)) userClosed();
     }, 1000);
     return () => {
       window.clearInterval(closedPoll);

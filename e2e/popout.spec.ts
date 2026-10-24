@@ -6,12 +6,14 @@ import { test, expect, type Page } from '@playwright/test';
 // the PCs view) lives INSIDE the panel, so a remount would visibly lose it.
 // Checks: the popup gets the panel's title and the main window's stylesheets
 // (standards mode), stays interactive, the panel leaves the main window while
-// out and comes back with its state when the popup is closed or "Return to
-// main window" is pressed — and the elements React created inside the popup
-// keep working afterwards. Also: a blocked popup is an error toast with the
-// panel left in place; a confirm asked from a popped-out panel opens in the
-// popup; Escape layering in a popped-out task board; a titlebar drag released
-// past the window's edge pops out; a main-window reload closes its pop-outs.
+// out and comes back with its state when "Return to main window" is pressed —
+// and the elements React created inside the popup keep working afterwards —
+// while closing the popup window closes the panel. Also: the pop-out page
+// paints dark before any stylesheet arrives (no white flash); a blocked popup
+// is an error toast with the panel left in place; a confirm asked from a
+// popped-out panel opens in the popup; Escape layering in a popped-out task
+// board; a titlebar drag released past the window's edge pops out; a
+// main-window reload closes its pop-outs.
 
 async function openFleet(page: Page) {
   await page.goto('/');
@@ -27,7 +29,7 @@ async function popOut(page: Page): Promise<Page> {
   return popup;
 }
 
-test('pop out Fleet: styled, interactive, state kept, back on popup close', async ({ page }) => {
+test('pop out Fleet: styled, interactive, state kept on return; closing the popup closes the panel', async ({ page }) => {
   await openFleet(page);
   await page.getByLabel('Filter projects').fill('before-popout');
 
@@ -53,8 +55,10 @@ test('pop out Fleet: styled, interactive, state kept, back on popup close', asyn
   // Elements created while popped out (the PCs view) get the styles too.
   await expect(popup.locator('.fleet-peers')).toHaveCSS('display', /flex|block|grid/);
 
-  // Closing the popup window returns the panel, state intact.
-  await popup.close();
+  // "Return to main window" brings the panel back, state intact.
+  const returned = popup.waitForEvent('close');
+  await popup.getByRole('button', { name: 'Return to main window' }).click();
+  await returned;
   await expect(page.locator('.floating-panel')).toBeVisible();
   await expect(page.getByLabel('Filter projects')).toHaveValue('typed-in-popup');
   await expect(page.locator('.fleet-peers')).toBeVisible();
@@ -64,9 +68,29 @@ test('pop out Fleet: styled, interactive, state kept, back on popup close', asyn
   await page.getByRole('button', { name: /^PCs/ }).click();
   await expect(page.locator('.fleet-peers')).toHaveCount(0);
 
+  // Closing the popup window closes the panel — it does not reappear here.
+  const again = await popOut(page);
+  await again.close();
+  await expect(page.getByRole('button', { name: 'Open Fleet' })).toBeVisible();
+  await page.waitForTimeout(1500); // past the 1 s closed-window poll
+  await expect(page.locator('.floating-panel')).toHaveCount(0);
+  // Reopened, it starts in the main window.
+  await page.getByRole('button', { name: 'Open Fleet' }).click();
+  await expect(page.locator('.floating-panel')).toBeVisible();
+  await expect(page.locator('.floating-panel.popped-out')).toHaveCount(0);
+
   // The popup's placement is remembered beside the panel's in-window geometry.
   const saved = await page.evaluate(() => JSON.parse(localStorage.getItem('lattice.fleet.popout') ?? 'null'));
   expect(saved).toEqual(expect.objectContaining({ width: expect.any(Number), height: expect.any(Number) }));
+});
+
+test('the pop-out page paints the app background before any stylesheet arrives', async ({ page }) => {
+  await page.goto('/popout.html');
+  const look = await page.evaluate(() => ({
+    bg: getComputedStyle(document.body).backgroundColor,
+    scheme: getComputedStyle(document.documentElement).colorScheme,
+  }));
+  expect(look).toEqual({ bg: 'rgb(35, 39, 46)', scheme: 'dark' });
 });
 
 test('"Return to main window" closes the popup; a blocked popup shows an error and stays put', async ({ page }) => {

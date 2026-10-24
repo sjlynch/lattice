@@ -81,7 +81,9 @@ export function FloatingPanel({
     return el;
   });
   const panelGeometry = useMemo(() => ({ pos, size }), [pos, size]);
-  const popout = usePopout({ open, storageKey, panelGeometry });
+  // Closing the pop-out window closes the panel (its own close path, so a
+  // panel with unsaved changes can still ask — back in the main window).
+  const popout = usePopout({ open, storageKey, panelGeometry, onUserClose: onClose });
   const poppedOut = popout.host !== null;
   const mainHost = useMemo(() => panelHostFor(document), []);
   const host = popout.host ?? mainHost;
