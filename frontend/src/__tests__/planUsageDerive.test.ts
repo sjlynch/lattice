@@ -7,7 +7,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import type { PlanUsageProvider, PlanUsageReport } from '../api';
-import { bindingWindow, chipParts, chipTitle, guardChoices, guardHeldText, resetText, staleText, usageTone } from '../components/planUsageDerive';
+import { bindingWindow, chipParts, chipTitle, guardChoices, guardHeldText, normalizePlanUsageReport, resetText, staleText, usageTone } from '../components/planUsageDerive';
 
 const NOW = Date.parse('2026-10-22T20:00:00Z');
 const claude: PlanUsageProvider = {
@@ -64,4 +64,16 @@ test('plan guard: the select offers presets plus any custom stored value; held t
   assert.equal(guardHeldText({ percent: null, held: 3 }), '');
   assert.equal(guardHeldText({ percent: 90, held: 1 }), 'Holding 1 agent start until the plan resets');
   assert.equal(guardHeldText({ percent: 90, held: 2 }), 'Holding 2 agent starts until the plan resets');
+});
+
+// A mocked or mid-restart backend answering `{}` used to crash the top bar
+// (chipParts mapped an undefined providers list).
+test('normalizePlanUsageReport drops anything that is not a usable report', () => {
+  assert.equal(normalizePlanUsageReport({}), null);
+  assert.equal(normalizePlanUsageReport(null), null);
+  assert.equal(normalizePlanUsageReport({ providers: 'x' }), null);
+  const r = normalizePlanUsageReport({ providers: [{ provider: 'claude', status: 'ok', windows: [], source: 's', asOf: 'a' }, { provider: 'codex' }, null] });
+  assert.equal(r?.providers.length, 1);
+  assert.deepEqual(r?.providers[0].notes, []);
+  assert.deepEqual(chipParts(normalizePlanUsageReport({})), []);
 });

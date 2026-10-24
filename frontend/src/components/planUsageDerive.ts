@@ -27,6 +27,18 @@ export function bindingWindow(p: PlanUsageProvider): PlanUsageWindow | null {
   return best;
 }
 
+// What the chip accepts from GET /api/plan-usage: a report whose providers
+// carry window and note lists. Anything else (an older or mid-restart backend,
+// a test mock answering `{}`) is no report at all rather than a crash.
+export function normalizePlanUsageReport(raw: unknown): PlanUsageReport | null {
+  const r = raw as Partial<PlanUsageReport> | null;
+  if (!r || !Array.isArray(r.providers)) return null;
+  const providers = r.providers
+    .filter((p) => !!p && typeof p.provider === 'string' && Array.isArray(p.windows))
+    .map((p) => ({ ...p, notes: Array.isArray(p.notes) ? p.notes : [] }));
+  return { ...r, providers };
+}
+
 export type ChipPart = { provider: PlanUsageProvider['provider']; label: string; text: string; tone: UsageTone };
 
 // One compact part per provider, e.g. {Claude, "13%"}; a provider without

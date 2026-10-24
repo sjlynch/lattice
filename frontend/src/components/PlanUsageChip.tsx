@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { Gauge, RefreshCw } from 'lucide-react';
 import { getPlanUsage, patchGlobalSettings, type PlanUsageReport } from '../api';
 import { useDismissOnOutside } from '../hooks/useDismissOnOutside';
-import { chipParts, chipTitle, guardChoices, guardHeldText, PROVIDER_LABEL, resetText, staleText, usageTone } from './planUsageDerive';
+import { chipParts, chipTitle, guardChoices, guardHeldText, normalizePlanUsageReport, PROVIDER_LABEL, resetText, staleText, usageTone } from './planUsageDerive';
 
 // Claude and Codex subscription usage in the navbar: the most-used window per
 // provider on the chip, every window with its reset time in the popover.
@@ -26,7 +26,9 @@ export function PlanUsageChip() {
     if (document.hidden && !refresh) return;
     setLoading(true);
     getPlanUsage(refresh)
-      .then((r) => {
+      .then((raw) => {
+        const r = normalizePlanUsageReport(raw);
+        if (!r) return;
         setReport(r);
         setNow(Date.now());
       })
