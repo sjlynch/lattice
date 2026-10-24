@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CornerDownLeft, X } from 'lucide-react';
 import { fetchTerminalScreen, HttpError, sendTerminalText } from '../../api';
+import { usePanelWindow } from '../../hooks/usePanelDocument';
 
 type Props = {
   id: string;
@@ -24,21 +25,25 @@ export function FleetTerminalViewer({ id, label, projectName, machine, onClose }
   const [sendError, setSendError] = useState<string | null>(null);
   const preRef = useRef<HTMLPreElement>(null);
   const stickRef = useRef(true);
+  const win = usePanelWindow(); // a popped-out Fleet polls on its own window
+
+  useEffect(() => {
+    setGone(false);
+    setText('');
+  }, [id, machine]);
 
   useEffect(() => {
     let cancelled = false;
-    setGone(false);
-    setText('');
     const load = () => {
-      if (document.hidden) return;
+      if (win.document.hidden) return;
       fetchTerminalScreen(id, 400, machine)
         .then((s) => { if (!cancelled) setText(s.tail); })
         .catch((err) => { if (!cancelled && err instanceof HttpError && err.status === 404) setGone(true); });
     };
     load();
-    const timer = window.setInterval(load, POLL_MS);
-    return () => { cancelled = true; window.clearInterval(timer); };
-  }, [id, machine]);
+    const timer = win.setInterval(load, POLL_MS);
+    return () => { cancelled = true; win.clearInterval(timer); };
+  }, [id, machine, win]);
 
   // Follow the bottom unless the user scrolled up to read.
   useEffect(() => {

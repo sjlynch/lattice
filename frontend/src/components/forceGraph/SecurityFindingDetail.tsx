@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ExternalLink, MapPin, X } from 'lucide-react';
+import { usePanelWindow } from '../../hooks/usePanelDocument';
 import type { OpengrepFinding } from '../../api/opengrep';
 import type { FindingDisposition } from '../../api/types/opengrep';
 import { fetchSecurityTriageHistory, shareSecurityIgnore, triageSecurityFinding } from '../../api/opengrepReview';
@@ -10,6 +11,7 @@ export function SecurityFindingDetail({ finding: f, project, scanId, onFocusFile
   finding: OpengrepFinding; project: string; scanId: string;
   onFocusFile: (path: string) => void; onClose: () => void; controller: ReturnType<typeof useSecurityFindings>; fresh: boolean;
 }) {
+  const win = usePanelWindow(); // the pop-out's clipboard when the panel is popped out
   const [mode, setMode] = useState<'ignored' | 'deferred' | null>(null);
   const [scope, setScope] = useState('local');
   const [reason, setReason] = useState('');
@@ -40,7 +42,7 @@ export function SecurityFindingDetail({ finding: f, project, scanId, onFocusFile
     <div className="security-finding-actions">
       <a href={findingEditorUrl(project, f)}><ExternalLink size={12} /> Open file at line {f.line}</a>
       <button onClick={() => onFocusFile(f.path)}><MapPin size={12} /> Show in graph</button>
-      <button onClick={() => void controller.act(async () => { await navigator.clipboard.writeText(`${project}/${f.path}:${f.line}`); }, 'Location copied.')}>Copy location</button>
+      <button onClick={() => void controller.act(async () => { await win.navigator.clipboard.writeText(`${project}/${f.path}:${f.line}`); }, 'Location copied.')}>Copy location</button>
     </div>
     {f.references.filter((url) => /^https?:\/\//i.test(url)).map((url) => <a className="security-finding-reference" key={url} href={url} target="_blank" rel="noreferrer">{url}</a>)}
     {f.triage?.reason && <div className="security-disposition"><strong>{f.triage.expired ? 'Exception expired · reopened' : `${f.triage.status} · ${f.triage.scope}`}</strong><p>{f.triage.reason}</p>{f.triage.owner && <small>Owner: {f.triage.owner}</small>}{f.triage.reviewAt && <small>Review: {new Date(f.triage.reviewAt).toLocaleDateString()}</small>}</div>}

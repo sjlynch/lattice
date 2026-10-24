@@ -1,17 +1,20 @@
 import { useEffect, useState } from 'react';
+import { isLatticeHidden, onLatticeVisibilityChange } from '../floatingPanel/popoutRegistry';
 
 // One shared 30s ticker drives every StuckPill instead of each conflict card
 // owning its own interval (many pills = many independent timers otherwise).
-// It's paused while the tab is hidden so background tabs don't repaint, and
-// fires once on resume so a foregrounded tab shows a fresh value immediately.
+// It's paused while every Lattice window is hidden (a popped-out board counts
+// as visible) so background tabs don't repaint, and fires once on resume so a
+// foregrounded tab shows a fresh value immediately.
 const tickSubscribers = new Set<() => void>();
 let tickInterval: ReturnType<typeof setInterval> | null = null;
+let stopTickVisibility: (() => void) | null = null;
 
 function notifyTick() {
   for (const fn of tickSubscribers) fn();
 }
 function startTick() {
-  if (tickInterval === null && document.visibilityState !== 'hidden') {
+  if (tickInterval === null && !isLatticeHidden()) {
     tickInterval = setInterval(notifyTick, 30_000);
   }
 }
@@ -22,7 +25,7 @@ function stopTick() {
   }
 }
 function onTickVisibility() {
-  if (document.visibilityState === 'hidden') {
+  if (isLatticeHidden()) {
     stopTick();
   } else {
     notifyTick();
@@ -33,14 +36,15 @@ function subscribeTick(fn: () => void): () => void {
   const first = tickSubscribers.size === 0;
   tickSubscribers.add(fn);
   if (first) {
-    document.addEventListener('visibilitychange', onTickVisibility);
+    stopTickVisibility = onLatticeVisibilityChange(onTickVisibility);
     startTick();
   }
   return () => {
     tickSubscribers.delete(fn);
     if (tickSubscribers.size === 0) {
       stopTick();
-      document.removeEventListener('visibilitychange', onTickVisibility);
+      stopTickVisibility?.();
+      stopTickVisibility = null;
     }
   };
 }

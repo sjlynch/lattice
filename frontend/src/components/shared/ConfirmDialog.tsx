@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from 'react';
 import { Modal } from '../Modal';
+import { panelHostFor, PanelHostProvider, type PanelHost } from '../../hooks/usePanelDocument';
+import { interactionDocument, onPopoutDocumentClosed } from '../floatingPanel/popoutRegistry';
 
 // Shared confirmation dialog. Two shapes Lattice needs:
 //   (a) destructive confirm — a danger-styled primary + Cancel; the caller
@@ -20,6 +22,11 @@ import { Modal } from '../Modal';
 // the useConfirm() hook, e.g. `if (await confirm({ message })) …` or
 // `const choice = await confirmUnsaved()`. Escape / backdrop = Cancel, Enter =
 // the default/primary action (Delete for danger, Save for unsaved).
+//
+// The dialog opens in the Lattice window the user last clicked or typed in
+// (`interactionDocument`): a close / delete asked from a popped-out panel is
+// answered in that pop-out. If the pop-out closes first, the dialog moves to
+// the main window rather than leaving its awaiter hanging.
 
 export type UnsavedChoice = 'save' | 'discard' | 'cancel';
 type ConfirmChoice = 'confirm' | UnsavedChoice;
@@ -41,7 +48,7 @@ export type UnsavedConfirmOptions = {
 
 type DangerRequest = DangerConfirmOptions & { kind: 'danger' };
 type UnsavedRequest = UnsavedConfirmOptions & { kind: 'unsaved' };
-type ConfirmRequest = DangerRequest | UnsavedRequest;
+type ConfirmRequest = (DangerRequest | UnsavedRequest) & { host: PanelHost };
 
 type ConfirmApi = {
   /** Destructive confirm — resolves true if the user confirmed. */
@@ -81,12 +88,12 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
     resolve?.(choice);
   }, []);
 
-  const open = useCallback((req: ConfirmRequest): Promise<ConfirmChoice> => {
+  const open = useCallback((req: DangerRequest | UnsavedRequest): Promise<ConfirmChoice> => {
     // A new request cancels whatever was pending so its awaiter unblocks.
     resolveRef.current?.('cancel');
     return new Promise<ConfirmChoice>((resolve) => {
       resolveRef.current = resolve;
-      setRequest(req);
+      setRequest({ ...req, host: panelHostFor(interactionDocument()) });
     });
   }, []);
 
@@ -109,15 +116,26 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   // backdrop are handled by Modal (its onClose → settle('cancel')).
   useEffect(() => {
     if (!request) return;
+    const win = request.host.win;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Enter' && !enterBelongsToFocusedControl(e.target)) {
         e.preventDefault();
         settle(request.kind === 'danger' ? 'confirm' : 'save');
       }
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    win.addEventListener('keydown', onKey);
+    return () => win.removeEventListener('keydown', onKey);
   }, [request, settle]);
+
+  // Asked in a pop-out that then closed: finish the question in the main window.
+  const requestDoc = request?.host.doc;
+  useEffect(() => {
+    const doc = requestDoc;
+    if (!doc) return;
+    return onPopoutDocumentClosed(doc, () =>
+      setRequest((r) => (r && r.host.doc === doc ? { ...r, host: panelHostFor(document) } : r)),
+    );
+  }, [requestDoc]);
 
   // Stable identity so opening/closing a dialog doesn't re-render every
   // useConfirm() consumer across the app (confirm/confirmUnsaved are stable).
@@ -129,56 +147,58 @@ export function ConfirmProvider({ children }: { children: ReactNode }) {
   return (
     <ConfirmContext.Provider value={api}>
       {children}
-      <Modal open={!!request} onClose={() => settle('cancel')} width={420}>
-        {request && (
-          <>
-            <div className="modal-header">
-              {request.title ??
-                (request.kind === 'danger' ? 'Confirm' : 'Unsaved changes')}
-            </div>
-            <div className="modal-body">
-              <div className="confirm-dialog-message">
-                {request.message ??
-                  (request.kind === 'unsaved'
-                    ? 'You have unsaved changes.'
-                    : null)}
+      <PanelHostProvider value={request?.host ?? null}>
+        <Modal open={!!request} onClose={() => settle('cancel')} width={420}>
+          {request && (
+            <>
+              <div className="modal-header">
+                {request.title ??
+                  (request.kind === 'danger' ? 'Confirm' : 'Unsaved changes')}
               </div>
-            </div>
-            <div className="modal-footer">
-              {request.kind === 'danger' ? (
-                <>
-                  <button className="btn-ghost" onClick={() => settle('cancel')}>
-                    {request.cancelLabel ?? 'Cancel'}
-                  </button>
-                  <button
-                    className="btn-danger"
-                    autoFocus
-                    onClick={() => settle('confirm')}
-                  >
-                    {request.confirmLabel ?? 'Confirm'}
-                  </button>
-                </>
-              ) : (
-                <>
-                  <button className="btn-ghost" onClick={() => settle('cancel')}>
-                    {request.cancelLabel ?? 'Cancel'}
-                  </button>
-                  <button className="btn-ghost" onClick={() => settle('discard')}>
-                    {request.discardLabel ?? 'Discard'}
-                  </button>
-                  <button
-                    className="btn-primary"
-                    autoFocus
-                    onClick={() => settle('save')}
-                  >
-                    {request.saveLabel ?? 'Save'}
-                  </button>
-                </>
-              )}
-            </div>
-          </>
-        )}
-      </Modal>
+              <div className="modal-body">
+                <div className="confirm-dialog-message">
+                  {request.message ??
+                    (request.kind === 'unsaved'
+                      ? 'You have unsaved changes.'
+                      : null)}
+                </div>
+              </div>
+              <div className="modal-footer">
+                {request.kind === 'danger' ? (
+                  <>
+                    <button className="btn-ghost" onClick={() => settle('cancel')}>
+                      {request.cancelLabel ?? 'Cancel'}
+                    </button>
+                    <button
+                      className="btn-danger"
+                      autoFocus
+                      onClick={() => settle('confirm')}
+                    >
+                      {request.confirmLabel ?? 'Confirm'}
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button className="btn-ghost" onClick={() => settle('cancel')}>
+                      {request.cancelLabel ?? 'Cancel'}
+                    </button>
+                    <button className="btn-ghost" onClick={() => settle('discard')}>
+                      {request.discardLabel ?? 'Discard'}
+                    </button>
+                    <button
+                      className="btn-primary"
+                      autoFocus
+                      onClick={() => settle('save')}
+                    >
+                      {request.saveLabel ?? 'Save'}
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          )}
+        </Modal>
+      </PanelHostProvider>
     </ConfirmContext.Provider>
   );
 }

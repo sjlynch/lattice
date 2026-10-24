@@ -1,5 +1,6 @@
 import { useEffect, useState, type DragEvent } from 'react';
 import type { WorkflowStepKind } from '../../api';
+import { usePanelWindow } from '../../hooks/usePanelDocument';
 
 // Separate from the row-reorder MIME: dropping a chip copies a new step.
 export const QUICK_ADD_DRAG_MIME = 'application/x-lattice-workflow-quick-add';
@@ -37,16 +38,18 @@ function insertionIndex(event: DragEvent<HTMLDivElement>): number {
 
 export function useQuickAddDragDrop(onInsert: (item: QuickAddDragItem, index: number) => void) {
   const [dropIndex, setDropIndex] = useState<number | null>(null);
+  // A popped-out Workflows panel's drags end in the pop-out's window.
+  const win = usePanelWindow();
 
   useEffect(() => {
     const clear = () => setDropIndex(null);
-    window.addEventListener('dragend', clear);
-    window.addEventListener('drop', clear);
+    win.addEventListener('dragend', clear);
+    win.addEventListener('drop', clear);
     return () => {
-      window.removeEventListener('dragend', clear);
-      window.removeEventListener('drop', clear);
+      win.removeEventListener('dragend', clear);
+      win.removeEventListener('drop', clear);
     };
-  }, []);
+  }, [win]);
 
   function onDragOver(event: DragEvent<HTMLDivElement>) {
     if (!event.dataTransfer.types.includes(QUICK_ADD_DRAG_MIME)) return;
@@ -56,7 +59,9 @@ export function useQuickAddDragDrop(onInsert: (item: QuickAddDragItem, index: nu
   }
 
   function onDragLeave(event: DragEvent<HTMLDivElement>) {
-    if (event.relatedTarget instanceof Node && event.currentTarget.contains(event.relatedTarget)) return;
+    // Not `instanceof Node`: a pop-out's nodes come from the pop-out's realm.
+    const related = event.relatedTarget as Node | null;
+    if (related && typeof related === 'object' && 'nodeType' in related && event.currentTarget.contains(related)) return;
     setDropIndex(null);
   }
 

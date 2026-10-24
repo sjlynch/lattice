@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { usePanelDocument } from './usePanelDocument';
 
 // Elements that can receive keyboard focus. `:not([disabled])` /
 // `[tabindex]:not([tabindex="-1"])` keep disabled and explicitly-removed
@@ -71,9 +72,12 @@ export function activateFocusScope(
   options: FocusTrapOptions = {},
 ): () => void {
   const trapTab = options.trapTab ?? true;
+  // The container's own document: a popped-out panel's dialog lives in the
+  // pop-out window, whose focus and keys never reach the main `document`.
+  const doc: Document = container.ownerDocument ?? document;
 
   // Pull focus into the dialog, unless a child already grabbed it (autoFocus).
-  if (!container.contains(document.activeElement)) {
+  if (!container.contains(doc.activeElement)) {
     const focusable = getFocusable(container);
     if (focusable.length > 0) focusable[0].focus();
   }
@@ -81,7 +85,8 @@ export function activateFocusScope(
   const restore = () => {
     // Restore focus to the opener. Guarded so a removed element (or one that
     // can't take focus) is skipped silently.
-    if (restoreTo && document.contains(restoreTo) && typeof restoreTo.focus === 'function') {
+    const restoreDoc: Document = restoreTo?.ownerDocument ?? document;
+    if (restoreTo && restoreDoc.contains(restoreTo) && typeof restoreTo.focus === 'function') {
       restoreTo.focus();
     }
   };
@@ -102,7 +107,7 @@ export function activateFocusScope(
     }
     const first = focusable[0];
     const last = focusable[focusable.length - 1];
-    const active = document.activeElement;
+    const active = doc.activeElement;
     if (e.shiftKey) {
       if (active === first || !container.contains(active)) {
         e.preventDefault();
@@ -114,9 +119,9 @@ export function activateFocusScope(
     }
   };
 
-  document.addEventListener('keydown', onKeyDown);
+  doc.addEventListener('keydown', onKeyDown);
   return () => {
-    document.removeEventListener('keydown', onKeyDown);
+    doc.removeEventListener('keydown', onKeyDown);
     removeFocusTrap(token);
     restore();
   };
@@ -138,6 +143,10 @@ export function useFocusTrap<T extends HTMLElement = HTMLElement>(
   options: FocusTrapOptions = {},
 ) {
   const trapTab = options.trapTab ?? true;
+  const doc = usePanelDocument();
+  // A trapping dialog re-activates when its panel moves to / from a pop-out
+  // (its Tab listener must follow); a non-trapping scope only restores focus.
+  const trapDoc = trapTab ? doc : null;
   const containerRef = useRef<T | null>(null);
   // The element to return focus to on close. Captured during the render that
   // flips `open` true — before the commit phase runs any child `autoFocus` and
@@ -145,7 +154,7 @@ export function useFocusTrap<T extends HTMLElement = HTMLElement>(
   const restoreRef = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(false);
   if (open && !wasOpen.current) {
-    restoreRef.current = document.activeElement as HTMLElement | null;
+    restoreRef.current = doc.activeElement as HTMLElement | null;
   }
   wasOpen.current = open;
 
@@ -154,7 +163,7 @@ export function useFocusTrap<T extends HTMLElement = HTMLElement>(
     const container = containerRef.current;
     if (!container) return;
     return activateFocusScope(container, restoreRef.current, { trapTab });
-  }, [open, trapTab]);
+  }, [open, trapTab, trapDoc]);
 
   return containerRef;
 }

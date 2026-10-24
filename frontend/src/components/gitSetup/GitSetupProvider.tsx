@@ -2,12 +2,15 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
   type ReactNode,
 } from 'react';
 import { checkGit, type ProjectGitProbe } from '../../api';
+import { panelHostFor, PanelHostProvider, type PanelHost } from '../../hooks/usePanelDocument';
+import { interactionDocument, onPopoutDocumentClosed } from '../floatingPanel/popoutRegistry';
 import { GitSetupDialog } from './GitSetupDialog';
 
 // One git-setup action, three call sites (navbar chip, first task create, ▶
@@ -42,7 +45,10 @@ export function useGitSetupNonce(): number {
   return useContext(GitSetupNonceContext);
 }
 
-type Request = { id: number; project: string; probe: ProjectGitProbe };
+// `host`: the Lattice window the user was in when asked — a ▶ run from a
+// popped-out task board opens the dialog in that pop-out (moved to the main
+// window if the pop-out closes first).
+type Request = { id: number; project: string; probe: ProjectGitProbe; host: PanelHost };
 
 export function GitSetupProvider({ children }: { children: ReactNode }) {
   const [request, setRequest] = useState<Request | null>(null);
@@ -69,7 +75,12 @@ export function GitSetupProvider({ children }: { children: ReactNode }) {
     resolveRef.current?.(false);
     return new Promise<boolean>((resolve) => {
       resolveRef.current = resolve;
-      setRequest({ id: (requestSeq.current += 1), project, probe });
+      setRequest({
+        id: (requestSeq.current += 1),
+        project,
+        probe,
+        host: panelHostFor(interactionDocument()),
+      });
     });
   }, []);
 
@@ -124,17 +135,28 @@ export function GitSetupProvider({ children }: { children: ReactNode }) {
   // useGitSetup() consumer (the nonce rides its own context for that reason).
   const api = useMemo<GitSetupApi>(() => ({ ensureGitRepo }), [ensureGitRepo]);
 
+  const requestDoc = request?.host.doc;
+  useEffect(() => {
+    const doc = requestDoc;
+    if (!doc) return;
+    return onPopoutDocumentClosed(doc, () =>
+      setRequest((r) => (r && r.host.doc === doc ? { ...r, host: panelHostFor(document) } : r)),
+    );
+  }, [requestDoc]);
+
   return (
     <GitSetupContext.Provider value={api}>
       <GitSetupNonceContext.Provider value={nonce}>
         {children}
         {request && (
-          <GitSetupDialog
-            key={request.id}
-            project={request.project}
-            probe={request.probe}
-            onDone={finish}
-          />
+          <PanelHostProvider value={request.host}>
+            <GitSetupDialog
+              key={request.id}
+              project={request.project}
+              probe={request.probe}
+              onDone={finish}
+            />
+          </PanelHostProvider>
         )}
       </GitSetupNonceContext.Provider>
     </GitSetupContext.Provider>

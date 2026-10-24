@@ -38,6 +38,14 @@
   route; and the review queue (a QA task's line expands to its summary).
   Cleanup kills its pty, deletes its task, unpairs, revokes, switches
   the gateway off and removes only that direct child of `os.tmpdir()`.
+- [popout.spec.ts](./popout.spec.ts) uses the **real backend**, no project
+  fixture and no harness: FloatingPanel pop-outs (Playwright sees the popup as
+  a new page via `context.waitForEvent('page')`). Fleet's in-panel state (filter
+  text, PCs view) proves the move never remounts; checks mirrored styles,
+  interaction in the popup, return on popup close / "Return to main window", a
+  blocked popup (stubbed `window.open`) toast, Settings' unsaved confirm opening
+  in the popup, task-board Escape layering, a titlebar drag released past the
+  window edge popping out, and a reload closing pop-outs.
 - [graph-stability.spec.ts](./graph-stability.spec.ts) intercepts all API and
   WebSocket traffic before navigation; its fixture graph never reaches a real
   backend. Keep response shapes complete (notably terminal restore's summary).
@@ -77,9 +85,9 @@ npm run test:e2e
 npm run test:e2e -- e2e/<spec>.spec.ts
 ```
 
-Replace `<spec>` with `fleet`, `graph-stability`, `workflow-editor-drag`,
-`workflow-parallel` or `workflow-queue`. For unit tests and package validation,
-use the [backend](../backend/CLAUDE.md#validation) and
+Replace `<spec>` with `fleet`, `graph-stability`, `popout`,
+`workflow-editor-drag`, `workflow-parallel` or `workflow-queue`. For unit
+tests and package validation, use the [backend](../backend/CLAUDE.md#validation) and
 [frontend](../frontend/CLAUDE.md#validation) command guides. Their type-check
 forms, each starting from the repo root, are `cd backend && npx tsc --noEmit`
 and `cd frontend && npx tsc -b`.

@@ -5,10 +5,12 @@ import { useCallback, useEffect, useRef } from 'react';
  * gesture. A gesture snapshot of type `TState` is captured by `start(state)`
  * and handed to `onMove` on every mousemove; `stop` (also bound to mouseup and
  * to unmount cleanup) drops the snapshot and detaches the listeners. Callers
- * supply only the per-move math via `onMove`.
+ * supply only the per-move math via `onMove`, plus an optional `onEnd` that
+ * sees the releasing mouseup (never an unmount / replaced gesture).
  */
 export function useDocumentDragGesture<TState>(
   onMove: (state: TState, event: MouseEvent) => void,
+  onEnd?: (state: TState, event: MouseEvent) => void,
 ) {
   const stateRef = useRef<TState | null>(null);
   const removeListenersRef = useRef<(() => void) | null>(null);
@@ -33,8 +35,10 @@ export function useDocumentDragGesture<TState>(
         onMove(stateRef.current, moveEvent);
       }
 
-      function up() {
+      function up(upEvent: MouseEvent) {
+        const ended = stateRef.current;
         stop();
+        if (ended) onEnd?.(ended, upEvent);
       }
 
       document.addEventListener('mousemove', move);
@@ -44,7 +48,7 @@ export function useDocumentDragGesture<TState>(
         document.removeEventListener('mouseup', up);
       };
     },
-    [onMove, stop],
+    [onMove, onEnd, stop],
   );
 
   return { start, stop };

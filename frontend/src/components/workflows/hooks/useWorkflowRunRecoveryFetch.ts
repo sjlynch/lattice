@@ -5,6 +5,7 @@ import {
   type SetStateAction,
 } from 'react';
 import { fetchActiveWorkflowRuns, type WorkflowRun } from '../../../api';
+import { isLatticeHidden, onLatticeVisibilityChange } from '../../floatingPanel/popoutRegistry';
 import {
   mergeFetchedActiveRuns,
   VISIBILITY_REFETCH_MIN_INTERVAL_MS,
@@ -69,10 +70,11 @@ export function useWorkflowRunRecoveryFetch({
         console.warn('[useWorkflowRuns] mount-fetch failed:', err),
       );
 
+    // "Visible" = any Lattice window (a popped-out Workflows panel counts).
     let lastVisibilityFetchAt = 0;
     function onVisibility() {
       if (cancelled) return;
-      if (document.visibilityState !== 'visible') return;
+      if (isLatticeHidden()) return;
       const now = Date.now();
       if (now - lastVisibilityFetchAt < VISIBILITY_REFETCH_MIN_INTERVAL_MS) {
         return;
@@ -85,10 +87,10 @@ export function useWorkflowRunRecoveryFetch({
         );
     }
 
-    document.addEventListener('visibilitychange', onVisibility);
+    const stopVisibility = onLatticeVisibilityChange(onVisibility);
     return () => {
       cancelled = true;
-      document.removeEventListener('visibilitychange', onVisibility);
+      stopVisibility();
     };
   }, [activeFolder, recentRunsRef, setActiveRuns]);
 }

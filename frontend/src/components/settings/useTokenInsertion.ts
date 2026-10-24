@@ -20,7 +20,9 @@ export function useTokenInsertion(draft: string, onChange: (text: string) => voi
     const next = draft.slice(0, start) + snippet + draft.slice(end);
     onChange(next);
     // Restore focus + place the caret after the inserted token.
-    requestAnimationFrame(() => {
+    // The textarea's own window: a popped-out Settings panel's frames run there
+    // (the main window's are paused while it is hidden).
+    (el.ownerDocument.defaultView ?? window).requestAnimationFrame(() => {
       el.focus();
       const pos = start + snippet.length;
       el.setSelectionRange(pos, pos);

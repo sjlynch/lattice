@@ -15,7 +15,7 @@ add, move or delete a component or stylesheet.
 - `Sidebar.tsx` + `sidebar/` — terminal tabs/panels + new-shell tray; `Sidebar.tsx` composes the split components/hooks and reads `useTerminals()`.
 - `TerminalPane.tsx` + `terminal/` — xterm.js + WS to `/ws/terminal` (backend `:5184`, bridged to the detached terminal-server on `:5185`); the pane is just `useRef`s wired into the three `terminal/` hooks (lifecycle / connection / active-WebGL). The WebglAddon is attached only while `active=true` and disposed on deactivate so each tab doesn't permanently hold a WebGL context (Chrome's ~16-per-page cap).
 - `Legend.tsx` — composition layer for per-extension toggles. Row derivation lives in `legend/useLegendRows.ts`, rendering in `legend/LegendRow.tsx`, and shapes/colors still source from `extensionStyles.ts`.
-- `FloatingPanel.tsx` + `floatingPanel/` — portal markup plus extracted geometry/state/drag/resize helpers; persists size/pos under `lattice.<thing>.window`. Titlebar double-click / top-right maximize icon toggle an OS-style full-window maximize (restore returns to the prior pos/size).
+- `FloatingPanel.tsx` + `floatingPanel/` — portal markup plus extracted geometry/state/drag/resize helpers; persists size/pos under `lattice.<thing>.window`. Titlebar double-click / top-right maximize icon toggle an OS-style full-window maximize (restore returns to the prior pos/size). **Pop-out:** the titlebar's pop-out icon (or a titlebar drag released past the window's edge) moves the panel — same React tree, state kept — into its own browser window (`floatingPanel/usePopout.ts` lifecycle, `popoutStyles.ts` stylesheet mirroring, `popoutGeometry.ts` placement under `lattice.<thing>.popout`, `popoutRegistry.ts` open-window set + all-windows visibility + last-interaction window; blank page `frontend/public/popout.html`); "Return to main window" or closing the popup brings it back. Panel code reads its window via `hooks/usePanelDocument.ts`. Users: Settings, Fleet, Task board, Workflows, Security findings (`forceGraph/SecurityFindingsPanel.tsx`). See `floatingPanel/CLAUDE.md`.
 - `Modal.tsx` — generic portal backdrop overlay (focus-trap + mousedown-guard dismiss). Used by ForceGraph's create-task modal (`forceGraph/GraphTaskModal.tsx`), `FolderPicker`, and `shared/ConfirmDialog`.
 - `ErrorBoundary.tsx` — class-based React error boundary (lucide fallback UI). Wraps `<App>` in `main.tsx` and, in a `compact` variant, the force-graph subtree in `App.tsx`, so a render fault shows a recoverable "Reload" card instead of blanking the whole app. Styles in `error-boundary.css`.
 - `FolderPicker.tsx` + `folderPicker/` — backend-paged folder browser, with state in `useFolderPickerState` and focused row/list components. The create-folder row carries the "Initialize a git repo" checkbox (default on) — a just-created folder is empty by definition, so that path calls `initProjectGit` directly with no preview or dialog.
@@ -34,7 +34,7 @@ The top-level `*.tsx` files are one-line re-export shims; implementation is in e
 ## Shared (`shared/`, own CLAUDE.md)
 
 - `shared/ErrorToast.tsx` — copy-button error toast used by both TaskBoard and Workflows.
-- `shared/ConfirmDialog.tsx` — `ConfirmProvider` + `useConfirm()` (returns `{confirm, confirmUnsaved}`): promise-returning destructive / unsaved-changes confirmation modal (built on `Modal`).
+- `shared/ConfirmDialog.tsx` — `ConfirmProvider` + `useConfirm()` (returns `{confirm, confirmUnsaved}`): promise-returning destructive / unsaved-changes confirmation modal (built on `Modal`); opens in the window the user last pressed in, so a popped-out panel's confirm appears in its popup.
 
 ## Styles
 
@@ -61,7 +61,7 @@ in `CLAUDE.md` beside this file → "Styles".
 | `git-setup.css` | `.git-setup-*` (Git Setup dialog) + the folder picker's `.create-folder-block/git` and `.git-setup-inline-note`. Imported after `modal.css` so `.modal-header.git-setup-header` wins on order; the navbar chip's own rules stay in `appbar.css` |
 | `graph.css` | Graph aggregator. Ordered partials under `styles/graph/`: `hud-search` (`.graph-overlay`/`.graph-bottom-left`/`.graph-search*`/`.graph-counts`/`.loc-view-chip`), `overlay-key`, `security` (`.graph-security-*`/`.security-panel*`/`.security-finding*`/`.security-tooltip*`), `context-menu` (`.graph-select-rect`/`.graph-selection-chip`/`.graph-context-menu`), `settings-panel` (`.graph-settings-fab/panel`), `toast`, `renderer-notice` (`.graph-view-root` + `.graph-renderer-notice*` — the WebGL-renderer failure/recovery notice over the viewport) |
 | `terminal.css` | `.term-pane` |
-| `floating-panel.css` | `.floating-panel*` (titlebar, body, resize grip) |
+| `floating-panel.css` | `.floating-panel*` (titlebar, body, resize grip, `.popped-out`, the drag-out `.popout-armed` cue) |
 | `taskboard.css` | Taskboard aggregator. Ordered partials live under `styles/taskboard/`: `shell`, `lanes`, `cards`, `filters`, `lane-actions`, `detail`, `toast`, `forms`, `post-merge-hook` (`.post-merge-hook-*` — the collapsible post-merge hook config strip below the lanes) |
 | `legend.css` | `.legend*`, `.swatch*` |
 | `merge-run.css` | `.merge-run-strip*`, `.merge-run-stat*` |

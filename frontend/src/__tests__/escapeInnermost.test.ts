@@ -32,6 +32,10 @@ function makeFakeWindow() {
       ? capture
       : bubble;
   return {
+    // Like a real window: its document (the panel Escape hook reads body off it).
+    get document() {
+      return g.document;
+    },
     addEventListener(type: string, fn: Listener, opts?: unknown) {
       if (type === 'keydown') bucket(opts).add(fn);
     },

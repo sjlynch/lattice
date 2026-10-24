@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchFleet, patchGlobalSettings, type FleetEvent, type FleetHost, type FleetMachine, type FleetProject } from '../../api';
 import { sameProjectPath } from '../../terminal/terminalScope';
+import { usePanelWindow } from '../../hooks/usePanelDocument';
 import { ago, feedNewestFirst, hostSummary, mergeFeed, projectMatches, projectName } from './fleetDerive';
 import { FleetProjectCard } from './FleetProjectCard';
 import { FleetTerminalViewer } from './FleetTerminalViewer';
@@ -31,9 +32,13 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
   const [notice, setNotice] = useState<string | null>(null);
   const [viewing, setViewing] = useState<{ id: string; label: string; project: string; machine?: string } | null>(null);
   const seqRef = useRef(0);
+  // The window Fleet is in now — its pop-out's when popped out, so polling
+  // follows THAT window's visibility and its timers aren't throttled with a
+  // minimised main window.
+  const win = usePanelWindow();
 
   const poll = useCallback(() => {
-    if (document.hidden) return;
+    if (win.document.hidden) return;
     fetchFleet(seqRef.current)
       .then((snap) => {
         // A backend restart starts a fresh feed: its seq goes backwards.
@@ -53,13 +58,13 @@ export function FleetPanel({ activeFolder, onSelectFolder }: Props) {
         setError(null);
       })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)));
-  }, []);
+  }, [win]);
 
   useEffect(() => {
     poll();
-    const timer = window.setInterval(poll, POLL_MS);
-    return () => window.clearInterval(timer);
-  }, [poll]);
+    const timer = win.setInterval(poll, POLL_MS);
+    return () => win.clearInterval(timer);
+  }, [poll, win]);
 
   const toggleAgentControl = (on: boolean) => {
     setAgentControl(on);

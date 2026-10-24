@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { Info } from 'lucide-react';
+import { usePanelDocument } from '../../hooks/usePanelDocument';
 
 type Props = {
   // Accessible name for the trigger button, e.g. "About the new terminal
@@ -16,9 +17,12 @@ export function SettingsInfo({ label, children }: Props) {
   const [open, setOpen] = useState(false);
   const wrapRef = useRef<HTMLSpanElement>(null);
   const popoverId = useId();
+  // Settings can be popped out: listen in the window this popover is in.
+  const doc = usePanelDocument();
 
   useEffect(() => {
     if (!open) return;
+    const win = doc.defaultView ?? window;
     const onPointerDown = (e: PointerEvent) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) {
         setOpen(false);
@@ -34,13 +38,13 @@ export function SettingsInfo({ label, children }: Props) {
         setOpen(false);
       }
     };
-    document.addEventListener('pointerdown', onPointerDown);
-    window.addEventListener('keydown', onKey, true);
+    doc.addEventListener('pointerdown', onPointerDown);
+    win.addEventListener('keydown', onKey, true);
     return () => {
-      document.removeEventListener('pointerdown', onPointerDown);
-      window.removeEventListener('keydown', onKey, true);
+      doc.removeEventListener('pointerdown', onPointerDown);
+      win.removeEventListener('keydown', onKey, true);
     };
-  }, [open]);
+  }, [open, doc]);
 
   return (
     <span className="settings-info" ref={wrapRef}>

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Copy, X } from 'lucide-react';
+import { usePanelWindow } from '../../hooks/usePanelDocument';
 import {
   addPeerRemote,
   discoverLanPcs,
@@ -27,6 +28,8 @@ const SCOPE_HELP: Record<PeerScope, string> = {
 // should reach this one, and the PCs this one is paired to. Every change here
 // is browser-only on the backend.
 export function FleetPeersPanel({ onClose, onChanged }: Props) {
+  // Fleet can be popped out; the main window's clipboard rejects while unfocused.
+  const win = usePanelWindow();
   const [view, setView] = useState<PeersView | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [inviteName, setInviteName] = useState('');
@@ -103,7 +106,7 @@ export function FleetPeersPanel({ onClose, onChanged }: Props) {
             <div>Paste this into Fleet → PCs on <strong>{invite.name}</strong>. It is shown once — treat it like a password.</div>
             <div className="fleet-invite-row">
               <code className="fleet-invite-code">{invite.connection}</code>
-              <button className="icon-btn sm" title="Copy" aria-label="Copy connection string" onClick={() => void navigator.clipboard?.writeText(invite.connection)}><Copy size={12} /></button>
+              <button className="icon-btn sm" title="Copy" aria-label="Copy connection string" onClick={() => void win.navigator.clipboard?.writeText(invite.connection)}><Copy size={12} /></button>
             </div>
             {!g.enabled && <div className="fleet-muted">Turn on “Let paired PCs connect” above, or it can’t connect.</div>}
           </div>

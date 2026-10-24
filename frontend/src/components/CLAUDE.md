@@ -12,9 +12,15 @@ changing that subfolder.
 - **Reuse the shared chrome:** confirmations through `shared/ConfirmDialog.tsx`
   `useConfirm()`; errors through `shared/ErrorToast.tsx`; backdrop overlays
   through `Modal.tsx`; movable panels through `FloatingPanel.tsx` (geometry
-  persists under `lattice.<thing>.window`). Settings is a `FloatingPanel`, not a
+  persists under `lattice.<thing>.window`, its pop-out window's under
+  `lattice.<thing>.popout`). Settings is a `FloatingPanel`, not a
   `Modal` — the app behind it stays interactive; keep its ref handles thin save
   adapters and per-tab draft state in `use*Draft` hooks (`settings/CLAUDE.md`).
+- **Panels pop out** into their own browser window (`floatingPanel/CLAUDE.md`):
+  code inside a panel reads its document / window from `hooks/usePanelDocument`
+  (`usePanelDocument()` / `usePanelWindow()`) — never the global `document` /
+  `window`, which are always the main window's — for listeners, portals, focus,
+  the clipboard and timers; and never `instanceof Element` on its nodes.
 - **Pure logic** (copy, derivation, geometry) lives in plain `.ts` modules with
   node:test units under `src/__tests__/` (e.g. `terminalServerChipDerive.ts`,
   `gitSetup/gitSetupDerive.ts`); components stay rendering + wiring.

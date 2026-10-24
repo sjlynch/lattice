@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, Check, Copy, X } from 'lucide-react';
+import { usePanelDocument } from '../../hooks/usePanelDocument';
 
 // Error toast with copy-to-clipboard. Used by TaskBoard and Workflows;
 // extracted here so both share the same look and clipboard fallback.
@@ -12,6 +13,9 @@ export function ErrorToast({
   onDismiss: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+  // In a popped-out panel the pop-out is the focused document; the main
+  // window's clipboard rejects writes from an unfocused document.
+  const doc = usePanelDocument();
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(
@@ -23,21 +27,21 @@ export function ErrorToast({
 
   async function copy() {
     try {
-      await navigator.clipboard.writeText(message);
+      await (doc.defaultView ?? window).navigator.clipboard.writeText(message);
     } catch {
       // Fallback for environments where clipboard API isn't available.
-      const ta = document.createElement('textarea');
+      const ta = doc.createElement('textarea');
       ta.value = message;
       ta.style.position = 'fixed';
       ta.style.left = '-9999px';
-      document.body.appendChild(ta);
+      doc.body.appendChild(ta);
       ta.select();
       try {
-        document.execCommand('copy');
+        doc.execCommand('copy');
       } catch {
         /* nothing else to try */
       }
-      document.body.removeChild(ta);
+      doc.body.removeChild(ta);
     }
     setCopied(true);
     if (copyTimerRef.current) clearTimeout(copyTimerRef.current);

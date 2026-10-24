@@ -20,7 +20,9 @@ export function SecurityFindingList({ findings, selected, focused, onSelect, onF
     const element = scroller.current;
     if (!element) return;
     const measure = () => setViewport({ top: element.scrollTop, height: element.clientHeight });
-    const observer = new ResizeObserver(measure); observer.observe(element); measure();
+    // The element's own window's observer: the Security panel can be popped out.
+    const Observer = element.ownerDocument.defaultView?.ResizeObserver ?? ResizeObserver;
+    const observer = new Observer(measure); observer.observe(element); measure();
     return () => observer.disconnect();
   }, []);
   useEffect(() => {

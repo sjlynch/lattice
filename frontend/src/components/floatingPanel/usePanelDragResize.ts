@@ -8,8 +8,12 @@ import {
 } from 'react';
 
 import { clampPos, VIEWPORT_PAD, type Pos, type Size } from './geometry';
+import { isOutsideViewport } from './popoutGeometry';
 import { useDocumentDragGesture } from './useDocumentDragGesture';
 import type { PanelGeometry } from './usePanelGeometry';
+
+// How far past the window's edge the pointer must go to arm a pop-out.
+const POPOUT_ARM_MARGIN = 24;
 
 type PanelDragState = {
   startX: number;
@@ -17,6 +21,8 @@ type PanelDragState = {
   startPosX: number;
   startPosY: number;
   size: Size;
+  /** The pointer is past the main window's edge (the panel stays clamped). */
+  outside: boolean;
 };
 
 type PanelResizeState = {
@@ -31,6 +37,13 @@ type PanelResizeState = {
 type PanelDragOptions = PanelGeometry & {
   setPos: Dispatch<SetStateAction<Pos>>;
   noDragSelector?: string;
+  /** The pointer crossed the main window's edge mid-drag (either way). */
+  onOutsideChange?: (outside: boolean) => void;
+  /**
+   * The drag was released with the pointer outside the main window: `screen`
+   * is the release point, `grab` the pointer's offset inside the panel.
+   */
+  onDropOutside?: (screen: Pos, grab: Pos) => void;
 };
 
 export function usePanelDrag({
@@ -38,15 +51,31 @@ export function usePanelDrag({
   size,
   setPos,
   noDragSelector = '.fp-no-drag',
+  onOutsideChange,
+  onDropOutside,
 }: PanelDragOptions) {
   const latestGeometryRef = useRef<PanelGeometry>({ pos, size });
   useLayoutEffect(() => {
     latestGeometryRef.current = { pos, size };
   }, [pos, size]);
+  const callbacksRef = useRef({ onOutsideChange, onDropOutside });
+  useLayoutEffect(() => {
+    callbacksRef.current = { onOutsideChange, onDropOutside };
+  }, [onOutsideChange, onDropOutside]);
 
   const { start } = useDocumentDragGesture<PanelDragState>(
     useCallback(
       (state, moveEvent) => {
+        const outside = isOutsideViewport(
+          moveEvent.clientX,
+          moveEvent.clientY,
+          { width: window.innerWidth, height: window.innerHeight },
+          POPOUT_ARM_MARGIN,
+        );
+        if (outside !== state.outside) {
+          state.outside = outside;
+          callbacksRef.current.onOutsideChange?.(outside);
+        }
         setPos(
           clampPos(
             {
@@ -59,6 +88,14 @@ export function usePanelDrag({
       },
       [setPos],
     ),
+    useCallback((state: PanelDragState, upEvent: MouseEvent) => {
+      if (!state.outside) return;
+      callbacksRef.current.onOutsideChange?.(false);
+      callbacksRef.current.onDropOutside?.(
+        { x: upEvent.screenX, y: upEvent.screenY },
+        { x: state.startX - state.startPosX, y: state.startY - state.startPosY },
+      );
+    }, []),
   );
 
   return useCallback(
@@ -75,6 +112,7 @@ export function usePanelDrag({
         startPosX: startPos.x,
         startPosY: startPos.y,
         size: dragSize,
+        outside: false,
       });
     },
     [noDragSelector, start],

@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { isLatticeHidden, onLatticeVisibilityChange } from '../../floatingPanel/popoutRegistry';
 
 export type PollErrorSentinel = 'error';
 export type PollResult<T> = T | PollErrorSentinel;
@@ -17,8 +18,9 @@ type UseVisibilityPollingArgs = {
 };
 
 // Shared polling shell for task-board adjunct runs (push / QA e2e). It owns the
-// lifecycle mechanics only: interval setup/teardown, pausing while the document
-// is hidden, resuming with an optional foreground tick, and a cancellation guard
+// lifecycle mechanics only: interval setup/teardown, pausing while every Lattice
+// window is hidden (a popped-out board on another monitor keeps it running),
+// resuming with an optional foreground tick, and a cancellation guard
 // that async poll bodies can check before mutating state or closing terminals.
 // `pollWithErrorSentinel` standardizes transient fetch failures as `'error'`;
 // callers keep domain-specific completion and terminal cleanup decisions.
@@ -53,7 +55,7 @@ export function useVisibilityPolling({
       }
     };
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') {
+      if (isLatticeHidden()) {
         stop();
         return;
       }
@@ -61,12 +63,12 @@ export function useVisibilityPolling({
       start();
     };
 
-    if (document.visibilityState !== 'hidden') start();
-    document.addEventListener('visibilitychange', onVisibility);
+    if (!isLatticeHidden()) start();
+    const stopVisibility = onLatticeVisibilityChange(onVisibility);
     return () => {
       cancelled = true;
       stop();
-      document.removeEventListener('visibilitychange', onVisibility);
+      stopVisibility();
     };
   }, [enabled, immediateOnVisible, intervalMs]);
 }

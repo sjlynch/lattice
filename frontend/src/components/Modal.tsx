@@ -1,6 +1,7 @@
 import { type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { useFocusTrap } from '../hooks/useFocusTrap';
+import { usePanelDocument } from '../hooks/usePanelDocument';
 import { useEscapeToClose } from './shared/useEscapeToClose';
 
 type Props = {
@@ -12,6 +13,9 @@ type Props = {
 
 export function Modal({ open, onClose, children, width }: Props) {
   const dialogRef = useFocusTrap<HTMLDivElement>(open);
+  // Into the body of the window the caller is in: a confirm asked from a
+  // popped-out panel opens over that panel, not in the main window.
+  const doc = usePanelDocument();
 
   // Innermost-wins: a Modal opened over an overlay/FloatingPanel (e.g. the
   // delete ConfirmDialog over the task editor) takes the Escape alone.
@@ -43,6 +47,6 @@ export function Modal({ open, onClose, children, width }: Props) {
         {children}
       </div>
     </div>,
-    document.body,
+    doc.body,
   );
 }

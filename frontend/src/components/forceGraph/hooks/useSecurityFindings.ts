@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { fetchSecurityReviews } from '../../../api/opengrepReview';
 import type { SecurityReview } from '../../../api/types/opengrep';
+import { isLatticeHidden } from '../../floatingPanel/popoutRegistry';
 
 export function useSecurityFindings(project: string, onRefresh?: () => Promise<void>) {
   const [reviews, setReviews] = useState<SecurityReview[]>([]);
@@ -27,7 +28,8 @@ export function useSecurityFindings(project: string, onRefresh?: () => Promise<v
     const controller = new AbortController();
     let pending = false;
     const read = async () => {
-      if (pending || document.visibilityState === 'hidden') return;
+      // Hidden = every Lattice window (the findings panel can be popped out).
+      if (pending || isLatticeHidden()) return;
       pending = true;
       try { await refresh(controller.signal); }
       catch (err) { if (!controller.signal.aborted) setLoadError(err instanceof Error ? err.message : String(err)); }

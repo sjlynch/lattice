@@ -184,6 +184,9 @@ posts) has to be keyed so it can't fire on a mismatched pair. Pinned by
   `.closest()` class test + deferred attach, no Escape), and adapting it would
   need enough option flags to defeat the point.
 
+- `usePanelDocument()` / `usePanelWindow()` — a popped-out panel's document /
+  window (`components/floatingPanel/CLAUDE.md` → Pop-out).
+
 ## Verification references
 
 Working directory `frontend/`: `npm run build`, `npm test`, `npx tsc -b`.

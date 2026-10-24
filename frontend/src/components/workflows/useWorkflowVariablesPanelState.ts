@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import type { WorkflowVariable } from '../../api';
 import { copyVariableToken } from './promptVariables';
+import { usePanelWindow } from '../../hooks/usePanelDocument';
 
 // UI-only state for the WorkflowVariablesPanel: which cards are collapsed, the
 // info popover toggle, and the transient "Copied!" flag on the variable whose
 // `{{token}}` was just click-copied. Kept out of the render components so the
 // panel/card JSX stays presentational.
 export function useWorkflowVariablesPanelState() {
+  // Workflows can be popped out: copy through the window the panel is in (the
+  // main window's clipboard rejects writes while it is unfocused).
+  const win = usePanelWindow();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [showInfo, setShowInfo] = useState(false);
   // Id of the variable whose `{{token}}` was just click-copied (drives the
@@ -32,7 +36,7 @@ export function useWorkflowVariablesPanelState() {
     // The write can reject (denied permission, non-secure context, unfocused
     // document); only flip to "Copied!" once it has actually landed, otherwise
     // we'd give false success feedback for an empty clipboard.
-    void copyVariableToken(v.name).then((ok) => {
+    void copyVariableToken(v.name, win.navigator.clipboard).then((ok) => {
       if (!ok) return;
       setCopiedId(v.id);
       if (copyTimer.current) clearTimeout(copyTimer.current);
